@@ -1,7 +1,9 @@
 # REPLy.jl
 [![tracked with wai](https://img.shields.io/badge/tracked%20with-wai-blue)](https://github.com/charly-vibes/wai)
 
-Network REPL in Julia.
+> **WARNING: This project is entirely LLM-generated code. It has not been manually reviewed or audited. Use at your own risk.**
+
+A network REPL server for Julia — think [nREPL](https://nrepl.org/) for Clojure, but for Julia. REPLy.jl exposes a Julia REPL over a socket-based protocol so that editors and tooling can connect, evaluate code, and inspect results interactively.
 
 ## repo hygiene
 
