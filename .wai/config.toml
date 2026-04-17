@@ -1,9 +1,19 @@
-plugins = []
-
 [project]
 name = "REPLy.jl"
 version = "2026.4.4"
 description = ""
 tool_commit = "cc21ba8"
+
+[[plugins]]
+name = "beads"
+enabled = true
+
+[plugins.settings]
+
+[[plugins]]
+name = "openspec"
+enabled = true
+
+[plugins.settings]
 
 [llm]
