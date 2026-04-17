@@ -1,8 +1,10 @@
 # Middleware System
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Specify the composable middleware pipeline that routes messages through a stack of handlers. Each middleware declares what operations it provides, requires, and expects via descriptors, enabling third parties to extend the protocol without modifying core code.
+Specify the composable middleware pipeline that routes messages through a stack of handlers. Each middleware declares what operations it provides, requires, and expects via descriptors, enabling third parties to extend the protocol without modifying core code. The middleware stack is immutable after server startup.
 
 ## Requirements
 
@@ -59,12 +61,21 @@ Unsatisfied `expects` constraints SHALL cause a startup error by default (config
 ### Requirement: Default Middleware Stack Order
 The default middleware stack SHALL be: DescribeMiddleware, SessionMiddleware, EvalMiddleware, InterruptMiddleware, LoadFileMiddleware, CompletionMiddleware, LookupMiddleware, StdinMiddleware, UnknownOpMiddleware. (REQ-RPL-055)
 
+`SessionMiddleware` handles `clone`, `close`, and `ls-sessions` operations in addition to session resolution for all requests.
+
 #### Scenario: Default stack has nine built-in middleware
 - **WHEN** `serve()` is called with no `middleware` argument
 - **THEN** `default_middleware_stack()` returns the nine built-in middleware in the specified order
 
+### Requirement: Middleware Stack Immutability
+The middleware stack SHALL be immutable after server startup. Middleware cannot be added, removed, or reordered at runtime. (ARCH-007)
+
+#### Scenario: Stack is fixed after startup
+- **WHEN** the server has started and is accepting connections
+- **THEN** the middleware stack composition is fixed for the lifetime of the server process
+
 ### Requirement: Empty Response Vector Guard
-When a middleware returns an empty `Vector{Dict}`, the server SHALL emit `{"status":["done"]}` and log a warning, satisfying the one-done-per-request invariant. (REQ-RPL-004, ARCH-001)
+When a middleware returns an empty `Vector{Dict}`, the server SHALL emit `{"status":["done"]}` and log a warning, satisfying the one-done-per-request invariant (see `protocol/spec.md`, REQ-RPL-004). (ARCH-001)
 
 #### Scenario: Empty vector replaced with done response
 - **WHEN** a middleware returns `[]`

@@ -1,8 +1,10 @@
 # Transport Layer
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Specify the abstract transport interface and concrete implementations (TCP, Unix domain socket, newline-delimited JSON) that carry Reply messages. A new transport implementing four methods works without any changes to middleware, sessions, or operations.
+Specify the abstract transport interface and concrete implementations (TCP, Unix domain socket, newline-delimited JSON) that carry Reply messages between clients and server. A new transport implementing four methods works without any changes to middleware, sessions, or operations.
 
 ## Requirements
 
@@ -36,7 +38,7 @@ The server SHALL support TCP connections on a configurable host and port (defaul
 - **THEN** the server logs an informative error
 
 ### Requirement: Unix Domain Socket Transport
-The server SHALL support Unix domain socket connections. The socket SHALL be created with `umask(0o077)` before `listen()` and `chmod`'d to `0o600` after creation, closing the race window. (REQ-RPL-041)
+The server SHALL support Unix domain socket connections. The socket SHALL be created with `umask(0o077)` before `listen()` and `chmod`'d to `0o600` after creation, closing the permission race window. (REQ-RPL-041)
 
 #### Scenario: Socket file is owner-only
 - **WHEN** the server starts with Unix socket transport
@@ -63,3 +65,14 @@ Middleware, sessions, and core operations SHALL have no dependency on any specif
 #### Scenario: Same middleware stack works across transports
 - **WHEN** two server instances start—one TCP, one Unix socket—with the same middleware stack
 - **THEN** both handle identical protocol operations identically
+
+### Requirement: Multi-Listener Support
+The server SHALL support running multiple listeners concurrently (e.g., TCP and Unix socket simultaneously). Resource limits (max_sessions, max_concurrent_evals, rate_limit_per_min) SHALL apply globally across all listeners, not per-listener. Each listener MAY use a different encoding. (REQ-RPL-042)
+
+#### Scenario: TCP and Unix socket listeners run simultaneously
+- **WHEN** the server starts with both a TCP listener on port 5555 and a Unix socket listener
+- **THEN** clients can connect via either transport and both share the same session pool and middleware stack
+
+#### Scenario: Resource limits are global across listeners
+- **WHEN** `max_sessions` is 100 and 60 sessions exist via TCP and 40 via Unix socket
+- **THEN** a new `clone` on either transport returns `"err":"Session limit reached"`

@@ -1,8 +1,10 @@
 # Session Management
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Specify light session isolation via anonymous Julia Modules, session lifecycle (CREATED → ACTIVE → EVAL_RUNNING → DESTROYED), idle timeout, ephemeral sessions, FIFO eval serialization, and Revise.jl integration.
+Specify light session isolation via anonymous Julia Modules, session lifecycle (CREATED → ACTIVE → EVAL_RUNNING → DESTROYED), idle timeout, ephemeral sessions, FIFO eval serialization, and Revise.jl integration. Light sessions are the primary session type for v1.0.
 
 ## Requirements
 
@@ -18,7 +20,9 @@ A light session SHALL use a separate anonymous `Module` per session. Two concurr
 - **THEN** session B's result arrives before session A's completes
 
 ### Requirement: Light Session Eval Serialization
-Concurrent eval requests within the same light session SHALL be serialized via a Channel-based FIFO mutex (`eval_mutex::Channel{Nothing}(1)`). Only one `Core.eval` is in flight per light session at any time. (REQ-RPL-031)
+Concurrent eval requests within the same light session SHALL be serialized in FIFO order. Only one `Core.eval` is in flight per light session at any time. (REQ-RPL-031)
+
+> **Implementation guidance:** A `Channel{Nothing}(1)` provides FIFO fairness guarantees that `ReentrantLock` does not.
 
 #### Scenario: Queued evals execute in FIFO order
 - **WHEN** two eval requests arrive for the same session without waiting
@@ -32,7 +36,7 @@ Concurrent eval requests within the same light session SHALL be serialized via a
 - **THEN** `session.eval_task` is non-nil throughout the eval's execution
 
 ### Requirement: Light Session Creation Time
-A new light session SHALL be created within 10 ms p99 on reference hardware (Linux x86_64, 4+ physical cores, single-core PassMark ≥ 2500, ≥ 8 GB RAM). (REQ-RPL-032)
+A new light session SHALL be created within 10 ms p99 on reference hardware (see `project.md` for reference hardware definition). (REQ-RPL-032)
 
 #### Scenario: Session creation is low-latency
 - **WHEN** a `clone` request is sent on reference hardware
@@ -41,12 +45,18 @@ A new light session SHALL be created within 10 ms p99 on reference hardware (Lin
 ### Requirement: Session Type Selection
 The server SHALL create a Heavy session only when `clone` includes `"type":"heavy"` AND Malt.jl is loaded; in all other cases it SHALL create a Light session. (REQ-RPL-033)
 
+> **Note:** Heavy sessions use OS-process isolation via Malt.jl. Their full behavioral spec is deferred post-v1.0. For v1.0, the server SHALL reject `"type":"heavy"` if Malt.jl is not loaded, returning `{"status":["done","error"],"err":"Heavy sessions require Malt.jl"}`.
+
 #### Scenario: Default type is light
 - **WHEN** `clone` omits `type`
 - **THEN** a light session is created
 
+#### Scenario: Heavy session without Malt.jl rejected
+- **WHEN** `clone` includes `"type":"heavy"` but Malt.jl is not loaded
+- **THEN** server returns `{"status":["done","error"],"err":"Heavy sessions require Malt.jl"}`
+
 ### Requirement: Session Idle Timeout
-Sessions SHALL be automatically closed after `session_idle_timeout_s` seconds of inactivity (default 3600 s). A background idle sweep runs every 60 seconds. (REQ-RPL-034)
+Sessions SHALL be automatically closed after `session_idle_timeout_s` seconds of inactivity (default 3600 s; see `resource-limits/spec.md`). A background idle sweep runs every 60 seconds. (REQ-RPL-034)
 
 #### Scenario: Idle session closed by sweep
 - **WHEN** a session has no activity for longer than `session_idle_timeout_s`
@@ -70,6 +80,10 @@ A request without a `session` field SHALL trigger ephemeral session handling: a 
 #### Scenario: Ephemeral evals count against max_concurrent_evals
 - **WHEN** `max_concurrent_evals` is reached
 - **THEN** new ephemeral evals are rejected (REQ-RPL-035c)
+
+#### Scenario: Ephemeral evals are not interruptible
+- **WHEN** an ephemeral eval is running
+- **THEN** there is no mechanism to interrupt it because the session ID is not returned to the client. The eval terminates only via completion, timeout, or client disconnect.
 
 ### Requirement: Ephemeral Module Reuse
 To prevent unbounded memory growth, implementations SHALL reuse a bounded pool of anonymous modules for ephemeral sessions. After eval completes, bindings are cleared and the module returned to the pool, bounded at `max_concurrent_evals`. (REQ-RPL-035)
