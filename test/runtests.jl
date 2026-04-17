@@ -1,7 +1,24 @@
 using Test
 using REPLy
+using JSON3
+using Sockets
+
+include("helpers/conformance.jl")
+include("helpers/tcp_client.jl")
+include("helpers/server.jl")
 
 @testset "REPLy.jl" begin
-    @test REPLy.protocol_name() == "REPLy"
-    @test REPLy.version_string() == "0.1.0"
+    @testset "unit" begin
+        include("unit/basic_test.jl")
+    end
+
+    @testset "integration" begin
+        # Intentionally red until build_handler exists.
+        include("integration/pipeline_test.jl")
+    end
+
+    @testset "e2e" begin
+        # Intentionally red until serve exists.
+        include("e2e/eval_test.jl")
+    end
 end
