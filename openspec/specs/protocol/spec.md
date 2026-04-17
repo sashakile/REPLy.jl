@@ -17,7 +17,7 @@ All messages SHALL be JSON objects using a flat nREPL-shaped envelope with `op`,
 
 #### Scenario: Request without session
 - **WHEN** a client sends `{"op":"clone","id":"msg-2"}` with no `session` field
-- **THEN** the server treats it as a sessionless (ephemeral) request
+- **THEN** the server treats it as a sessionless request; operation-specific behavior is defined by the relevant capability spec
 
 ### Requirement: Request ID Length Limit
 The `id` field of every request SHALL be between 1 and `max_id_length` (default 256; see `resource-limits/spec.md`) characters. Requests with `id` longer than `max_id_length` SHALL be rejected with a protocol error. (REQ-RPL-001b)
@@ -84,17 +84,13 @@ The default wire format SHALL be newline-delimited JSON: each message is a singl
 - **THEN** each is terminated by exactly one `\n` byte
 
 ### Requirement: Encoding Selection at Connection Establishment
-The message encoding SHALL be selected at connection time, not inside a message. Default is newline-delimited JSON. Selection via URL scheme or per-listener configuration. (REQ-RPL-009)
+The message encoding SHALL be selected at connection time, not inside a message. For v1.0, the only normative encoding is newline-delimited JSON. Future encodings MAY be added via URL scheme or per-listener configuration once separately specified. (REQ-RPL-009)
 
 #### Scenario: Default encoding is JSON
 - **WHEN** a client connects without specifying encoding
 - **THEN** the server uses newline-delimited JSON
 
-#### Scenario: URL-scheme selects MessagePack
-- **WHEN** a client connects to `unix+msgpack:///path/to/sock`
-- **THEN** the server uses MessagePack encoding for that connection
-
-> **Note:** MessagePack framing (message delimitation without newlines) is deferred. When specified, it will use length-prefixed framing. For v1.0, only newline-delimited JSON is normative.
+> **Note:** MessagePack framing (message delimitation without newlines) is deferred. When specified, it will use length-prefixed framing and become normative only once added to this spec.
 
 ### Requirement: Status Flags
 Response `status` fields, when present, SHALL be JSON arrays of registered string flags. Unknown flags SHALL be ignored by clients. (REQ-RPL-004)

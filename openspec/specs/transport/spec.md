@@ -67,7 +67,7 @@ Middleware, sessions, and core operations SHALL have no dependency on any specif
 - **THEN** both handle identical protocol operations identically
 
 ### Requirement: Multi-Listener Support
-The server SHALL support running multiple listeners concurrently (e.g., TCP and Unix socket simultaneously). Resource limits (max_sessions, max_concurrent_evals, rate_limit_per_min) SHALL apply globally across all listeners, not per-listener. Each listener MAY use a different encoding. (REQ-RPL-042)
+The server SHALL support running multiple listeners concurrently (e.g., TCP and Unix socket simultaneously). Resource limits (max_sessions, max_concurrent_evals, rate_limit_per_min) SHALL apply globally across all listeners, not per-listener. Where listener-specific encodings are configured, each listener SHALL use its configured encoding independently. (REQ-RPL-042)
 
 #### Scenario: TCP and Unix socket listeners run simultaneously
 - **WHEN** the server starts with both a TCP listener on port 5555 and a Unix socket listener
@@ -75,4 +75,4 @@ The server SHALL support running multiple listeners concurrently (e.g., TCP and 
 
 #### Scenario: Resource limits are global across listeners
 - **WHEN** `max_sessions` is 100 and 60 sessions exist via TCP and 40 via Unix socket
-- **THEN** a new `clone` on either transport returns `"err":"Session limit reached"`
+- **THEN** a new `clone` on either transport returns `{"status":["done","error","session-limit-reached"],"err":"Session limit reached"}`

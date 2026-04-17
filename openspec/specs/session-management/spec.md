@@ -36,11 +36,11 @@ Concurrent eval requests within the same light session SHALL be serialized in FI
 - **THEN** `session.eval_task` is non-nil throughout the eval's execution
 
 ### Requirement: Light Session Creation Time
-A new light session SHALL be created within 10 ms p99 on reference hardware (see `project.md` for reference hardware definition). (REQ-RPL-032)
+A new light session SHALL be created within 10 ms p99 on reference hardware (see `project.md` for reference hardware definition), measured on an otherwise idle server using a benchmark harness that issues repeated session-creation requests against the default middleware stack. (REQ-RPL-032)
 
 #### Scenario: Session creation is low-latency
-- **WHEN** a `clone` request is sent on reference hardware
-- **THEN** the `new-session` response arrives within 10 ms (p99)
+- **WHEN** repeated `clone` requests are sent on reference hardware to an otherwise idle server
+- **THEN** the `new-session` response latency meets the 10 ms p99 target
 
 ### Requirement: Session Type Selection
 The server SHALL create a Heavy session only when `clone` includes `"type":"heavy"` AND Malt.jl is loaded; in all other cases it SHALL create a Light session. (REQ-RPL-033)
@@ -67,7 +67,7 @@ Sessions SHALL be automatically closed after `session_idle_timeout_s` seconds of
 - **THEN** the session is skipped until the eval completes (REQ-RPL-034b)
 
 ### Requirement: Ephemeral Sessions
-A request without a `session` field SHALL trigger ephemeral session handling: a transient light session is created, used, and destroyed after the response stream terminates. The ephemeral session ID is NOT returned to the client. (REQ-RPL-035)
+For session-bearing execution operations that omit the `session` field (for v1.0: `eval` and `load-file`), the server SHALL trigger ephemeral session handling: a transient light session is created, used, and destroyed after the response stream terminates. The ephemeral session ID is NOT returned to the client. (REQ-RPL-035)
 
 #### Scenario: Ephemeral eval leaves no persistent session
 - **WHEN** `eval` is sent without a `session` field and completes
@@ -75,18 +75,18 @@ A request without a `session` field SHALL trigger ephemeral session handling: a 
 
 #### Scenario: Ephemeral sessions count against max_sessions
 - **WHEN** `max_sessions` is reached by persistent sessions
-- **THEN** ephemeral requests are rejected with `"err":"Session limit reached"` (REQ-RPL-035b)
+- **THEN** ephemeral requests are rejected with `{"status":["done","error","session-limit-reached"],"err":"Session limit reached"}` (REQ-RPL-035b)
 
 #### Scenario: Ephemeral evals count against max_concurrent_evals
-- **WHEN** `max_concurrent_evals` is reached
-- **THEN** new ephemeral evals are rejected (REQ-RPL-035c)
+- **WHEN** `max_concurrent_evals` is reached and the bounded queue is full
+- **THEN** new ephemeral evals are rejected with `{"status":["done","error","concurrency-limit-reached"],"err":"Too many concurrent evals"}` (REQ-RPL-035c)
 
 #### Scenario: Ephemeral evals are not interruptible
 - **WHEN** an ephemeral eval is running
 - **THEN** there is no mechanism to interrupt it because the session ID is not returned to the client. The eval terminates only via completion, timeout, or client disconnect.
 
 ### Requirement: Ephemeral Module Reuse
-To prevent unbounded memory growth, implementations SHALL reuse a bounded pool of anonymous modules for ephemeral sessions. After eval completes, bindings are cleared and the module returned to the pool, bounded at `max_concurrent_evals`. (REQ-RPL-035)
+To prevent unbounded memory growth, implementations SHALL reuse a bounded pool of anonymous modules for ephemeral sessions. After eval completes, bindings are cleared and the module returned to the pool, bounded at `max_concurrent_evals`. (REQ-RPL-035d)
 
 #### Scenario: Module pool prevents memory growth
 - **WHEN** many ephemeral evals complete over time
@@ -103,6 +103,9 @@ Every session SHALL occupy exactly one of `CREATED`, `ACTIVE`, `EVAL_RUNNING`, o
 - **WHEN** `close` is called on a session with a queued eval
 - **THEN** the queued eval finds the session removed and returns `session-not-found` (REQ-RPL-018b)
 
+#### Scenario: Competing terminal causes resolve once
+- **WHEN** `close`, timeout, and `interrupt` race against the same running eval
+- **THEN** the first atomic transition out of `EVAL_RUNNING` wins; later termination attempts are no-ops
 ### Requirement: Revise.jl Integration
 The server SHALL provide a `PreEvalHook` that calls `Revise.revise()` before every eval when Revise.jl is loaded, matching how Revise hooks into the standard REPL. (REQ-RPL-060)
 

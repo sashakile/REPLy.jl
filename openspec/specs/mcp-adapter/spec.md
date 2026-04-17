@@ -30,7 +30,7 @@ The adapter SHALL expose eight MCP tools: `julia_eval`, `julia_complete`, `julia
 - **THEN** all eight tools appear in the response
 
 ### Requirement: julia_eval Tool Schema and Behavior
-The `julia_eval` tool SHALL accept `code` (required), `session`, `module`, and `timeout_ms` parameters. The adapter SHALL collect the complete Reply response stream before returning the `CallToolResult`. (REQ-RPL-073)
+The `julia_eval` tool SHALL accept `code` (required), `session`, `module`, and `timeout_ms` parameters. The adapter SHALL send Reply `allow-stdin:false` for `julia_eval` calls and SHALL collect the complete Reply response stream before returning the `CallToolResult`. (REQ-RPL-073)
 
 #### Scenario: julia_eval returns stdout as content
 - **WHEN** `julia_eval` is called with `{"code":"println(\"hi\")"}`
@@ -39,6 +39,10 @@ The `julia_eval` tool SHALL accept `code` (required), `session`, `module`, and `
 #### Scenario: julia_eval error sets isError
 - **WHEN** code raises an exception
 - **THEN** `CallToolResult.isError` is `true` and content includes the error message and stacktrace
+
+#### Scenario: stdin-blocking code fails fast in MCP
+- **WHEN** `julia_eval` is called on code that executes `readline()`
+- **THEN** the adapter's `allow-stdin:false` causes Reply to raise `EOFError`, and the adapter returns `CallToolResult.isError = true` instead of hanging for interactive input
 
 ### Requirement: Adapter Default Session
 The adapter SHALL own a default session created at startup. When the MCP client omits `session`, the adapter SHALL route to the default persistent session — NOT ephemeral. (REQ-RPL-074)
