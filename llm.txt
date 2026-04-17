@@ -1,0 +1,35 @@
+# REPLy.jl
+
+REPLy.jl is a Julia project for a network REPL implementation.
+
+## Current repository state
+
+This repository is currently documentation-first:
+- `OpenSpec` files define the project specifications and capability specs.
+- `Reply_jl_Specification_v1_3_1.md` is the main external/reference specification document.
+- `README.md` is the human-facing entry point.
+- `AGENTS.md` and `CLAUDE.md` describe agent workflow expectations.
+
+## Workflow and governance
+
+The repository uses:
+- `wai` for research, rationale, and handoffs
+- `bd` (beads) for issue tracking
+- `OpenSpec` for change proposals and capability specifications
+
+## Preferred commands
+
+Use the repo `justfile`:
+- `just bootstrap` — install git hooks through `prek`
+- `just hooks` — run configured hooks across the repo
+- `just lint` — run spelling and prose checks
+- `just test` — run Julia tests when a package scaffold exists
+- `just coverage` — run Julia coverage when a package scaffold exists
+- `just check` — lint + test + coverage
+- `just full-check` — `just check` plus OpenSpec and `wai` health checks
+
+## Important constraints
+
+- The repo may not always contain a full Julia package scaffold yet.
+- Commands should degrade gracefully when `Project.toml` or `test/runtests.jl` do not exist.
+- Keep automation lightweight and suitable for a Julia library repository.

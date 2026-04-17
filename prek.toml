@@ -1,0 +1,19 @@
+#:schema https://www.schemastore.org/prek.json
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-merge-conflict" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "beads-pre-commit", name = "beads pre-commit", entry = "bd hooks run pre-commit", language = "system", pass_filenames = false, always_run = true, stages = ["pre-commit"] },
+  { id = "beads-pre-push", name = "beads pre-push", entry = "bd hooks run pre-push", language = "system", pass_filenames = false, always_run = true, stages = ["pre-push"] },
+  { id = "beads-prepare-commit-msg", name = "beads prepare-commit-msg", entry = "bd hooks run prepare-commit-msg", language = "system", always_run = true, stages = ["prepare-commit-msg"] },
+  { id = "typos", name = "typos", entry = "typos .", language = "system", pass_filenames = false },
+  { id = "vale", name = "vale", entry = "vale README.md llm.txt openspec/project.md", language = "system", pass_filenames = false },
+]
