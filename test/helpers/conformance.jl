@@ -1,4 +1,4 @@
-function assert_conformance(msgs::Vector{Dict}, request_id::String)
+function assert_conformance(msgs::Vector{<:AbstractDict}, request_id::String)
     @test !isempty(msgs)
     @test all(get(msg, "id", nothing) == request_id for msg in msgs)
 
