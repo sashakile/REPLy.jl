@@ -1,0 +1,1 @@
+Completed REPLy_jl-556.3 with a minimal ephemeral session manager: anonymous Module-backed ModuleSession, explicit create/destroy lifecycle, idempotent teardown, and leak-detection-oriented tests. Kept the API unexported to avoid inflating the package surface before pipeline integration.

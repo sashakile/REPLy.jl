@@ -1,0 +1,1 @@
+Implement REPLy_jl-556.3 outside-in: add failing session unit tests for ephemeral module lifecycle and leak detection, then add minimal session manager API and export wiring needed by future eval pipeline work.
