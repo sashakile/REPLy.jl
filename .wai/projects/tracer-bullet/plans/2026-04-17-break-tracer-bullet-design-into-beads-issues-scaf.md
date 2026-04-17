@@ -1,0 +1,1 @@
+Break tracer-bullet design into beads issues: scaffold helpers; implement message framing, ephemeral sessions, eval middleware, middleware/error responders; assemble pipeline; wire TCP transport; harden e2e concurrency/disconnect; tidy in a separate final task.
