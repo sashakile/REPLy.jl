@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+
+      - name: Install base tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cargo just curl tar
+
+      - name: Install typos, prek, and actionlint
+        run: |
+          cargo install typos-cli --locked
+          cargo install prek --locked
+          GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Vale
+        run: |
+          VALE_VERSION=3.12.0
+          curl -fsSL -o /tmp/vale.tar.gz "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          tar -xzf /tmp/vale.tar.gz -C /tmp
+          sudo install /tmp/vale /usr/local/bin/vale
+
+      - name: Run repository checks
+        run: just check
+
+      - name: Upload coverage to Codecov
+        if: ${{ hashFiles('Project.toml') != '' && hashFiles('test/runtests.jl') != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          fail_ci_if_error: false

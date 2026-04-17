@@ -1,0 +1,14 @@
+[files]
+extend-exclude = [
+  ".beads",
+  ".git",
+  ".wai",
+  "Reply_jl_Specification_v1_3_1.md",
+]
+
+[default]
+extend-ignore-identifiers-re = [
+  "REPLy",
+  "Reply_jl",
+  "OpenSpec",
+]

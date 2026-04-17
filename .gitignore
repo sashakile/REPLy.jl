@@ -31,3 +31,6 @@ JuliaLocalPreferences.toml
 .dolt/
 *.db
 .beads-credential-key
+
+# Local editor / agent overrides
+.claude/settings.local.json
