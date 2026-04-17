@@ -9,16 +9,19 @@ Specify the composable middleware pipeline that routes messages through a stack 
 ## Requirements
 
 ### Requirement: Middleware Protocol
-Every middleware SHALL implement `handle_message(mw, msg, next, ctx)` returning `Dict` (single response), `Vector{Dict}` (multiple responses), or `Nothing` (pass to next middleware). (REQ-RPL-050)
+Every middleware SHALL implement `handle_message(mw, msg, next, ctx)`. When a middleware handles an operation that produces intermediate responses, it SHALL emit those responses through the response sink carried in `ctx` before returning the terminal response. Sink emissions SHALL preserve intra-request ordering, SHALL be associated with the current request `id`, and SHALL follow the same closed-channel discard semantics defined for `send_response`. The return value SHALL be one of: `Dict` (single terminal response), `Vector{Dict}` (multiple terminal responses), or `Nothing` (pass to next middleware). (REQ-RPL-050)
 
 #### Scenario: Middleware passes through unknown ops
 - **WHEN** a middleware receives an `op` it does not handle
 - **THEN** it calls `next(msg)` and returns the result
 
 #### Scenario: Middleware intercepts its own op
-- **WHEN** a middleware receives an `op` it handles
+- **WHEN** a middleware receives an `op` it handles synchronously
 - **THEN** it returns a `Dict` response without calling `next`
 
+#### Scenario: Streaming middleware emits intermediate responses
+- **WHEN** a middleware handles a streaming operation such as `eval`
+- **THEN** it emits `out`/`err` chunks through `ctx` before returning the terminal response
 ### Requirement: Third-Party Operation Registration
 A third-party middleware SHALL register new operations without modifying core code. (REQ-RPL-050)
 

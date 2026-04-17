@@ -18,9 +18,9 @@ The Unix domain socket SHALL be accessible only to the server's owner UID. The i
 ### Requirement: Resource Limit Enforcement
 The server SHALL enforce all configured `ResourceLimits` fields (see `resource-limits/spec.md` for the complete field table and defaults). Default values apply when not overridden. (REQ-RPL-047a..047i)
 
-#### Scenario: Eval timeout enforced within 50ms
+#### Scenario: Eval timeout enforced on reference hardware
 - **WHEN** an eval exceeds `max_eval_time_ms`
-- **THEN** an `InterruptException` is sent to the eval task within 50 ms; response is `{"status":["done","error","timeout"]}` (REQ-RPL-047a)
+- **THEN** on reference hardware the server delivers timeout cancellation and emits `{"status":["done","error","timeout"]}` within 100 ms p99 of the timeout threshold being crossed (REQ-RPL-047a)
 
 #### Scenario: Eval timeout and manual interrupt collision
 - **WHEN** a timeout fires and a manual `interrupt` op arrives simultaneously for the same eval
@@ -28,11 +28,11 @@ The server SHALL enforce all configured `ResourceLimits` fields (see `resource-l
 
 #### Scenario: Session limit enforced on clone
 - **WHEN** `max_sessions` active sessions exist and `clone` is called
-- **THEN** server returns `{"status":["done","error"],"err":"Session limit reached"}` (REQ-RPL-047c)
+- **THEN** server returns `{"status":["done","error","session-limit-reached"],"err":"Session limit reached"}` (REQ-RPL-047c)
 
 #### Scenario: Concurrent eval limit enforced with queue
 - **WHEN** `max_concurrent_evals` evals are in flight and a new eval arrives
-- **THEN** it queues FIFO up to 2× limit; beyond the queue it is rejected with `"err":"Too many concurrent evals"` (REQ-RPL-047d)
+- **THEN** it queues FIFO up to 2× limit; beyond the queue it is rejected with `{"status":["done","error","concurrency-limit-reached"],"err":"Too many concurrent evals"}` (REQ-RPL-047d)
 
 #### Scenario: Oversized message closes connection
 - **WHEN** a message exceeds `max_message_size`
@@ -40,7 +40,7 @@ The server SHALL enforce all configured `ResourceLimits` fields (see `resource-l
 
 #### Scenario: Rate limit enforced per connection
 - **WHEN** a client exceeds `rate_limit_per_min` operations per minute on a single connection
-- **THEN** additional requests return `{"status":["done","error"],"err":"Rate limit exceeded"}` (REQ-RPL-047f)
+- **THEN** additional requests return `{"status":["done","error","rate-limited"],"err":"Rate limit exceeded"}` (REQ-RPL-047f)
 
 #### Scenario: History entries bounded per session
 - **WHEN** `max_history_entries` is reached in a session

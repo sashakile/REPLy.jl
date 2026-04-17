@@ -14,7 +14,7 @@ The server SHALL implement the `describe` operation returning supported ops, mid
 The response SHALL include:
 - `ops`: Dict mapping operation name to an operation descriptor with `doc` (string), `requires` (array of required field names), `optional` (array of optional field names), and `returns` (array of response field names).
 - `versions`: Dict with `julia` (Julia VERSION string) and `reply` (Reply protocol version string).
-- `encodings-available`: Array of encoding names the server supports (e.g., `["json", "msgpack"]`).
+- `encodings-available`: Array of encoding names the server currently supports on this server instance (for v1.0, at least `["json"]`).
 - `encoding-current`: String naming the encoding used on this connection.
 - `status`: `["done"]`
 
@@ -23,7 +23,7 @@ The response SHALL include:
 - **THEN** the response includes `ops` (with at least `eval`, `clone`, `close`, `complete`, `lookup`, `interrupt`, `ls-sessions`, `stdin`, `load-file`), `versions` (with `julia` and `reply` keys), `encodings-available`, `encoding-current`, and `status:["done"]`
 
 ### Requirement: eval Operation
-The server SHALL implement the `eval` operation to evaluate Julia code in a session, streaming stdout/stderr in real time before returning the result value. (REQ-RPL-011)
+The server SHALL implement the `eval` operation to evaluate Julia code in a session. When eval produces stdout or stderr output, the server SHALL emit the corresponding `out`/`err` response chunks before the terminal `value` and `done` messages, with no intentional buffering beyond transport/runtime chunking. (REQ-RPL-011)
 
 #### Scenario: Successful eval
 - **WHEN** a client sends `{"op":"eval","id":"2","session":"<id>","code":"1+1"}`
@@ -128,7 +128,7 @@ The server SHALL implement `lookup` to return symbol documentation and method in
 The server SHALL implement `stdin` to provide input to an eval blocked on `readline()`. (REQ-RPL-017)
 
 #### Scenario: Input unblocks waiting eval
-- **WHEN** an eval is waiting on `readline()` (server emitted `"need-input"` status)
+- **WHEN** an eval is waiting on `readline()` and the server has emitted a response with `status:["need-input"]`
 - **THEN** a `stdin` op delivers the input and the eval continues
 
 #### Scenario: stdin when no eval blocked buffers input
@@ -181,18 +181,18 @@ The server SHALL implement `ls-sessions` to list all active sessions with their 
 - **THEN** response includes `sessions` array with `id`, `type`, `created`, `last-activity` per session
 
 ### Requirement: Unknown Operation Fallback
-If no middleware handles an `op`, the server SHALL respond with `{"status":["done","unknown-op"],"err":"Unknown operation: <op>"}`. (REQ-RPL-019)
+If no middleware handles an `op`, the server SHALL respond with `{"status":["done","error","unknown-op"],"err":"Unknown operation: <op>"}`. (REQ-RPL-019)
 
 #### Scenario: Unknown op returns unknown-op status
 - **WHEN** a client sends `{"op":"frobnicate","id":"99"}`
-- **THEN** response contains `"status":["done","unknown-op"]`
+- **THEN** response contains `"status":["done","error","unknown-op"]`
 
 ### Requirement: Malformed Input Handling
 The server SHALL handle invalid JSON, missing `op`, missing `id`, and oversized messages without crashing. Oversized message enforcement is defined in `security/spec.md` (REQ-RPL-047e). Repeated malformed message disconnection is defined in `error-handling/spec.md` (REQ-RPL-020). (REQ-RPL-020)
 
 #### Scenario: Invalid JSON response
 - **WHEN** a line of non-JSON bytes arrives
-- **THEN** the server logs the error and sends an error response or closes the connection
+- **THEN** the server logs the parse failure, counts it as a malformed message, and sends no response because no request `id` can be trusted for correlation
 
 #### Scenario: Missing op returns error
 - **WHEN** a request lacks the `op` field

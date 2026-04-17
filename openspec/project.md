@@ -58,6 +58,15 @@ mcp-adapter → error-handling (interrupted → isError mapping rationale)
            → core-operations (maps Reply ops to MCP tools)
 ```
 
+## Requirement Prioritization
+
+Unless a requirement says otherwise, capability-spec requirements are classified as:
+- **P0 (v1.0 mandatory):** required for the v1.0 release and release-gating in validation/testing plans.
+- **P1 (v1.0 stretch):** targeted for v1.0 when feasible, but may slip without invalidating the core release.
+- **P2 (post-v1.0):** explicitly deferred or future-facing.
+
+Priority exceptions SHOULD be documented in the relevant capability spec or implementation plan when a requirement needs to deviate from this default classification.
+
 ## Requirement ID Scheme
 
 Requirements use multiple ID prefixes reflecting their origin in the spec:
