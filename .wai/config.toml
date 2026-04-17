@@ -1,0 +1,9 @@
+plugins = []
+
+[project]
+name = "REPLy.jl"
+version = "2026.4.4"
+description = ""
+tool_commit = "cc21ba8"
+
+[llm]
