@@ -34,3 +34,6 @@ JuliaLocalPreferences.toml
 
 # Local editor / agent overrides
 .claude/settings.local.json
+
+# Local reference material not tracked in this repo
+Reply_jl_Specification_v1_3_1.md
