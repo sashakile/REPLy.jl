@@ -1,3 +1,5 @@
 # Agent config projections — defines how configs are synced to tool-specific locations
 # Strategies: symlink, inline, reference
-projections: []
+# Built-in target: claude-code (no strategy/sources needed)
+projections:
+  - target: claude-code
