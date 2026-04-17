@@ -1,8 +1,10 @@
 # MCP Adapter
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Specify the reference MCP adapter — the first client of the Reply protocol. It translates MCP `tools/call` invocations into Reply operations, manages a persistent default session, and maps Reply responses to MCP `CallToolResult` objects.
+Specify the reference MCP adapter — the first client of the Reply protocol. It translates MCP `tools/call` invocations into Reply operations, manages a persistent default session, and maps Reply responses to MCP `CallToolResult` objects. The adapter is a protocol bridge, not a core server component.
 
 ## Requirements
 
@@ -51,6 +53,8 @@ The adapter SHALL own a default session created at startup. When the MCP client 
 
 ### Requirement: MCP Error Mapping
 The adapter SHALL map Reply response statuses to MCP `CallToolResult` fields per the defined mapping. (REQ-RPL-076)
+
+> **Note:** MCP's `CallToolResult` has only `isError: true|false` — it cannot distinguish error categories. The adapter maps all non-success terminations (including `interrupted`, which is not an error at the protocol level — see `error-handling/spec.md`) to `isError = true` because the MCP client's tool call did not produce a successful result.
 
 #### Scenario: Successful eval maps to isError false
 - **WHEN** Reply returns `status:["done"]` with `value`

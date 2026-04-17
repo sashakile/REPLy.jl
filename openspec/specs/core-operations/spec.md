@@ -1,17 +1,26 @@
 # Core Operations
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Specify all built-in Reply protocol operations: `describe`, `eval`, `load-file`, `interrupt`, `complete`, `lookup`, `stdin`, `close`, `clone`, `ls-sessions`, and fallback handling for unknown or malformed operations.
+Specify all built-in Reply protocol operations: `describe`, `eval`, `load-file`, `interrupt`, `complete`, `lookup`, `stdin`, `close`, `clone`, `ls-sessions`, and fallback handling for unknown or malformed operations. The `close`, `clone`, and `ls-sessions` operations are handled by `SessionMiddleware`; see `middleware/spec.md` for stack assignment.
 
 ## Requirements
 
 ### Requirement: describe Operation
 The server SHALL implement the `describe` operation returning supported ops, middleware, server version, and available/current encodings. (REQ-RPL-010)
 
+The response SHALL include:
+- `ops`: Dict mapping operation name to an operation descriptor with `doc` (string), `requires` (array of required field names), `optional` (array of optional field names), and `returns` (array of response field names).
+- `versions`: Dict with `julia` (Julia VERSION string) and `reply` (Reply protocol version string).
+- `encodings-available`: Array of encoding names the server supports (e.g., `["json", "msgpack"]`).
+- `encoding-current`: String naming the encoding used on this connection.
+- `status`: `["done"]`
+
 #### Scenario: Describe response shape
 - **WHEN** a client sends `{"op":"describe","id":"1"}`
-- **THEN** the response includes `ops`, `versions`, `encodings-available`, `encoding-current`, and `status:["done"]`
+- **THEN** the response includes `ops` (with at least `eval`, `clone`, `close`, `complete`, `lookup`, `interrupt`, `ls-sessions`, `stdin`, `load-file`), `versions` (with `julia` and `reply` keys), `encodings-available`, `encoding-current`, and `status:["done"]`
 
 ### Requirement: eval Operation
 The server SHALL implement the `eval` operation to evaluate Julia code in a session, streaming stdout/stderr in real time before returning the result value. (REQ-RPL-011)
@@ -124,10 +133,10 @@ The server SHALL implement `stdin` to provide input to an eval blocked on `readl
 
 #### Scenario: stdin when no eval blocked buffers input
 - **WHEN** `stdin` is sent while no eval awaits input
-- **THEN** payload is buffered in `stdin_channel`; oldest entry dropped if full (REQ-RPL-017b)
+- **THEN** payload is buffered in `stdin_channel` (capacity `max_stdin_buffer`, default 16); oldest entry dropped if full (REQ-RPL-017b)
 
 ### Requirement: close Operation
-The server SHALL implement `close` to terminate a named session. (REQ-RPL-018)
+The server SHALL implement `close` to terminate a named session. Handled by `SessionMiddleware`. (REQ-RPL-018)
 
 #### Scenario: Session closed successfully
 - **WHEN** `{"op":"close","id":"8","session":"<id>"}` targets an existing session
@@ -138,7 +147,7 @@ The server SHALL implement `close` to terminate a named session. (REQ-RPL-018)
 - **THEN** response is `{"status":["done","error","session-not-found"]}`
 
 ### Requirement: clone Operation
-The server SHALL implement `clone` to create a new session, optionally copying state from a parent. (REQ-RPL-036)
+The server SHALL implement `clone` to create a new session, optionally copying state from a parent. Handled by `SessionMiddleware`. (REQ-RPL-036)
 
 #### Scenario: Create empty session
 - **WHEN** `{"op":"clone","id":"10"}` is sent without a `session` field
@@ -156,8 +165,16 @@ The server SHALL implement `clone` to create a new session, optionally copying s
 - **WHEN** `clone` is attempted from a `heavy` session to `light`
 - **THEN** returns `{"status":["done","error"],"err":"Cannot clone heavy session to light: security boundary"}`
 
+#### Scenario: Light to heavy clone creates new heavy session
+- **WHEN** `clone` is called with a `light` session as parent and `"type":"heavy"`
+- **THEN** a new heavy session is created (bindings are NOT copied across isolation boundaries); returns `{"new-session":"<uuid>","status":["done"]}`
+
+#### Scenario: Clone during in-flight eval waits for eval mutex
+- **WHEN** `clone` targets a session that has an active eval
+- **THEN** the clone waits for the eval to complete (acquires eval mutex) before deep-copying bindings
+
 ### Requirement: ls-sessions Operation
-The server SHALL implement `ls-sessions` to list all active sessions with their metadata. (REQ-RPL-037)
+The server SHALL implement `ls-sessions` to list all active sessions with their metadata. Handled by `SessionMiddleware`. (REQ-RPL-037)
 
 #### Scenario: Sessions listed with metadata
 - **WHEN** `{"op":"ls-sessions","id":"11"}` is sent
@@ -171,7 +188,7 @@ If no middleware handles an `op`, the server SHALL respond with `{"status":["don
 - **THEN** response contains `"status":["done","unknown-op"]`
 
 ### Requirement: Malformed Input Handling
-The server SHALL handle invalid JSON, missing `op`, missing `id`, and oversized messages without crashing. (REQ-RPL-020)
+The server SHALL handle invalid JSON, missing `op`, missing `id`, and oversized messages without crashing. Oversized message enforcement is defined in `security/spec.md` (REQ-RPL-047e). Repeated malformed message disconnection is defined in `error-handling/spec.md` (REQ-RPL-020). (REQ-RPL-020)
 
 #### Scenario: Invalid JSON response
 - **WHEN** a line of non-JSON bytes arrives
@@ -184,7 +201,3 @@ The server SHALL handle invalid JSON, missing `op`, missing `id`, and oversized 
 #### Scenario: Missing id drops message
 - **WHEN** a request lacks the `id` field
 - **THEN** the server logs and drops the message (cannot correlate a response)
-
-#### Scenario: Oversized payload closes connection
-- **WHEN** a message exceeds `ResourceLimits.max_message_size`
-- **THEN** the connection is closed with an audit-log entry; no response is sent

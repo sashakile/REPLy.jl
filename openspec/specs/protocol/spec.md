@@ -1,8 +1,10 @@
 # Protocol Specification
 
+_Version: 1.1 — 2026-04-17_
+
 ## Purpose
 
-Define the wire format, message structure, status flags, encoding selection, and connection lifecycle for the Reply network REPL protocol — a flat JSON envelope inspired by nREPL, not JSON-RPC 2.0.
+Define the wire format, message structure, status flags, encoding selection, and connection lifecycle for the Reply network REPL protocol — a flat JSON envelope inspired by nREPL. This is the canonical protocol-layer spec; operation-specific behavior is defined in `core-operations/spec.md`.
 
 ## Requirements
 
@@ -18,7 +20,7 @@ All messages SHALL be JSON objects using a flat nREPL-shaped envelope with `op`,
 - **THEN** the server treats it as a sessionless (ephemeral) request
 
 ### Requirement: Request ID Length Limit
-The `id` field of every request SHALL be between 1 and 256 characters. Requests with `id` longer than 256 characters SHALL be rejected with a protocol error. (REQ-RPL-001b)
+The `id` field of every request SHALL be between 1 and `max_id_length` (default 256; see `resource-limits/spec.md`) characters. Requests with `id` longer than `max_id_length` SHALL be rejected with a protocol error. (REQ-RPL-001b)
 
 #### Scenario: Oversized ID rejected
 - **WHEN** a request arrives with `id` of 257 characters
@@ -91,6 +93,8 @@ The message encoding SHALL be selected at connection time, not inside a message.
 #### Scenario: URL-scheme selects MessagePack
 - **WHEN** a client connects to `unix+msgpack:///path/to/sock`
 - **THEN** the server uses MessagePack encoding for that connection
+
+> **Note:** MessagePack framing (message delimitation without newlines) is deferred. When specified, it will use length-prefixed framing. For v1.0, only newline-delimited JSON is normative.
 
 ### Requirement: Status Flags
 Response `status` fields, when present, SHALL be JSON arrays of registered string flags. Unknown flags SHALL be ignored by clients. (REQ-RPL-004)
