@@ -7,6 +7,8 @@ export AbstractTransport, JSONTransport, close, done_response, error_response,
     receive, response_message, send!, validate_request
 
 include("protocol/message.jl")
+include("session/module_session.jl")
+include("session/manager.jl")
 
 """Return the canonical protocol name for this package."""
 protocol_name() = "REPLy"
