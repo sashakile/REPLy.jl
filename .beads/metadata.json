@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "REPLy_jl",
+  "project_id": "8eb152dc-2561-4e33-aeaa-1cb04fbbfcaf"
+}
