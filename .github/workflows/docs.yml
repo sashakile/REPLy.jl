@@ -1,0 +1,54 @@
+name: Docs
+
+# PREREQUISITE: In GitHub → Settings → Pages → Source, set to "GitHub Actions".
+# This workflow uses the artifact-based Pages deployment (no gh-pages branch).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write      # required by actions/deploy-pages
+  id-token: write   # required by actions/deploy-pages
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+
+      - uses: julia-actions/cache@v1
+
+      - name: Install docs dependencies
+        run: |
+          julia --project=docs/ -e '
+            using Pkg
+            Pkg.develop(PackageSpec(path=pwd()))
+            Pkg.instantiate()'
+
+      - name: Build docs
+        run: julia --project=docs/ docs/make.jl
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build
+
+  deploy:
+    needs: build
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
