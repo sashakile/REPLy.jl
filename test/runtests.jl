@@ -15,6 +15,7 @@ include("helpers/server.jl")
     @testset "unit" begin
         include("unit/basic_test.jl")
         include("unit/message_test.jl")
+        include("unit/session_test.jl")
     end
 
     @testset "integration" begin
