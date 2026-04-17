@@ -20,7 +20,7 @@ The repository uses:
 ## Preferred commands
 
 Use the repo `justfile`:
-- `just bootstrap` — install git hooks through `prek`
+- `just bootstrap` — install git hooks through `prek` (including a pre-push test gate)
 - `just hooks` — run configured hooks across the repo
 - `just lint` — run spelling and prose checks
 - `just test` — run Julia tests when a package scaffold exists

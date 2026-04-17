@@ -4,8 +4,15 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  hygiene:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -15,6 +22,14 @@ jobs:
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.12'
+
+      - name: Cache Julia artifacts
+        uses: julia-actions/cache@v1
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
 
       - name: Install base tooling
         run: |

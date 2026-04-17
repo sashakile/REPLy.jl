@@ -11,7 +11,7 @@ This repository is configured with lightweight automation for local and CI check
 
 ### Common commands
 
-- `just bootstrap` — install git hooks with `prek`
+- `just bootstrap` — install git hooks with `prek` (including a pre-push test gate)
 - `just hooks` — run git-hook checks on all files
 - `just lint` — run spelling and prose checks
 - `just test` — run Julia tests when package files exist
@@ -22,7 +22,7 @@ This repository is configured with lightweight automation for local and CI check
 ### Tooling added
 
 - `justfile` for common commands
-- `prek.toml` for git hook management
+- `prek.toml` for git hook management, including running `just test` on `pre-push`
 - `.editorconfig` for formatting conventions
 - `_typos.toml` for spelling checks
 - `.vale.ini` for prose linting

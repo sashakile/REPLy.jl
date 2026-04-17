@@ -1,7 +1,7 @@
 ---
 date: 2026-04-17
 project: tracer-bullet
-phase: design
+phase: implement
 ---
 
 # Session Handoff
@@ -36,15 +36,18 @@ phase: design
 
 ```
 M  .beads/issues.jsonl
-?? .wai/projects/tracer-bullet/plans/
+ M .github/workflows/ci.yml
+ M .wai/projects/tracer-bullet/.state
+ M README.md
+ M llm.txt
+ M prek.toml
+?? .wai/projects/tracer-bullet/plans/2026-04-17-clean-up-ci-workflows-and-add-a-pre-push-test-gate.md
 ```
 
 ### open_issues
 
 ```
 ○ REPLy_jl-556 ● P1 [epic] Implement tracer bullet: eval over TCP thin slice
-├── ○ REPLy_jl-556.1 ● P1 Scaffold tracer-bullet test harness and shared helpers
-├── ○ REPLy_jl-556.2 ● P1 Implement message framing and protocol boundary checks
 ├── ○ REPLy_jl-556.3 ● P1 Implement ephemeral session manager for tracer bullet
 ├── ○ REPLy_jl-556.4 ● P1 Implement eval middleware streaming for tracer bullet
 ├── ○ REPLy_jl-556.5 ● P1 Implement minimal middleware chain and error responders
@@ -54,7 +57,8 @@ M  .beads/issues.jsonl
 └── ○ REPLy_jl-556.9 ● P2 Tidy tracer-bullet implementation after green suite
 
 --------------------------------------------------------------------------------
-Total: 10 issues (10 open, 0 in progress)
+Total: 8 issues (8 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
+
 ```
