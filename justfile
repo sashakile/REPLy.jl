@@ -29,6 +29,9 @@ test:
 coverage:
     ./scripts/coverage.sh
 
+docs:
+    julia --project=docs/ -e 'using LiveServer; servedocs()'
+
 check: lint workflow-lint test coverage
 
 full-check: check specs doctor
