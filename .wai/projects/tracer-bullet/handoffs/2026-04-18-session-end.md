@@ -32,18 +32,6 @@ phase: implement
 
 ## Context
 
-### git_status
-
-```
-M  .beads/issues.jsonl
- M Project.toml
- M src/REPLy.jl
- M test/e2e/eval_test.jl
- M test/helpers/server.jl
-?? src/server.jl
-?? src/transport/
-```
-
 ### open_issues
 
 ```
