@@ -8,7 +8,7 @@ function assert_conformance(msgs::Vector{<:AbstractDict}, request_id::String)
     @test done_index == length(msgs)
 
     out_indexes = findall(msg -> haskey(msg, "out"), msgs)
-    stderr_chunk_indexes = findall(msg -> haskey(msg, "err") && !haskey(msg, "status"), msgs)
+    stderr_message_indexes = findall(msg -> haskey(msg, "err") && !haskey(msg, "status"), msgs)
     value_indexes = findall(msg -> haskey(msg, "value"), msgs)
 
     if !isempty(value_indexes)
@@ -19,8 +19,8 @@ function assert_conformance(msgs::Vector{<:AbstractDict}, request_id::String)
         @test maximum(out_indexes) < minimum(value_indexes)
     end
 
-    if !isempty(stderr_chunk_indexes) && !isempty(value_indexes)
-        @test maximum(stderr_chunk_indexes) < minimum(value_indexes)
+    if !isempty(stderr_message_indexes) && !isempty(value_indexes)
+        @test maximum(stderr_message_indexes) < minimum(value_indexes)
     end
 
     for (index, msg) in pairs(msgs)
