@@ -53,6 +53,22 @@
         @test msg["err"] == "Unknown operation: frobnicate"
     end
 
+    @testset "build_handler preserves validation errors for malformed requests" begin
+        missing_op = only(REPLy.build_handler()(Dict("id" => "missing-op", "code" => "1+1")))
+        missing_id = only(REPLy.build_handler()(Dict("op" => "eval", "code" => "1+1")))
+
+        @test missing_op == Dict(
+            "id" => "missing-op",
+            "status" => ["done", "error"],
+            "err" => "op is required",
+        )
+        @test missing_id == Dict(
+            "id" => "",
+            "status" => ["done", "error"],
+            "err" => "id must not be empty",
+        )
+    end
+
     @testset "exceptions without .msg use showerror fallback" begin
         struct NoMsgError <: Exception end
         Base.showerror(io::IO, ::NoMsgError) = print(io, "no msg fallback")
