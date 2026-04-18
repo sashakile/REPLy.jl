@@ -19,7 +19,8 @@
     end
 
     @testset "eval middleware intercepts eval without delegating" begin
-        ctx = REPLy.RequestContext(REPLy.SessionManager(), Dict{String, Any}[], REPLy.create_ephemeral_session!(REPLy.SessionManager()))
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
         called = Ref(false)
         request = Dict("op" => "eval", "id" => "mw-handle", "code" => "1 + 1")
 
@@ -37,5 +38,16 @@
         @test responses isa Vector{Dict{String, Any}}
         @test any(get(msg, "value", nothing) == "2" for msg in responses)
         @test any(get(msg, "status", String[]) == ["done"] for msg in responses)
+    end
+
+    @testset "custom eval-only stack does not leak fallback sessions" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager, middleware=REPLy.AbstractMiddleware[REPLy.EvalMiddleware()])
+
+        @test REPLy.session_count(manager) == 0
+        responses = handler(Dict("op" => "eval", "id" => "mw-cleanup", "code" => "1 + 1"))
+
+        @test any(get(msg, "value", nothing) == "2" for msg in responses)
+        @test REPLy.session_count(manager) == 0
     end
 end

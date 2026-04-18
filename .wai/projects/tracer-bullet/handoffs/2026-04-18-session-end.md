@@ -36,14 +36,10 @@ phase: implement
 
 ```
 M  .beads/issues.jsonl
- M src/REPLy.jl
- M src/protocol/message.jl
- M test/runtests.jl
-?? .wai/projects/tracer-bullet/plans/2026-04-18-implemented-minimal-middleware-chain-with-per-requ.md
-?? src/errors.jl
-?? src/middleware/
-?? test/unit/error_test.jl
-?? test/unit/middleware_test.jl
+ M src/middleware/core.jl
+ M test/unit/error_test.jl
+ M test/unit/middleware_test.jl
+?? .wai/projects/tracer-bullet/plans/2026-04-18-fixed-post-review-middleware-bugs-by-validating-re.md
 ```
 
 ### open_issues

@@ -16,21 +16,13 @@ emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
 handle_message(::AbstractMiddleware, msg, next, ctx::RequestContext) = next(msg)
 
-function emit_streams!(ctx::RequestContext, request_id::AbstractString, stdout_buffer::IOBuffer, stderr_buffer::IOBuffer)
-    stdout_text = String(take!(stdout_buffer))
-    stderr_text = String(take!(stderr_buffer))
-
-    isempty(stdout_text) || emit!(ctx, response_message(request_id, "out" => stdout_text))
-    isempty(stderr_text) || emit!(ctx, response_message(request_id, "err" => stderr_text))
-    return nothing
-end
-
 function eval_responses(ctx::RequestContext, request::AbstractDict)
     request_id = String(request["id"])
     code = get(request, "code", "")
     code isa AbstractString || return [error_response(request_id, "code must be a string")]
 
-    session = something(ctx.session, create_ephemeral_session!(ctx.manager))
+    created_session = isnothing(ctx.session)
+    session = created_session ? create_ephemeral_session!(ctx.manager) : something(ctx.session)
     module_ = session_module(session)
 
     try
@@ -47,6 +39,8 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
         ]
     catch ex
         return [eval_error_response(request_id, ex; bt=catch_backtrace())]
+    finally
+        created_session && destroy_session!(ctx.manager, session)
     end
 end
 
@@ -85,6 +79,9 @@ end
 function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack())
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict)
+        validation_error = validate_request(msg)
+        !isnothing(validation_error) && return [validation_error]
+
         request_id = String(get(msg, "id", ""))
         ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing)
         result = dispatch_middleware(middleware, 1, msg, ctx)
