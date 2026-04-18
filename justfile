@@ -26,12 +26,15 @@ doctor:
 test:
     ./scripts/check-julia-package.sh test
 
+smoke-test:
+    julia --project=. scripts/smoke-test.jl
+
 coverage:
     ./scripts/coverage.sh
 
 docs:
     julia --project=docs/ -e 'using LiveServer; servedocs()'
 
-check: lint workflow-lint test coverage
+check: lint workflow-lint test smoke-test coverage
 
 full-check: check specs doctor
