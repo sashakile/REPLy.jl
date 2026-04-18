@@ -16,6 +16,7 @@ include("helpers/server.jl")
         include("unit/basic_test.jl")
         include("unit/message_test.jl")
         include("unit/session_test.jl")
+        include("unit/eval_middleware_test.jl")
         include("unit/middleware_test.jl")
         include("unit/error_test.jl")
     end
