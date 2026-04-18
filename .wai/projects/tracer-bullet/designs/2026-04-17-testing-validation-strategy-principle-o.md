@@ -20,9 +20,9 @@ Full TCP round-trip tests. Start a real server, connect a socket, send JSON, ver
 Middleware pipeline as function call — no network, no sockets.
 
 - `pipeline_test.jl` — feed Dict into pipeline, verify response Dicts
-- Streaming order: out/err chunks → value → done
+- Buffered output order: out/err messages before value before done
 - Ephemeral session lifecycle via `session_count(manager)`:
-  assert 0 before eval, 1 during eval, 0 after done (leak detection)
+  assert 0 before and after ephemeral eval flows (leak detection)
 - Error shapes: unknown op, eval error, parse error
 
 #### Layer 3: Unit (`test/unit/`)
@@ -34,8 +34,9 @@ Individual components in isolation.
   lines → skip), id length validation (id > 256 chars → rejected)
 - `session_test.jl` — anonymous Module creation, eval isolation between sessions,
   cleanup, `session_count` accessor (0 → 1 → 0 around ephemeral eval for leak detection)
-- `eval_middleware_test.jl` — stdout capture, stderr capture, value repr, empty code → nothing,
-  err field disambiguation (stderr chunk has no `status`; error response has `status:["error"]`)
+- `eval_middleware_test.jl` — buffered stdout/stderr capture, value repr, empty code → nothing,
+  large-output completion, err field disambiguation (stderr message has no `status`;
+  error response has `status:["error"]`)
 - `middleware_test.jl` — pass-through for unhandled ops, intercept for handled ops
 - `error_test.jl` — UndefVarError shape, parse error shape, status flags, id-too-long rejection
 
@@ -48,9 +49,9 @@ Reusable function run against any response stream:
 function assert_conformance(msgs::Vector{Dict}, request_id::String)
     # 1. id echo — every response carries the request id
     # 2. exactly one done — stream ends with one status:["done",...] message
-    # 3. ordering — out/err chunks before value before done
+    # 3. ordering — buffered out/err messages before value before done
     # 4. kebab-case — no snake_case keys in any response
-    # 5. err disambiguation — stderr chunks have "err" with NO "status";
+    # 5. err disambiguation — buffered stderr messages have "err" with NO "status";
     #    error responses have "err" WITH "status" containing "error"
 end
 ```
@@ -106,7 +107,7 @@ test/
 4.  Write + implement unit/session_test.jl           (RED → GREEN)
     — includes session_count accessor for leak detection
 5.  Write + implement unit/eval_middleware_test.jl    (RED → GREEN)
-    — includes stderr capture, err field disambiguation
+    — includes buffered stderr capture, large-output completion, err field disambiguation
 6.  Write + implement unit/middleware_test.jl         (RED → GREEN)
 7.  Write + implement unit/error_test.jl             (RED → GREEN)
 8.  Implement pipeline assembly                      (wire middleware chain + HandlerContext)
@@ -146,13 +147,13 @@ test/
 | REQ-RPL-004 | Done emitted once on success | helpers/conformance.jl | COVERED |
 | REQ-RPL-004 | No double done on parse error | unit/error_test.jl | COVERED |
 | REQ-RPL-004b | Stdout before value before done | helpers/conformance.jl | COVERED |
-| REQ-RPL-005 | Multiple stdout chunks before done | integration/pipeline_test.jl | COVERED |
+| REQ-RPL-005 | Buffered stdout message precedes done | integration/pipeline_test.jl | COVERED |
 | REQ-RPL-005 | err field disambiguation | unit/eval_middleware_test.jl | COVERED |
 | REQ-RPL-007 | Response uses kebab-case | helpers/conformance.jl | COVERED |
 | REQ-RPL-008 | Message framing with newline | unit/message_test.jl | COVERED |
 | **Core-operations** | | | |
 | REQ-RPL-011 | Successful eval | e2e/eval_test.jl | COVERED |
-| REQ-RPL-011 | Eval with stdout | integration/pipeline_test.jl | COVERED |
+| REQ-RPL-011 | Eval with buffered stdout | integration/pipeline_test.jl | COVERED |
 | REQ-RPL-011b | Empty code returns nothing | unit/eval_middleware_test.jl | COVERED |
 | REQ-RPL-011c | Dotted module path | — | DEFERRED |
 | REQ-RPL-011d | allow-stdin false | — | DEFERRED |
@@ -189,3 +190,5 @@ test/
 | REQ-RPL-043 | Port conflict logged | — | DEFERRED |
 
 **Totals:** 27 COVERED, 14 DEFERRED across 6 spec domains (41 scenarios total)
+
+Note: the tracer bullet currently buffers stdout/stderr per stream during eval and emits those messages before the terminal value/done pair; it does not promise live chunk streaming or stdout/stderr interleaving fidelity.

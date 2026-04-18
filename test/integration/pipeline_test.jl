@@ -1,5 +1,5 @@
 @testset "integration: tracer bullet pipeline" begin
-    @testset "success path streams stdout before value and done" begin
+    @testset "success path returns buffered stdout before value and done" begin
         request = Dict(
             "op" => "eval",
             "id" => "integration-1",
@@ -69,5 +69,19 @@
 
         assert_conformance(msgs, "integration-cleanup")
         @test any(get(msg, "value", nothing) == "42" for msg in msgs)
+    end
+
+    @testset "large buffered stdout completes and preserves terminal value" begin
+        handler = REPLy.build_handler()
+        msgs = handler(Dict(
+            "op" => "eval",
+            "id" => "integration-large-output",
+            "code" => "print(repeat(\"b\", 200000)); 9",
+        ))
+
+        assert_conformance(msgs, "integration-large-output")
+        out_msgs = filter(msg -> haskey(msg, "out"), msgs)
+        @test sum(ncodeunits(msg["out"]) for msg in out_msgs) == 200000
+        @test only(filter(msg -> haskey(msg, "value"), msgs))["value"] == "9"
     end
 end

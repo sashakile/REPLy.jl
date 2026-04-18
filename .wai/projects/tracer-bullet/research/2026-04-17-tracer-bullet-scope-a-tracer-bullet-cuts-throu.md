@@ -22,9 +22,9 @@ is always the final message in the stream.
 2. **Protocol** — Newline-delimited JSON framing, flat envelope
 3. **Middleware** — Minimal 3-middleware subset of the default 9-middleware stack: SessionMiddleware → EvalMiddleware → UnknownOpMiddleware. The remaining 6 (DescribeMiddleware, InterruptMiddleware, LoadFileMiddleware, CompletionMiddleware, LookupMiddleware, StdinMiddleware) are deferred — each adds an operation but doesn't change the pipeline architecture.
 4. **Session** — Ephemeral session (anonymous Module, auto-created when no session field)
-5. **Core-operations** — `Core.eval` in session module, stdout/stderr capture, value repr
+5. **Core-operations** — `Core.eval` in session module, buffered stdout/stderr capture, value repr
 6. **Error handling** — Malformed JSON closes the TCP boundary without a protocol response; unknown op and eval errors use structured error messages with ex/stacktrace
-7. **Protocol invariants** — id echo, done-terminated stream, kebab-case keys
+7. **Protocol invariants** — id echo, done-terminated stream, kebab-case keys; buffered out/err messages (if present) precede value/done
 
 ### What's deliberately OUT of scope
 
