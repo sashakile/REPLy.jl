@@ -55,8 +55,25 @@ end
 
 done_response(request_id::AbstractString) = response_message(request_id, "status" => ["done"])
 
-function error_response(request_id::AbstractString, err::AbstractString)
-    return response_message(request_id, "status" => ["done", "error"], "err" => err)
+function error_response(
+    request_id::AbstractString,
+    err::AbstractString;
+    status_flags::Vector{String}=String["error"],
+    ex=nothing,
+    bt=nothing,
+)
+    status = unique(vcat(String["done"], status_flags))
+    msg = response_message(request_id, "status" => status, "err" => err)
+
+    if !isnothing(ex)
+        msg["ex"] = Dict(
+            "type" => string(typeof(ex)),
+            "message" => exception_message(ex),
+        )
+        msg["stacktrace"] = stacktrace_payload(something(bt, catch_backtrace()))
+    end
+
+    return msg
 end
 
 is_kebab_case_key(key::AbstractString) = occursin(r"^[a-z][a-z0-9-]*$", key)
