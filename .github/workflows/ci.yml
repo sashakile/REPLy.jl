@@ -53,6 +53,9 @@ jobs:
       - name: Run repository checks
         run: just check
 
+      - name: Run TCP smoke test
+        run: just smoke-test
+
       - name: Upload coverage to Codecov
         if: ${{ hashFiles('Project.toml') != '' && hashFiles('test/runtests.jl') != '' }}
         uses: codecov/codecov-action@v5
