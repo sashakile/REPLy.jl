@@ -29,9 +29,9 @@ Middleware pipeline as function call — no network, no sockets.
 Individual components in isolation.
 
 - `message_test.jl` — JSON parse/serialize, newline termination, malformed input,
-  `receive` postconditions (malformed JSON → nothing, non-object JSON → skip/nothing,
-  client disconnect → nothing, empty/whitespace lines → skip), id length validation
-  (id > 256 chars → rejected)
+  `receive` postconditions (malformed JSON → treat as closed boundary / return nothing,
+  non-object JSON → skip/nothing, client disconnect → nothing, empty/whitespace
+  lines → skip), id length validation (id > 256 chars → rejected)
 - `session_test.jl` — anonymous Module creation, eval isolation between sessions,
   cleanup, `session_count` accessor (0 → 1 → 0 around ephemeral eval for leak detection)
 - `eval_middleware_test.jl` — stdout capture, stderr capture, value repr, empty code → nothing,
@@ -182,6 +182,7 @@ test/
 | REQ-RPL-063 | Session not found | — | DEFERRED |
 | **Transport** | | | |
 | REQ-RPL-040b | Partial read → nothing | unit/message_test.jl | COVERED |
+| REQ-RPL-040b | Malformed JSON → close boundary / no response | unit/message_test.jl, e2e/eval_test.jl | COVERED |
 | REQ-RPL-040b | Non-object JSON → skip | unit/message_test.jl | COVERED |
 | REQ-RPL-042 | TCP accepts connections | e2e/eval_test.jl | COVERED |
 | REQ-RPL-042 | Two concurrent connections | e2e/eval_test.jl | COVERED |
