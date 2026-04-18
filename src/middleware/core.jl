@@ -16,6 +16,13 @@ emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
 handle_message(::AbstractMiddleware, msg, next, ctx::RequestContext) = next(msg)
 
+function output_chunk_messages(request_id::AbstractString, stdout_text::AbstractString, stderr_text::AbstractString)
+    messages = Dict{String, Any}[]
+    !isempty(stdout_text) && push!(messages, response_message(request_id, "out" => stdout_text))
+    !isempty(stderr_text) && push!(messages, response_message(request_id, "err" => stderr_text))
+    return messages
+end
+
 function eval_responses(ctx::RequestContext, request::AbstractDict)
     request_id = String(request["id"])
     code = get(request, "code", "")
@@ -24,21 +31,43 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
     created_session = isnothing(ctx.session)
     session = created_session ? create_ephemeral_session!(ctx.manager) : something(ctx.session)
     module_ = session_module(session)
+    stdout_pipe = Pipe()
+    stderr_pipe = Pipe()
 
     try
-        value = if isempty(strip(code))
-            nothing
-        else
-            expr = Meta.parse(code)
-            Core.eval(module_, expr)
+        value = try
+            redirect_stdout(stdout_pipe) do
+                redirect_stderr(stderr_pipe) do
+                    if isempty(strip(code))
+                        nothing
+                    else
+                        expr = Meta.parse(code)
+                        Core.eval(module_, expr)
+                    end
+                end
+            end
+        catch ex
+            close(Base.pipe_writer(stdout_pipe))
+            close(Base.pipe_writer(stderr_pipe))
+            output_messages = output_chunk_messages(
+                request_id,
+                String(read(Base.pipe_reader(stdout_pipe))),
+                String(read(Base.pipe_reader(stderr_pipe))),
+            )
+            append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
+            return output_messages
         end
 
-        return [
-            response_message(request_id, "value" => repr(value), "ns" => string(nameof(module_))),
-            done_response(request_id),
-        ]
-    catch ex
-        return [eval_error_response(request_id, ex; bt=catch_backtrace())]
+        close(Base.pipe_writer(stdout_pipe))
+        close(Base.pipe_writer(stderr_pipe))
+        responses = output_chunk_messages(
+            request_id,
+            String(read(Base.pipe_reader(stdout_pipe))),
+            String(read(Base.pipe_reader(stderr_pipe))),
+        )
+        push!(responses, response_message(request_id, "value" => repr(value), "ns" => string(nameof(module_))))
+        push!(responses, done_response(request_id))
+        return responses
     finally
         created_session && destroy_session!(ctx.manager, session)
     end
