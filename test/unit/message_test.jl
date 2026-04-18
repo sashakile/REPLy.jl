@@ -21,8 +21,9 @@
             @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
         end
 
-        @testset "receive returns nothing on malformed JSON" begin
+        @testset "receive treats malformed JSON as a closed boundary" begin
             transport = REPLy.JSONTransport(IOBuffer("{\"op\":\"eval\",\"id\":}\n"), ReentrantLock())
+            @test isnothing(REPLy.receive(transport))
             @test isnothing(REPLy.receive(transport))
         end
 

@@ -73,4 +73,22 @@
             end
         end
     end
+
+    @testset "malformed json closes the connection without a protocol response" begin
+        with_server(port=0) do handle
+            sock = connect(handle.port)
+
+            try
+                write(sock, "{\"op\":\"eval\",\"id\":}\n")
+                flush(sock)
+
+                reader = @async read(sock, String)
+                status = timedwait(() -> istaskdone(reader), 5.0)
+                @test status == :ok
+                @test fetch(reader) == ""
+            finally
+                isopen(sock) && close(sock)
+            end
+        end
+    end
 end
