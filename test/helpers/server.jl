@@ -10,3 +10,14 @@ function with_server(f; port=0)
         close(server)
     end
 end
+
+function with_unix_server(f; path=tempname())
+    server = REPLy.serve(; socket_path=path)
+    handle = (; server, path=REPLy.server_socket_path(server))
+
+    try
+        return f(handle)
+    finally
+        close(server)
+    end
+end

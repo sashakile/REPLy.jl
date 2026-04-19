@@ -3,14 +3,24 @@ mutable struct TCPServerHandle
     port::Int
     accept_task::Task
     client_tasks::Vector{Task}
-    clients::Vector{TCPSocket}
+    clients::Vector{IO}
+    handler::Function
+    closing::Base.RefValue{Bool}
+end
+
+mutable struct UnixServerHandle
+    listener::Sockets.PipeServer
+    path::String
+    accept_task::Task
+    client_tasks::Vector{Task}
+    clients::Vector{IO}
     handler::Function
     closing::Base.RefValue{Bool}
 end
 
 is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
-function handle_client!(socket::TCPSocket, handler::Function)
+function handle_client!(socket::IO, handler::Function)
     transport = JSONTransport(socket, ReentrantLock())
 
     try
@@ -34,7 +44,7 @@ function handle_client!(socket::TCPSocket, handler::Function)
     return nothing
 end
 
-function accept_loop!(listener::Sockets.TCPServer, handle::TCPServerHandle)
+function accept_loop!(listener, handle)
     while !handle.closing[]
         socket = try
             accept(listener)
@@ -58,4 +68,25 @@ function accept_loop!(listener::Sockets.TCPServer, handle::TCPServerHandle)
     end
 
     return nothing
+end
+
+function listen_unix(path::AbstractString)
+    ispath(path) && rm(path; force=true)
+
+    # Create the socket with a restrictive umask, then re-assert 0o600 explicitly.
+    old_umask = ccall(:umask, Cuint, (Cuint,), 0o077)
+    listener = try
+        listen(path)
+    finally
+        ccall(:umask, Cuint, (Cuint,), old_umask)
+    end
+
+    try
+        chmod(path, 0o600)
+        return listener
+    catch
+        isopen(listener) && close(listener)
+        ispath(path) && rm(path; force=true)
+        rethrow()
+    end
 end
