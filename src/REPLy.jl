@@ -6,7 +6,7 @@ using Sockets
 export protocol_name, version_string
 export AbstractTransport, JSONTransport, close, done_response, error_response,
     receive, response_message, send!, validate_request
-export build_handler, serve, server_port
+export build_handler, serve, server_port, server_socket_path
 
 include("errors.jl")
 include("protocol/message.jl")

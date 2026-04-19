@@ -34,6 +34,7 @@ include("helpers/server.jl")
         # Keep outer-layer tests visible while inner tickets land incrementally.
         if isdefined(REPLy, :serve)
             include("e2e/eval_test.jl")
+            include("e2e/unix_socket_test.jl")
         else
             @test_broken isdefined(REPLy, :serve)
         end
