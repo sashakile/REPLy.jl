@@ -1,6 +1,7 @@
 const MCP_PROTOCOL_VERSION = "2024-11-05"
 const MCP_EPHEMERAL_SESSION = "ephemeral"
 
+"""Return the MCP `initialize` result advertised by the reference adapter helpers."""
 function mcp_initialize_result()
     return Dict{String, Any}(
         "protocolVersion" => MCP_PROTOCOL_VERSION,
@@ -12,6 +13,7 @@ function mcp_initialize_result()
     )
 end
 
+"""Return the static MCP tool catalog exposed by the reference adapter."""
 function mcp_tools()
     return Dict{String, Any}[
         mcp_tool(
@@ -84,6 +86,13 @@ function mcp_tools()
     ]
 end
 
+"""
+Build a Reply `eval` request from MCP `julia_eval` arguments.
+
+When `session` is omitted, the adapter routes to `default_session`.
+When `session == "ephemeral"`, the Reply request omits the `session` field.
+This helper rejects invalid adapter inputs before emitting a Reply message.
+"""
 function mcp_eval_request(request_id::AbstractString, args::AbstractDict; default_session::AbstractString)
     code = get(args, "code", nothing)
     code isa AbstractString || throw(ArgumentError("julia_eval requires a string code field"))
@@ -113,28 +122,61 @@ function mcp_eval_request(request_id::AbstractString, args::AbstractDict; defaul
     timeout_ms = get(args, "timeout_ms", nothing)
     if !isnothing(timeout_ms)
         timeout_ms isa Integer || throw(ArgumentError("timeout_ms must be an integer when provided"))
+        timeout_ms >= 1 || throw(ArgumentError("timeout_ms must be ≥ 1"))
         request["timeout-ms"] = timeout_ms
     end
 
     return request
 end
 
-function collect_reply_stream(transport::AbstractTransport, request_id::AbstractString)
-    msgs = Dict{String, Any}[]
+"""
+Collect Reply messages for `request_id` until the terminal `done` status arrives.
+
+Messages for other request ids are buffered into `pending`, allowing callers to
+safely reuse the same transport across interleaved request streams.
+"""
+function collect_reply_stream(
+    transport::AbstractTransport,
+    request_id::AbstractString;
+    pending::AbstractDict{String, Vector{Dict{String, Any}}}=Dict{String, Vector{Dict{String, Any}}}(),
+)
+    collected = Dict{String, Any}[]
 
     while true
-        msg = receive(transport)
-        isnothing(msg) && throw(EOFError())
-        get(msg, "id", nothing) == request_id || continue
-        push!(msgs, msg)
+        buffered = get(pending, request_id, nothing)
+        if buffered isa Vector{Dict{String, Any}} && !isempty(buffered)
+            msg = popfirst!(buffered)
+            if isempty(buffered)
+                delete!(pending, request_id)
+            end
+        else
+            msg = receive(transport)
+            isnothing(msg) && throw(EOFError())
+            msg_id = get(msg, "id", nothing)
+            msg_id isa AbstractString || continue
+
+            if msg_id != request_id
+                push!(get!(pending, msg_id, Dict{String, Any}[]), msg)
+                continue
+            end
+        end
+
+        push!(collected, msg)
 
         status = get(msg, "status", nothing)
         if status isa AbstractVector && ("done" in status)
-            return msgs
+            return collected
         end
     end
 end
 
+"""
+Map a complete Reply response stream to an MCP `CallToolResult`.
+
+Status precedence is `timeout` > `interrupted` > `error` > success so terminal
+non-success modes produce deterministic MCP output even when Reply status arrays
+contain multiple flags.
+"""
 function reply_stream_to_mcp_result(msgs::AbstractVector{<:AbstractDict})
     isempty(msgs) && throw(ArgumentError("reply stream must not be empty"))
 
