@@ -7,6 +7,8 @@ export protocol_name, version_string
 export AbstractTransport, JSONTransport, close, done_response, error_response,
     receive, response_message, send!, validate_request
 export build_handler, serve, server_port, server_socket_path
+export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
+    reply_stream_to_mcp_result
 
 include("errors.jl")
 include("protocol/message.jl")
@@ -17,6 +19,7 @@ include("middleware/session.jl")
 include("middleware/unknown_op.jl")
 include("transport/tcp.jl")
 include("server.jl")
+include("mcp_adapter.jl")
 
 """Return the canonical protocol name for this package."""
 protocol_name() = "REPLy"
