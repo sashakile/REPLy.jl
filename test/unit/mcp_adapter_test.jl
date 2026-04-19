@@ -25,9 +25,20 @@
             "julia_close_session",
         ]
 
-        eval_tool = only(filter(tool -> tool["name"] == "julia_eval", tools))
-        @test eval_tool["inputSchema"]["required"] == ["code"]
-        @test haskey(eval_tool["inputSchema"]["properties"], "timeout_ms")
+        by_name = Dict(tool["name"] => tool for tool in tools)
+        @test by_name["julia_eval"]["inputSchema"]["required"] == ["code"]
+        @test Set(keys(by_name["julia_eval"]["inputSchema"]["properties"])) == Set(["code", "session", "module", "timeout_ms"])
+        @test by_name["julia_complete"]["inputSchema"]["required"] == ["code", "pos"]
+        @test Set(keys(by_name["julia_complete"]["inputSchema"]["properties"])) == Set(["code", "pos", "session"])
+        @test by_name["julia_lookup"]["inputSchema"]["required"] == ["symbol"]
+        @test Set(keys(by_name["julia_lookup"]["inputSchema"]["properties"])) == Set(["symbol", "module", "session"])
+        @test by_name["julia_load_file"]["inputSchema"]["required"] == ["file"]
+        @test Set(keys(by_name["julia_load_file"]["inputSchema"]["properties"])) == Set(["file", "session"])
+        @test by_name["julia_interrupt"]["inputSchema"]["required"] == ["session"]
+        @test Set(keys(by_name["julia_interrupt"]["inputSchema"]["properties"])) == Set(["session", "interrupt_id"])
+        @test by_name["julia_new_session"]["inputSchema"]["required"] == String[]
+        @test by_name["julia_list_sessions"]["inputSchema"]["required"] == String[]
+        @test by_name["julia_close_session"]["inputSchema"]["required"] == ["session"]
     end
 
     @testset "eval request uses default session and disables stdin" begin
@@ -58,6 +69,15 @@
         @test request["allow-stdin"] == false
     end
 
+    @testset "eval request rejects invalid adapter arguments" begin
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-code", Dict(); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-session", Dict("code" => "1 + 1", "session" => 1); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-module", Dict("code" => "1 + 1", "module" => 2); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-type", Dict("code" => "1 + 1", "timeout_ms" => "250"); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-zero", Dict("code" => "1 + 1", "timeout_ms" => 0); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-negative", Dict("code" => "1 + 1", "timeout_ms" => -5); default_session="session-default")
+    end
+
     @testset "reply stream is collected until done" begin
         io = IOBuffer(
             "{\"id\":\"req-3\",\"out\":\"hi\\n\"}\n" *
@@ -71,6 +91,26 @@
         assert_conformance(msgs, "req-3")
         @test msgs[1]["out"] == "hi\n"
         @test msgs[2]["value"] == "2"
+    end
+
+    @testset "interleaved reply streams are buffered by id" begin
+        io = IOBuffer(
+            "{\"id\":\"req-a\",\"out\":\"hello\\n\"}\n" *
+            "{\"id\":\"req-b\",\"value\":\"99\"}\n" *
+            "{\"id\":\"req-a\",\"status\":[\"done\"]}\n" *
+            "{\"id\":\"req-b\",\"status\":[\"done\"]}\n",
+        )
+        transport = REPLy.JSONTransport(io, ReentrantLock())
+        pending = Dict{String, Vector{Dict{String, Any}}}()
+
+        msgs_a = REPLy.collect_reply_stream(transport, "req-a"; pending)
+        msgs_b = REPLy.collect_reply_stream(transport, "req-b"; pending)
+
+        assert_conformance(msgs_a, "req-a")
+        assert_conformance(msgs_b, "req-b")
+        @test msgs_a[1]["out"] == "hello\n"
+        @test msgs_b[1]["value"] == "99"
+        @test isempty(pending)
     end
 
     @testset "stdout and terminal value become non-error tool content" begin
