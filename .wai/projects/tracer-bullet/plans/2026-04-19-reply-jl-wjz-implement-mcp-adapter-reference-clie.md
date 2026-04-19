@@ -1,0 +1,1 @@
+REPLy_jl-wjz: implement MCP adapter reference-client primitives with TDD. Start with pure helpers and unit tests for tool catalog, initialize payload, eval request shaping (allow-stdin false + session sentinel), and Reply stream -> MCP CallToolResult mapping. Defer stdio server + default persistent session until named-session/core-op support exists.

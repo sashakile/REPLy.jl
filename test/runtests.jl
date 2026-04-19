@@ -19,6 +19,7 @@ include("helpers/server.jl")
         include("unit/eval_middleware_test.jl")
         include("unit/middleware_test.jl")
         include("unit/error_test.jl")
+        include("unit/mcp_adapter_test.jl")
     end
 
     @testset "integration" begin
