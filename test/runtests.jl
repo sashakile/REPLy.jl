@@ -16,6 +16,7 @@ include("helpers/server.jl")
         include("unit/basic_test.jl")
         include("unit/message_test.jl")
         include("unit/session_test.jl")
+        include("unit/session_registry_test.jl")
         include("unit/eval_middleware_test.jl")
         include("unit/middleware_test.jl")
         include("unit/error_test.jl")
@@ -26,6 +27,7 @@ include("helpers/server.jl")
         # Keep outer-layer tests visible while inner tickets land incrementally.
         if isdefined(REPLy, :build_handler)
             include("integration/pipeline_test.jl")
+            include("integration/session_lifecycle_test.jl")
         else
             @test_broken isdefined(REPLy, :build_handler)
         end

@@ -1,0 +1,56 @@
+# Step prompts are navigation hints. Instructions for HOW to do the
+# work belong in skills.
+[pipeline]
+name = "ticket-workflow"
+description = "Work a beads ticket end-to-end: implement → Ro5 review → fix → commit → next ticket"
+
+[[steps]]
+id = "implement"
+prompt = """
+{topic}: Implement the ticket.
+
+1. Run `bd show {topic}` to read the full issue.
+2. Read relevant source files before touching anything.
+3. Claim: `bd update {topic} --claim`
+4. Write a failing test first (TDD), then make it pass.
+5. Record your implementation plan: `wai add plan "..."`
+6. Advance: `wai pipeline next`
+"""
+
+[[steps]]
+id = "review"
+prompt = """
+{topic}: Run a Rule of 5 universal review on the changes.
+
+1. Use skill `/ro5` — invoke it now on the code you just wrote.
+2. Record all findings as a research artifact: `wai add research "Ro5 findings: ..."`
+3. If review found NO issues: record that and advance immediately.
+4. Advance: `wai pipeline next`
+"""
+
+[[steps]]
+id = "fix"
+prompt = """
+{topic}: Address every issue surfaced by the Ro5 review.
+
+1. Re-read the research artifact from the review step.
+2. Fix ALL issues — no deferring unless explicitly out of scope.
+3. Re-run tests to confirm green.
+4. Record what you changed: `wai add plan "Fixes applied: ..."`
+5. Advance: `wai pipeline next`
+"""
+
+[[steps]]
+id = "commit"
+prompt = """
+{topic}: Commit and close.
+
+1. Use skill `/commit` to create a well-structured commit.
+2. Close the ticket: `bd close {topic}`
+3. Check for newly unblocked work: `bd ready`
+4. Record next ticket (if any): `wai add research "Next up: <ticket-id>"`
+5. Advance: `wai pipeline next`
+
+If more tickets remain, start the next one:
+  `wai pipeline start ticket-workflow --topic=<next-ticket-id>`
+"""
