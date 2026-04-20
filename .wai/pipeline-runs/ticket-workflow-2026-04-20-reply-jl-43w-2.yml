@@ -1,0 +1,6 @@
+run_id: ticket-workflow-2026-04-20-reply-jl-43w-2
+pipeline: ticket-workflow
+topic: REPLy_jl-43w.2
+created_at: '2026-04-20T21:27:56.935255592+00:00'
+current_step: 4
+approvals: {}

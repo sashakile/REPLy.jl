@@ -30,6 +30,7 @@ include("helpers/server.jl")
             include("integration/pipeline_test.jl")
             include("integration/session_lifecycle_test.jl")
             include("integration/session_ops_test.jl")
+            include("integration/named_session_persistence_test.jl")
         else
             @test_broken isdefined(REPLy, :build_handler)
         end
@@ -40,6 +41,7 @@ include("helpers/server.jl")
         if isdefined(REPLy, :serve)
             include("e2e/eval_test.jl")
             include("e2e/unix_socket_test.jl")
+            include("e2e/named_session_eval_test.jl")
         else
             @test_broken isdefined(REPLy, :serve)
         end
