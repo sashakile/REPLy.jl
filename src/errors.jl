@@ -27,3 +27,11 @@ function unknown_op_response(request_id::AbstractString, op::AbstractString)
         status_flags=String["error", "unknown-op"],
     )
 end
+
+function session_not_found_response(request_id::AbstractString, session_id::AbstractString)
+    return error_response(
+        request_id,
+        "Session not found: $(session_id)";
+        status_flags=String["error", "session-not-found"],
+    )
+end

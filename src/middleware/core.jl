@@ -7,7 +7,7 @@ end
 mutable struct RequestContext
     manager::SessionManager
     emitted::Vector{Dict{String, Any}}
-    session::Union{ModuleSession, Nothing}
+    session::Union{ModuleSession, NamedSession, Nothing}
 end
 
 struct EvalMiddleware <: AbstractMiddleware end
@@ -34,8 +34,12 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
     code = get(request, "code", "")
     code isa AbstractString || return [error_response(request_id, "code must be a string")]
 
-    created_session = isnothing(ctx.session)
-    session = created_session ? create_ephemeral_session!(ctx.manager) : something(ctx.session)
+    # Defensive ephemeral fallback: SessionMiddleware normally provides a session
+    # before we reach this point.  This guard exists as a safety net for callers
+    # that bypass the middleware stack (e.g., direct eval_responses calls in tests
+    # or alternative pipelines).  With the default stack it is effectively dead code.
+    ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
+    session = something(ephemeral, ctx.session)
     module_ = session_module(session)
     stdout_path, stdout_io = mktemp()
     stderr_path, stderr_io = mktemp()
@@ -75,7 +79,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
         close(stderr_io)
         rm(stdout_path; force=true)
         rm(stderr_path; force=true)
-        created_session && destroy_session!(ctx.manager, session)
+        !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
     end
 end
 
