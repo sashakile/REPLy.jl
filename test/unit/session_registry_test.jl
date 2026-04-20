@@ -95,6 +95,33 @@
         @test length(REPLy.list_named_sessions(manager)) == 1
     end
 
+    @testset "clone_named_session! deep-copies mutable values" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "src")
+        Core.eval(REPLy.session_module(source), :(arr = [1, 2, 3]))
+
+        clone = REPLy.clone_named_session!(manager, "src", "dst")
+        @test clone !== nothing
+
+        # Mutate the array in the clone
+        Core.eval(REPLy.session_module(clone), :(push!(arr, 4)))
+
+        # Original must be unaffected
+        @test Core.eval(REPLy.session_module(source), :arr) == [1, 2, 3]
+        @test Core.eval(REPLy.session_module(clone), :arr) == [1, 2, 3, 4]
+    end
+
+    @testset "clone_named_session! throws when dest_name already exists" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "existing-src")
+        REPLy.create_named_session!(manager, "existing-dst")
+
+        @test_throws ArgumentError REPLy.clone_named_session!(manager, "existing-src", "existing-dst")
+        # Both sessions should still be intact
+        @test REPLy.lookup_named_session(manager, "existing-src") !== nothing
+        @test REPLy.lookup_named_session(manager, "existing-dst") !== nothing
+    end
+
     @testset "ephemeral session count unaffected by named sessions" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "named1")

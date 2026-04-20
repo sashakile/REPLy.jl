@@ -12,7 +12,7 @@ function handle_message(::SessionMiddleware, msg, next, ctx::RequestContext)
         request_id = String(get(msg, "id", ""))
         named = lookup_named_session(ctx.manager, session_id)
         if isnothing(named)
-            return session_not_found_response(request_id, session_id)
+            return [session_not_found_response(request_id, session_id)]
         end
         ctx.session = named
         return next(msg)

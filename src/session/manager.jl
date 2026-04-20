@@ -93,3 +93,43 @@ function destroy_named_session!(manager::SessionManager, name::AbstractString)
     delete!(manager.named_sessions, String(name))
     return nothing
 end
+
+"""
+    clone_named_session!(manager, source_name, dest_name)
+
+Create a new named session `dest_name` by copying the module bindings from
+the session registered under `source_name`. The clone gets its own anonymous
+module so mutations in the clone do not affect the original.
+
+Returns the new `NamedSession`, or `nothing` if `source_name` is not found.
+
+Throws `ArgumentError` if `dest_name` already exists — callers must check
+or close the existing session first.
+"""
+function clone_named_session!(manager::SessionManager, source_name::AbstractString, dest_name::AbstractString)
+    source = lookup_named_session(manager, source_name)
+    isnothing(source) && return nothing
+
+    if !isnothing(lookup_named_session(manager, dest_name))
+        throw(ArgumentError("session already exists: $(dest_name)"))
+    end
+
+    dest = create_named_session!(manager, dest_name)
+    source_mod = session_module(source)
+    dest_mod = session_module(dest)
+
+    # Copy all user-defined bindings from source module to destination module.
+    # We skip names that start with '#' (gensym'd module name) and 'eval'/'include'
+    # which are auto-defined in every module.
+    for sym in names(source_mod; all=true)
+        sym in (:eval, :include) && continue
+        startswith(String(sym), "#") && continue
+        if isdefined(source_mod, sym)
+            val = getfield(source_mod, sym)
+            copied = ismutable(val) ? deepcopy(val) : val
+            Core.eval(dest_mod, :($(sym) = $(QuoteNode(copied))))
+        end
+    end
+
+    return dest
+end
