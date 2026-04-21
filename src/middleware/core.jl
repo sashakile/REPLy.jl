@@ -12,6 +12,8 @@ end
 
 struct EvalMiddleware <: AbstractMiddleware end
 
+const EVAL_IO_CAPTURE_LOCK = ReentrantLock()
+
 emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
 safe_repr(value) = safe_render("repr", repr, value)
@@ -59,34 +61,39 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
     stderr_path, stderr_io = mktemp()
 
     try
-        value = try
-            redirect_stdout(stdout_io) do
-                redirect_stderr(stderr_io) do
-                    if isempty(strip(code))
-                        nothing
-                    else
-                        eval_parsed(module_, Meta.parseall(code))
+        lock(EVAL_IO_CAPTURE_LOCK)
+        try
+            value = try
+                redirect_stdout(stdout_io) do
+                    redirect_stderr(stderr_io) do
+                        if isempty(strip(code))
+                            nothing
+                        else
+                            eval_parsed(module_, Meta.parseall(code))
+                        end
                     end
                 end
+            catch ex
+                output_messages = buffered_output_messages(
+                    request_id,
+                    read_captured_output(stdout_io),
+                    read_captured_output(stderr_io),
+                )
+                append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
+                return output_messages
             end
-        catch ex
-            output_messages = buffered_output_messages(
+
+            responses = buffered_output_messages(
                 request_id,
                 read_captured_output(stdout_io),
                 read_captured_output(stderr_io),
             )
-            append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
-            return output_messages
+            push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
+            push!(responses, done_response(request_id))
+            return responses
+        finally
+            unlock(EVAL_IO_CAPTURE_LOCK)
         end
-
-        responses = buffered_output_messages(
-            request_id,
-            read_captured_output(stdout_io),
-            read_captured_output(stderr_io),
-        )
-        push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
-        push!(responses, done_response(request_id))
-        return responses
     finally
         close(stdout_io)
         close(stderr_io)
