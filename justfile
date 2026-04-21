@@ -37,6 +37,6 @@ coverage:
 docs:
     julia --project=docs/ -e 'using LiveServer; servedocs()'
 
-check: lint workflow-lint test smoke-test coverage
+check: workflow-lint test smoke-test coverage
 
 full-check: check specs doctor

@@ -22,7 +22,23 @@ jobs:
         run: cargo install typos-cli --locked
 
       - name: Check spelling
-        run: just typos-check
+        run: typos .
+
+  vale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Vale
+        run: |
+          VALE_VERSION=3.12.0
+          curl -fsSL -o /tmp/vale.tar.gz "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
+          tar -xzf /tmp/vale.tar.gz -C /tmp
+          sudo install /tmp/vale /usr/local/bin/vale
+
+      - name: Check prose
+        run: just lint
 
   check:
     runs-on: ubuntu-latest
@@ -53,13 +69,6 @@ jobs:
           cargo install prek --locked
           GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@latest
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Install Vale
-        run: |
-          VALE_VERSION=3.12.0
-          curl -fsSL -o /tmp/vale.tar.gz "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz"
-          tar -xzf /tmp/vale.tar.gz -C /tmp
-          sudo install /tmp/vale /usr/local/bin/vale
 
       - name: Run repository checks
         run: just check
