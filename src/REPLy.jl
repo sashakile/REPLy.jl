@@ -7,6 +7,7 @@ export protocol_name, version_string
 export AbstractTransport, JSONTransport, close, done_response, error_response,
     receive, response_message, send!, validate_request
 export build_handler, serve, server_port, server_socket_path
+export RequestContext, HandlerContext, dispatch_middleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result
 

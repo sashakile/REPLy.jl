@@ -1,9 +1,22 @@
 abstract type AbstractMiddleware end
 
+"""
+    HandlerContext(manager::SessionManager)
+
+Context shared across the entire lifespan of a connection or server handler.
+Contains the `SessionManager` that tracks all active sessions.
+"""
 struct HandlerContext
     manager::SessionManager
 end
 
+"""
+    RequestContext(manager::SessionManager, emitted::Vector{Dict{String, Any}}, session::Union{ModuleSession, NamedSession, Nothing})
+
+Context associated with a single incoming request. Tracks the `manager`, the
+list of `emitted` responses generated so far, and the `session` active for
+the request (if any).
+"""
 mutable struct RequestContext
     manager::SessionManager
     emitted::Vector{Dict{String, Any}}
@@ -108,6 +121,14 @@ function handle_message(::EvalMiddleware, msg, next, ctx::RequestContext)
     return eval_responses(ctx, msg)
 end
 
+"""
+    dispatch_middleware(stack::Vector{<:AbstractMiddleware}, index::Int, msg, ctx::RequestContext)
+
+Recursively process `msg` through the middleware `stack` starting at `index`.
+Each middleware piece can choose to forward the message to the `next` piece in the chain
+or handle it immediately and return early. The final responses are typically accumulated
+in `ctx.emitted` or returned directly.
+"""
 function dispatch_middleware(stack::Vector{<:AbstractMiddleware}, index::Int, msg, ctx::RequestContext)
     index > length(stack) && return nothing
     next = next_msg -> dispatch_middleware(stack, index + 1, next_msg, ctx)
