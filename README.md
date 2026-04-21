@@ -55,7 +55,7 @@ The current implementation provides a solid TCP server foundation with request v
 - `just test` — run the full Julia test suite.
 - `just smoke-test` — starts a temporary server, exercises an `eval` request, checks the structured error path, and verifies malformed JSON handling.
 
-### Repo Hygiene
+### Repository Hygiene
 
 This repository uses `just` for lightweight automation:
 - `just bootstrap` — install git hooks with `prek`
@@ -63,4 +63,3 @@ This repository uses `just` for lightweight automation:
 - `just lint` — run spelling and prose checks
 - `just check` — lint + test + smoke test + coverage
 - `just full-check` — `just check` plus OpenSpec and `wai` health checks
-

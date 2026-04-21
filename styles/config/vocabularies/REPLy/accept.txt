@@ -7,3 +7,5 @@ CLIs
 composable
 REPLy
 OpenSpec
+netcat
+stdout
