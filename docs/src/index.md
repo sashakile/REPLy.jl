@@ -3,54 +3,47 @@
 !!! warning "LLM-generated code"
     This project is entirely LLM-generated code. It has not been manually reviewed or audited. Use at your own risk.
 
-REPLy.jl is a network REPL server for Julia — think [nREPL](https://nrepl.org/) for Clojure, but for Julia. It exposes a Julia REPL over a socket-based protocol so that editors and tooling can connect, evaluate code, and inspect results interactively.
+**REPLy.jl** is a network REPL server for Julia. It exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively — similar to [nREPL](https://nrepl.org/) for Clojure.
 
-See also: [Status](status.md) for an implementation, coverage, and spec-conformance view of the current system.
+See also: [Status](status.md) for current implementation details and spec conformance, and [API](api.md) for the Julia API reference.
 
-## Current Status
+## Installation
 
-The current tracer-bullet implementation supports:
+You can install REPLy.jl using Julia's package manager:
 
-- a TCP server started with `REPLy.serve`
-- newline-delimited JSON messages
-- request validation for flat, kebab-case envelopes
-- the `eval` operation
-- buffered `stdout` / `stderr` forwarding
-- structured error responses
-- concurrent clients
-- closing malformed-JSON connections without sending a protocol response
-
-## Automated Testing
-
-```bash
-just test
+```julia
+using Pkg
+Pkg.add("REPLy")
 ```
 
-At the moment, the full test suite passes locally.
+## Quick Start
 
-## Smoke Test Script
+### 1. Start the Server
 
-```bash
-just smoke-test
+Start a REPLy server on a local port (default is `5555`):
+
+```julia
+using REPLy
+
+# Start a server on 127.0.0.1:5555
+server = REPLy.serve(port=5555)
+println("REPLy listening on port $(REPLy.server_port(server))")
+
+# Keep the Julia process alive
+wait(Condition())
 ```
 
-This starts a temporary server, exercises a successful `eval` request, checks the structured runtime-error path, and verifies the malformed-JSON disconnect behavior.
+### 2. Connect and Evaluate Code
 
-## Manual Smoke Test
+Clients communicate with REPLy by sending newline-delimited JSON messages over TCP.
 
-Start a server in one terminal:
-
-```bash
-julia --project=. -e 'using REPLy; server = REPLy.serve(port=5555); println("REPLy listening on $(REPLy.server_port(server))"); wait(Condition())'
-```
-
-Then send a request from another terminal:
+You can test this from a terminal using `nc` (netcat):
 
 ```bash
 printf '%s\n' '{"op":"eval","id":"demo-1","code":"println(\"hello\"); 1 + 1"}' | nc 127.0.0.1 5555
 ```
 
-You should receive a done-terminated response stream like:
+You will receive a stream of JSON responses. REPLy forwards standard output, the evaluated result, and a final `done` status:
 
 ```json
 {"id":"demo-1","out":"hello\n"}
@@ -58,25 +51,18 @@ You should receive a done-terminated response stream like:
 {"id":"demo-1","status":["done"]}
 ```
 
-The exact field order is not significant, and the generated `ns` value will vary by run.
+## Error Handling
 
-A runtime error should produce one structured error response with `done` in `status`:
+If a runtime error occurs during evaluation, REPLy catches it and returns a structured error response, including the stacktrace:
 
 ```bash
 printf '%s\n' '{"op":"eval","id":"demo-err","code":"missing_name + 1"}' | nc 127.0.0.1 5555
 ```
 
-Malformed JSON should cause the server to close the connection without emitting a protocol message:
+## Development and Testing
 
-```bash
-printf '%s\n' '{"op":"eval","id":}' | nc 127.0.0.1 5555
-```
+If you are developing REPLy.jl or want to run the test suite:
 
-## Getting Started
+- **Run Automated Tests**: `just test`
+- **Run Smoke Tests**: `just smoke-test` (starts a temporary server, exercises an `eval` request, checks error paths, and verifies malformed JSON handling).
 
-```julia
-using REPLy
-
-protocol_name()   # "REPLy"
-version_string()  # "0.1.0"
-```
