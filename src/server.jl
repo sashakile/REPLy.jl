@@ -11,6 +11,22 @@ function wait_for_server_task(task::Task)
     return nothing
 end
 
+"""
+    serve(; host=ip"127.0.0.1", port=5555, socket_path=nothing, manager=SessionManager(), middleware=default_middleware_stack())
+
+Start the REPLy JSON-RPC server. If `socket_path` is provided, a Unix domain socket server
+is created at that path. Otherwise, a TCP server is started on the given `host` and `port`.
+
+# Arguments
+- `host`: The IP address to listen on (default: `127.0.0.1`).
+- `port`: The port to listen on (default: `5555`).
+- `socket_path`: An optional path for a Unix domain socket server. Mutually exclusive with `host`/`port`.
+- `manager`: The `SessionManager` used to track state across sessions.
+- `middleware`: A vector of middleware handlers to process incoming requests.
+
+# Returns
+A server handle (`TCPServerHandle` or `UnixServerHandle`) which can be closed with `close(server)`.
+"""
 function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack())
     handler = build_handler(; manager=manager, middleware=middleware)
     closing = Ref(false)
