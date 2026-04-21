@@ -12,6 +12,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  typos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install typos
+        run: cargo install typos-cli --locked
+
+      - name: Check spelling
+        run: just typos-check
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -36,9 +48,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cargo just curl tar
 
-      - name: Install typos, prek, and actionlint
+      - name: Install prek and actionlint
         run: |
-          cargo install typos-cli --locked
           cargo install prek --locked
           GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@latest
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"

@@ -10,8 +10,10 @@ bootstrap:
 hooks:
     prek run --all-files
 
-lint:
+typos-check:
     typos .
+
+lint:
     vale README.md llm.txt openspec/project.md
 
 workflow-lint:
