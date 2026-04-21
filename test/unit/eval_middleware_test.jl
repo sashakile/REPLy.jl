@@ -99,6 +99,34 @@
         @test only(msgs)["ex"]["message"] == "<showerror failed: BrokenEvalError>"
     end
 
+    @testset "concurrent evals keep stdout isolated per request" begin
+        handler = REPLy.build_handler()
+
+        task1 = @async handler(Dict(
+            "op" => "eval",
+            "id" => "eval-concurrent-1",
+            "code" => "yield(); println(\"task-1\"); \"task-1\"",
+        ))
+
+        task2 = @async handler(Dict(
+            "op" => "eval",
+            "id" => "eval-concurrent-2",
+            "code" => "yield(); println(\"task-2\"); \"task-2\"",
+        ))
+
+        msgs1 = fetch(task1)
+        msgs2 = fetch(task2)
+
+        assert_conformance(msgs1, "eval-concurrent-1")
+        assert_conformance(msgs2, "eval-concurrent-2")
+
+        out1 = join(getindex.(filter(msg -> haskey(msg, "out"), msgs1), "out"))
+        out2 = join(getindex.(filter(msg -> haskey(msg, "out"), msgs2), "out"))
+
+        @test out1 == "task-1\n"
+        @test out2 == "task-2\n"
+    end
+
     @testset "large buffered output completes without deadlock" begin
         handler = REPLy.build_handler()
         task = @async handler(Dict(
