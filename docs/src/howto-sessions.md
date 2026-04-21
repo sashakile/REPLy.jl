@@ -17,9 +17,11 @@ manager = SessionManager()
 create_named_session!(manager, "main")
 
 # 3. Start the server using this manager
-server = REPLy.serve(manager=manager, port=5555)
+server = serve(manager=manager, port=5555)
 wait(Condition())
 ```
+
+Once the server is running with the configured manager, you can connect over the socket to begin evaluating code in that named session.
 
 ## 2. Target a Session via RPC
 

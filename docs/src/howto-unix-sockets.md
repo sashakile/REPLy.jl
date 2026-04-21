@@ -15,7 +15,7 @@ using REPLy
 # Any existing file at this path will be overwritten.
 socket_path = "/tmp/reply.sock"
 
-server = REPLy.serve(socket_path=socket_path)
+server = serve(socket_path=socket_path)
 println("REPLy listening on $socket_path")
 
 wait(Condition())
@@ -28,7 +28,11 @@ wait(Condition())
 You can interact with the Unix socket using `netcat` (with the `-U` flag) or `socat`:
 
 ```bash
+# Using netcat
 printf '%s\n' '{"op":"eval","id":"demo-1","code":"1 + 1"}' | nc -U /tmp/reply.sock
+
+# Using socat
+printf '%s\n' '{"op":"eval","id":"demo-1","code":"1 + 1"}' | socat - UNIX-CONNECT:/tmp/reply.sock
 ```
 
 The expected response is identical to the TCP transport:
@@ -46,3 +50,7 @@ When you call `close(server)` from Julia, the socket file is automatically delet
 close(server)
 # /tmp/reply.sock is now gone
 ```
+
+## Next Steps
+
+See the [Tutorial: Building a Custom Client](tutorial-custom-client.md) to learn how to communicate with the socket programmatically from Julia.

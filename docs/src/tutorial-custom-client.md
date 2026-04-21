@@ -23,7 +23,7 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
     conn = connect(host, port)
     
     # 2. Formulate the request
-    request_id = "req-$(round(Int, time() * 1000))"
+    request_id = "req-$(time_ns())"
     request = Dict(
         "op" => "eval",
         "id" => request_id,
@@ -39,7 +39,10 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
     println("Evaluating: $code\n---")
     while isopen(conn)
         line = readline(conn)
-        isempty(line) && continue
+        if isempty(line)
+            eof(conn) && break
+            continue
+        end
         
         response = JSON3.read(line)
         
@@ -56,6 +59,7 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
         end
         
         # Check for the terminal "done" flag
+        # (Note: `status` is parsed as a JSON3 array, which we can search with `in`)
         status = get(response, "status", String[])
         if "done" in status
             if "error" in status
