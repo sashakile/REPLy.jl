@@ -39,6 +39,40 @@
             transport = REPLy.JSONTransport(IOBuffer("[]\n{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"), ReentrantLock())
             @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
         end
+
+        @testset "handle_client! recovers from handler exceptions with non-string ids" begin
+            listener = listen(ip"127.0.0.1", 0)
+            port = Int(getsockname(listener)[2])
+            server_task = @async begin
+                socket = accept(listener)
+                try
+                    REPLy.handle_client!(socket, _ -> error("transport boom"))
+                finally
+                    close(listener)
+                end
+            end
+
+            client = connect(port)
+            try
+                send_request(client, Dict("id" => 123, "op" => "eval", "code" => "1 + 1"))
+                msgs = collect_until_done(client)
+
+                @test length(msgs) == 1
+                @test only(msgs)["id"] == ""
+                @test only(msgs)["err"] == "transport boom"
+                @test only(msgs)["ex"]["message"] == "transport boom"
+
+                send_request(client, Dict("op" => "eval", "code" => "2 + 2"))
+                second_msgs = collect_until_done(client)
+
+                @test length(second_msgs) == 1
+                @test only(second_msgs)["id"] == ""
+                @test only(second_msgs)["err"] == "transport boom"
+            finally
+                isopen(client) && close(client)
+                wait(server_task)
+            end
+        end
     end
 end
 

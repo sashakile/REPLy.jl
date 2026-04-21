@@ -75,4 +75,25 @@
 
         @test REPLy.exception_message(NoMsgError()) == "no msg fallback"
     end
+
+    @testset "exception_message falls back when showerror throws" begin
+        struct BrokenShowerror <: Exception end
+        Base.show(io::IO, ::BrokenShowerror) = error("broken show")
+
+        msg = REPLy.exception_message(BrokenShowerror())
+        @test msg == "<showerror failed: BrokenShowerror>"
+    end
+
+    @testset "fallback_render strips unstable module prefixes" begin
+        m = Module()
+        Core.eval(m, :(struct HiddenType end))
+        value = getfield(m, :HiddenType)()
+
+        @test REPLy.fallback_render("repr", value) == "<repr failed: HiddenType>"
+    end
+
+    @testset "fallback_render preserves useful parametric type detail" begin
+        @test REPLy.fallback_render("repr", [1, 2]) == "<repr failed: Vector{Int64}>"
+        @test REPLy.fallback_render("repr", Dict("a" => 1)) == "<repr failed: Dict{String, Int64}>"
+    end
 end
