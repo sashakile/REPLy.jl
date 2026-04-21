@@ -20,6 +20,8 @@ end
 
 is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
+safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "id", "")) : ""
+
 function handle_client!(socket::IO, handler::Function)
     transport = JSONTransport(socket, ReentrantLock())
 
@@ -28,7 +30,13 @@ function handle_client!(socket::IO, handler::Function)
             msg = receive(transport)
             isnothing(msg) && return nothing
 
-            for response in handler(msg)
+            responses = try
+                handler(msg)
+            catch ex
+                [internal_error_response(safe_request_id(msg), ex; bt=catch_backtrace())]
+            end
+
+            for response in responses
                 try
                     send!(transport, response)
                 catch ex

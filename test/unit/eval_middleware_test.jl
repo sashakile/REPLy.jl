@@ -55,6 +55,50 @@
         @test occursin("boom", msgs[1]["err"])
     end
 
+    @testset "multi-expression eval returns last expression like the REPL" begin
+        msgs = REPLy.build_handler()(Dict(
+            "op" => "eval",
+            "id" => "eval-multi",
+            "code" => "x = 1\ny = x + 1\ny",
+        ))
+
+        assert_conformance(msgs, "eval-multi")
+        value_msg = only(filter(msg -> haskey(msg, "value"), msgs))
+        @test value_msg["value"] == "2"
+    end
+
+    @testset "broken result show methods fall back instead of crashing" begin
+        struct BrokenShow end
+        Base.show(io::IO, ::BrokenShow) = error("broken show")
+        Base.show(io::IO, ::MIME"text/plain", ::BrokenShow) = error("broken plain show")
+
+        msgs = REPLy.build_handler()(Dict(
+            "op" => "eval",
+            "id" => "eval-broken-repr",
+            "code" => "Main.BrokenShow()",
+        ))
+
+        assert_conformance(msgs, "eval-broken-repr")
+        value_msg = only(filter(msg -> haskey(msg, "value"), msgs))
+        @test value_msg["value"] == "<repr failed: BrokenShow>"
+    end
+
+    @testset "broken showerror methods fall back instead of crashing" begin
+        struct BrokenEvalError <: Exception end
+        Base.show(io::IO, ::BrokenEvalError) = error("broken show")
+
+        msgs = REPLy.build_handler()(Dict(
+            "op" => "eval",
+            "id" => "eval-broken-showerror",
+            "code" => "throw(Main.BrokenEvalError())",
+        ))
+
+        assert_conformance(msgs, "eval-broken-showerror")
+        @test length(msgs) == 1
+        @test only(msgs)["err"] == "<showerror failed: BrokenEvalError>"
+        @test only(msgs)["ex"]["message"] == "<showerror failed: BrokenEvalError>"
+    end
+
     @testset "large buffered output completes without deadlock" begin
         handler = REPLy.build_handler()
         task = @async handler(Dict(

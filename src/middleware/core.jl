@@ -14,6 +14,8 @@ struct EvalMiddleware <: AbstractMiddleware end
 
 emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
+safe_repr(value) = safe_render("repr", repr, value)
+
 handle_message(::AbstractMiddleware, msg, next, ctx::RequestContext) = next(msg)
 
 function buffered_output_messages(request_id::AbstractString, stdout_text::AbstractString, stderr_text::AbstractString)
@@ -27,6 +29,18 @@ function read_captured_output(io::IO)
     flush(io)
     seekstart(io)
     return read(io, String)
+end
+
+function eval_parsed(module_::Module, exprs)
+    if exprs isa Expr && exprs.head == :toplevel
+        value = nothing
+        for expr in exprs.args
+            value = Core.eval(module_, expr)
+        end
+        return value
+    end
+
+    return Core.eval(module_, exprs)
 end
 
 function eval_responses(ctx::RequestContext, request::AbstractDict)
@@ -51,8 +65,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
                     if isempty(strip(code))
                         nothing
                     else
-                        expr = Meta.parse(code)
-                        Core.eval(module_, expr)
+                        eval_parsed(module_, Meta.parseall(code))
                     end
                 end
             end
@@ -71,7 +84,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
             read_captured_output(stdout_io),
             read_captured_output(stderr_io),
         )
-        push!(responses, response_message(request_id, "value" => repr(value), "ns" => string(nameof(module_))))
+        push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
         push!(responses, done_response(request_id))
         return responses
     finally

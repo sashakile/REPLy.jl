@@ -1,3 +1,16 @@
+# Test-only middleware that forces exactly one transport-level handler failure.
+struct ThrowOnceMiddleware <: REPLy.AbstractMiddleware
+    tripped::Base.RefValue{Bool}
+end
+
+function REPLy.handle_message(mw::ThrowOnceMiddleware, msg, next, ctx::REPLy.RequestContext)
+    if !mw.tripped[]
+        mw.tripped[] = true
+        error("transport boom")
+    end
+    return next(msg)
+end
+
 @testset "e2e: eval over tcp" begin
     @testset "single client receives value then done" begin
         with_server(port=0) do handle
@@ -71,6 +84,38 @@
                 isopen(disconnected) && close(disconnected)
                 close(survivor)
             end
+        end
+    end
+
+    @testset "handler exceptions return an error response instead of dropping the connection" begin
+        middleware = REPLy.AbstractMiddleware[
+            ThrowOnceMiddleware(Ref(false)),
+            REPLy.SessionMiddleware(),
+            REPLy.SessionOpsMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+        server = REPLy.serve(; port=0, middleware=middleware)
+        sock = connect(REPLy.server_port(server))
+
+        try
+            send_request(sock, Dict("op" => "eval", "id" => "e2e-handler-error", "code" => "1 + 1"))
+            error_msgs = collect_until_done(sock)
+
+            assert_conformance(error_msgs, "e2e-handler-error")
+            @test length(error_msgs) == 1
+            @test Set(only(error_msgs)["status"]) == Set(["done", "error"])
+            @test only(error_msgs)["err"] == "transport boom"
+            @test only(error_msgs)["ex"]["message"] == "transport boom"
+
+            send_request(sock, Dict("op" => "eval", "id" => "e2e-after-error", "code" => "1 + 2"))
+            survivor_msgs = collect_until_done(sock)
+
+            assert_conformance(survivor_msgs, "e2e-after-error")
+            @test any(get(msg, "value", nothing) == "3" for msg in survivor_msgs)
+        finally
+            isopen(sock) && close(sock)
+            close(server)
         end
     end
 
