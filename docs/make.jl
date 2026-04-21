@@ -10,6 +10,11 @@ makedocs(
     ),
     pages = [
         "Home" => "index.md",
+        "Guides" => [
+            "How-to: Manage Sessions" => "howto-sessions.md",
+            "How-to: Unix Sockets" => "howto-unix-sockets.md",
+            "Tutorial: Custom Client" => "tutorial-custom-client.md",
+        ],
         "Status" => "status.md",
         "API"  => "api.md",
     ],
