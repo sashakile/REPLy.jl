@@ -107,13 +107,13 @@
 
     @testset "clone-session returns conformant response" begin
         manager = REPLy.SessionManager()
-        REPLy.create_named_session!(manager, "clonable")
+        REPLy.create_named_session!(manager, "cloneable")
         handler = REPLy.build_handler(; manager=manager)
 
         msgs = handler(Dict(
             "op" => "clone-session",
             "id" => "clone-conform",
-            "source" => "clonable",
+            "source" => "cloneable",
             "name" => "cloned",
         ))
         assert_conformance(msgs, "clone-conform")
