@@ -118,6 +118,78 @@ function destroy_named_session!(manager::SessionManager, name::AbstractString)
 end
 
 """
+    try_begin_eval!(session, task) -> Bool
+
+Attempt to atomically transition `session` from `SessionIdle` to `SessionRunning`,
+assign `task`, and update `last_active_at`. Returns `true` on success.
+
+Returns `false` (without throwing) if the session is in `SessionClosed`, making
+this safe to call after a concurrent `destroy_named_session!` without a separate
+closed-session check.
+
+Throws `ArgumentError` for `SessionRunning` — callers must hold `session.eval_lock`
+to prevent double-acquisition, which is the only way this state can occur here.
+"""
+function try_begin_eval!(session::NamedSession, task::Task)
+    lock(session.lock) do
+        session.state === SessionClosed && return false
+        _transition_state_unlocked!(session, SessionRunning)
+        session.eval_task = task
+        session.last_active_at = time()
+        return true
+    end
+end
+
+"""
+    sweep_idle_sessions!(manager; max_idle_seconds) -> Vector{String}
+
+Destroy all `SessionIdle` named sessions whose `last_active_at` is more than
+`max_idle_seconds` seconds in the past. Running and closed sessions are skipped.
+
+Returns the names of the sessions that were removed, in the order they were swept.
+
+Runs in three phases to avoid TOCTOU races:
+1. Snapshot session references under `manager.lock` (no session locks held).
+2. Check state under each `session.lock` alone (manager is unblocked during this).
+3. Re-acquire both locks per candidate; re-verify identity and state before destroying.
+
+Phase 3 is necessary because a session can be recreated under the same name
+(invalidating identity) or transitioned to `SessionRunning` (invalidating state)
+between phases 1/2 and the actual destruction.
+"""
+function sweep_idle_sessions!(manager::SessionManager; max_idle_seconds::Real)
+    max_idle_seconds > 0 || throw(ArgumentError("max_idle_seconds must be positive, got $max_idle_seconds"))
+    cutoff = time() - max_idle_seconds
+
+    # Phase 1: snapshot (name → session_ref) pairs while holding manager.lock.
+    # No session locks acquired here to minimise blocking time.
+    snapshots = lock(manager.lock) do; collect(manager.named_sessions); end
+
+    # Phase 2: filter candidates under session.lock only — manager is unblocked.
+    candidates = [(name, s) for (name, s) in snapshots
+                  if lock(s.lock) do; s.state === SessionIdle && s.last_active_at < cutoff; end]
+
+    # Phase 3: atomically re-verify and destroy each candidate.
+    # Lock order: manager.lock (outer) → session.lock (inner) — matches destroy_named_session!.
+    removed = String[]
+    for (name, session_ref) in candidates
+        destroyed = lock(manager.lock) do
+            # Identity check: reject if a new session was created under the same name.
+            get(manager.named_sessions, name, nothing) === session_ref || return false
+            lock(session_ref.lock) do
+                # State check: reject if the session became active since phase 2.
+                session_ref.state === SessionIdle || return false
+                session_ref.state = SessionClosed
+            end
+            delete!(manager.named_sessions, name)
+            return true
+        end
+        destroyed && push!(removed, name)
+    end
+    return removed
+end
+
+"""
     clone_named_session!(manager, source_name, dest_name)
 
 Create a new named session `dest_name` by copying the module bindings from
