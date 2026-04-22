@@ -68,7 +68,7 @@ Name validation (e.g. rejecting empty strings) is the caller's responsibility.
 """
 function create_named_session!(manager::SessionManager, name::AbstractString)
     lock(manager.lock) do
-        session = NamedSession(String(name), Module(gensym(:REPLyNamedSession)), time())
+        session = NamedSession(String(name), Module(gensym(:REPLyNamedSession)))
         manager.named_sessions[session.name] = session
         return session
     end
@@ -104,7 +104,15 @@ idempotent — calling it when no such session exists is safe.
 """
 function destroy_named_session!(manager::SessionManager, name::AbstractString)
     lock(manager.lock) do
-        delete!(manager.named_sessions, String(name))
+        session = get(manager.named_sessions, String(name), nothing)
+        if !isnothing(session)
+            # Transition to terminal state under session.lock before removing from the dict.
+            # Lock order: manager.lock (outer) → session.lock (inner).
+            lock(session.lock) do
+                session.state = SessionClosed
+            end
+            delete!(manager.named_sessions, String(name))
+        end
     end
     return nothing
 end
@@ -133,7 +141,7 @@ function clone_named_session!(manager::SessionManager, source_name::AbstractStri
             throw(ArgumentError("session already exists: $(dest_name)"))
         end
 
-        dst = NamedSession(String(dest_name), Module(gensym(:REPLyNamedSession)), time())
+        dst = NamedSession(String(dest_name), Module(gensym(:REPLyNamedSession)))
         manager.named_sessions[dst.name] = dst
         (src, dst)
     end

@@ -164,4 +164,104 @@
         REPLy.destroy_session!(manager, ephemeral)
         @test REPLy.session_count(manager) == 0
     end
+
+    @testset "new named session starts in SessionIdle state" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-idle")
+        @test REPLy.session_state(session) === REPLy.SessionIdle
+    end
+
+    @testset "new named session has no eval_task" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-task")
+        @test REPLy.session_eval_task(session) === nothing
+    end
+
+    @testset "new named session has last_active_at near creation" begin
+        t_before = time()
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-time")
+        t_after = time()
+        @test REPLy.session_last_active_at(session) >= t_before
+        @test REPLy.session_last_active_at(session) <= t_after
+    end
+
+    @testset "transition_session_state! allows Idle→Running and Running→Idle" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-transition")
+        REPLy.transition_session_state!(session, REPLy.SessionRunning)
+        @test REPLy.session_state(session) === REPLy.SessionRunning
+        REPLy.transition_session_state!(session, REPLy.SessionIdle)
+        @test REPLy.session_state(session) === REPLy.SessionIdle
+    end
+
+    @testset "transition_session_state! rejects invalid edges including to/from SessionClosed" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-invalid")
+        # Cannot go directly to SessionClosed via transition_session_state!
+        @test_throws ArgumentError REPLy.transition_session_state!(session, REPLy.SessionClosed)
+        # Cannot self-transition
+        @test_throws ArgumentError REPLy.transition_session_state!(session, REPLy.SessionIdle)
+        REPLy.transition_session_state!(session, REPLy.SessionRunning)
+        @test_throws ArgumentError REPLy.transition_session_state!(session, REPLy.SessionRunning)
+    end
+
+    @testset "destroy_named_session! sets SessionClosed before removing from registry" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-destroy-closed")
+        REPLy.destroy_named_session!(manager, "lifecycle-destroy-closed")
+        @test REPLy.session_state(session) === REPLy.SessionClosed
+        # Subsequent transition attempts from a destroyed session are rejected
+        @test_throws ArgumentError REPLy.transition_session_state!(session, REPLy.SessionRunning)
+    end
+
+    @testset "begin_eval! atomically transitions to Running and assigns task" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-begin-eval")
+        task = @async 42
+        before = REPLy.session_last_active_at(session)
+        sleep(0.01)
+        REPLy.begin_eval!(session, task)
+        @test REPLy.session_state(session) === REPLy.SessionRunning
+        @test REPLy.session_eval_task(session) === task
+        @test REPLy.session_last_active_at(session) > before
+    end
+
+    @testset "end_eval! atomically transitions to Idle and clears task" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-end-eval")
+        task = @async 42
+        REPLy.begin_eval!(session, task)
+        REPLy.end_eval!(session)
+        @test REPLy.session_state(session) === REPLy.SessionIdle
+        @test REPLy.session_eval_task(session) === nothing
+    end
+
+    @testset "record_activity! updates last_active_at" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-record-activity")
+        before = REPLy.session_last_active_at(session)
+        sleep(0.01)
+        REPLy.record_activity!(session)
+        @test REPLy.session_last_active_at(session) > before
+    end
+
+    @testset "concurrent field mutations do not corrupt state" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lifecycle-concurrent")
+        n = 20
+        tasks = [
+            @async begin
+                for _ in 1:10
+                    t = @async sleep(0)
+                    REPLy.begin_eval!(session, t)
+                    REPLy.end_eval!(session)
+                end
+            end
+            for _ in 1:n
+        ]
+        foreach(wait, tasks)
+        @test REPLy.session_state(session) === REPLy.SessionIdle
+        @test REPLy.session_eval_task(session) === nothing
+    end
 end
