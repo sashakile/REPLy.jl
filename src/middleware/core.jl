@@ -1,6 +1,69 @@
 abstract type AbstractMiddleware end
 
 """
+    MiddlewareDescriptor(; provides, requires, expects)
+
+Metadata describing a middleware's interface contract used for startup validation.
+
+- `provides::Set{String}` — operation names (e.g. `"eval"`) this middleware handles.
+- `requires::Set{String}` — names that must be provided by some *earlier* middleware in the stack.
+- `expects::Vector{String}` — human-readable ordering constraints (informational; not enforced by `validate_stack`).
+"""
+@kwdef struct MiddlewareDescriptor
+    provides::Set{String}  = Set{String}()
+    requires::Set{String}  = Set{String}()
+    expects::Vector{String} = String[]
+end
+
+"""
+    descriptor(mw::AbstractMiddleware) -> MiddlewareDescriptor
+
+Return the `MiddlewareDescriptor` for `mw`. The default makes no claims.
+Override to declare what ops a middleware provides/requires.
+"""
+descriptor(::AbstractMiddleware) = MiddlewareDescriptor()
+
+"""
+    validate_stack(stack) -> Vector{String}
+
+Validate a middleware stack and return a (possibly empty) list of error strings.
+
+Checks:
+- **Duplicate provides**: two or more middlewares claiming the same op name.
+- **Unsatisfied requires**: a middleware requiring a name not provided by any *earlier* middleware.
+
+Note: `validate_stack` is not called automatically by `build_handler`. Call it explicitly
+at server startup (or in tests) to verify a custom stack before use.
+"""
+function validate_stack(stack::Vector{<:AbstractMiddleware})
+    errors = String[]
+    seen_provides = Dict{String, Int}()   # op name → first-seen stack index
+    accumulated   = Set{String}()         # all ops provided up to (not incl.) current mw
+
+    for (i, mw) in enumerate(stack)
+        desc = descriptor(mw)
+
+        # Check requires against what's been provided so far
+        for req in sort!(collect(desc.requires))
+            req in accumulated || push!(errors, "Middleware at index $i requires '$req' but no earlier middleware provides it")
+        end
+
+        # Check for duplicate provides
+        for op in sort!(collect(desc.provides))
+            if haskey(seen_provides, op)
+                push!(errors, "Duplicate handler for '$op': middleware at indices $(seen_provides[op]) and $i")
+            else
+                seen_provides[op] = i
+            end
+        end
+
+        union!(accumulated, desc.provides)
+    end
+
+    return errors
+end
+
+"""
     HandlerContext(manager::SessionManager)
 
 Context shared across the entire lifespan of a connection or server handler.

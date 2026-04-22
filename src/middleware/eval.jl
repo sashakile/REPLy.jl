@@ -18,6 +18,7 @@ struct EvalMiddleware <: AbstractMiddleware
     max_repr_bytes::Int
 end
 EvalMiddleware(; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) = EvalMiddleware(max_repr_bytes)
+EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_repr_bytes)  # only max_repr_bytes is active; other fields deferred to Phase 7
 
 # `redirect_stdout(IOStream)` uses dup2 (a process-global operation), so concurrent
 # calls would race on file descriptors 1 and 2.  This lock serializes IO capture
