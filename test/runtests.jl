@@ -26,6 +26,7 @@ include("helpers/server.jl")
         include("unit/complete_middleware_test.jl")
         include("unit/lookup_middleware_test.jl")
         include("unit/interrupt_middleware_test.jl")
+        include("unit/stdin_middleware_test.jl")
         include("unit/mcp_adapter_test.jl")
     end
 

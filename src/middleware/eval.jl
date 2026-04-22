@@ -104,6 +104,21 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
     end
 end
 
+# Feeder task: reads text from `channel` and writes to `pipe_in`.
+# Stops on InterruptException (scheduled by the eval's finally block) or
+# when the pipe is closed. Unconsumed channel items are left for the next eval.
+function _stdin_feeder(channel::Channel{String}, pipe_in::IO)
+    try
+        while true
+            text = take!(channel)   # blocks until stdin arrives
+            write(pipe_in, text)
+        end
+    catch ex
+        # Normal stops: InterruptException (eval finished) or IOError/EOFError (pipe closed).
+        ex isa InterruptException || ex isa Base.IOError || ex isa EOFError || rethrow()
+    end
+end
+
 function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = String(request["id"])
     code = get(request, "code", "")
@@ -124,9 +139,19 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             lock(session.eval_lock) do
                 try_begin_eval!(session, current_task()) ||
                     return [error_response(request_id, "session was closed")]
+                # Pipe + feeder task: bridges session.stdin_channel to the eval's
+                # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
+                pipe = Base.Pipe()
+                Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
+                feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
                 try
-                    _run_eval_core(session_module(session), request_id, code, max_repr_bytes)
+                    redirect_stdin(pipe.out) do
+                        _run_eval_core(session_module(session), request_id, code, max_repr_bytes)
+                    end
                 finally
+                    schedule(feeder, InterruptException(); error=true)
+                    close(pipe.in)
+                    close(pipe.out)
                     end_eval!(session)
                 end
             end
