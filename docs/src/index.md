@@ -59,10 +59,52 @@ If a runtime error occurs during evaluation, REPLy catches it and returns a stru
 printf '%s\n' '{"op":"eval","id":"demo-err","code":"missing_name + 1"}' | nc 127.0.0.1 5555
 ```
 
+## Graceful Shutdown
+
+Call `close(server)` to stop the server. By default, REPLy allows up to 5 seconds for in-flight client tasks to finish before abandoning them. You can adjust the budget:
+
+```julia
+using REPLy
+
+server = REPLy.serve(port=5555)
+
+# Shut down with a 10-second grace window
+Base.close(server; grace_seconds=10.0)
+```
+
+## Resource Limits
+
+REPLy enforces two configurable safety limits that protect against runaway clients or evaluations.
+
+### Inbound message size
+
+Messages larger than `DEFAULT_MAX_MESSAGE_BYTES` (1 MiB) are rejected with a structured error and the connection is closed. To change the limit:
+
+```julia
+using REPLy
+
+server = REPLy.serve(port=5555, max_message_bytes=512_000)  # 512 KiB
+```
+
+Oversized messages produce a `MessageTooLargeError` internally; clients receive a plain error response.
+
+### Output truncation
+
+Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KiB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `EvalMiddleware` to `serve`:
+
+```julia
+using REPLy
+using REPLy: EvalMiddleware, SessionMiddleware
+
+server = REPLy.serve(
+    port=5555,
+    middleware=[SessionMiddleware(), EvalMiddleware(; max_repr_bytes=100_000)],
+)
+```
+
 ## Development and Testing
 
 If you are developing REPLy.jl or want to run the test suite:
 
 - **Run Automated Tests**: `just test`
 - **Run Smoke Tests**: `just smoke-test` (starts a temporary server, exercises an `eval` request, checks error paths, and verifies malformed JSON handling).
-
