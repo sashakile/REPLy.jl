@@ -48,7 +48,7 @@ function _resolve_lookup_module(module_name, ctx::RequestContext)
             return Main
         end
     end
-    return isnothing(ctx.session) ? Main : session_module(ctx.session)
+    return session_module(ctx.session)
 end
 
 function _lookup_symbol(symbol_str::AbstractString, module_::Module)

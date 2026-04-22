@@ -25,7 +25,7 @@ function complete_responses(ctx::RequestContext, request::AbstractDict)
     pos = get(request, "pos", nothing)
     pos isa Integer || return [error_response(request_id, "complete requires an integer pos field")]
 
-    session_mod = isnothing(ctx.session) ? Main : session_module(ctx.session)
+    session_mod = session_module(ctx.session)
     completions = _get_completions(code, Int(pos), session_mod)
 
     return [

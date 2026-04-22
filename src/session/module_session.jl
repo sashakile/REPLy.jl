@@ -13,6 +13,7 @@ end
 Return the anonymous module that backs `session`.
 """
 session_module(session::ModuleSession) = session.session_mod
+session_module(::Nothing) = Main
 
 """
     SessionState
