@@ -51,7 +51,7 @@ function eval_parsed(module_::Module, exprs)
     return Core.eval(module_, exprs)
 end
 
-function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int)
+function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false)
     stdout_path, stdout_io = mktemp()
     stderr_path, stderr_io = mktemp()
 
@@ -93,7 +93,9 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         value, stdout_text, stderr_text = result
 
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
-        push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
+        if !silent
+            push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
+        end
         push!(responses, done_response(request_id))
         return responses
     finally
@@ -102,6 +104,33 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         rm(stdout_path; force=true)
         rm(stderr_path; force=true)
     end
+end
+
+"""
+    resolve_module(module_path) -> Module or nothing
+
+Resolve a dotted module path (e.g. `"Main.Foo.Bar"`) by walking the module
+hierarchy starting from `Main`. Returns `nothing` if any segment is missing or
+not a `Module`.
+
+Limitation: only `Main`-rooted paths are supported. Modules created inside a
+named session's anonymous module cannot be addressed via this function.
+"""
+function resolve_module(module_path::AbstractString)
+    parts = split(module_path, '.')
+    isempty(parts) && return nothing
+    sym = Symbol(parts[1])
+    isdefined(Main, sym) || return nothing
+    mod = getfield(Main, sym)
+    mod isa Module || return nothing
+    for part in parts[2:end]
+        s = Symbol(part)
+        isdefined(mod, s) || return nothing
+        child = getfield(mod, s)
+        child isa Module || return nothing
+        mod = child
+    end
+    return mod
 end
 
 # Feeder task: reads text from `channel` and writes to `pipe_in`.
@@ -124,12 +153,39 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     code = get(request, "code", "")
     code isa AbstractString || return [error_response(request_id, "code must be a string")]
 
+    # timeout-ms validation: must be a positive integer when present.
+    timeout_ms = get(request, "timeout-ms", nothing)
+    if !isnothing(timeout_ms)
+        if !(timeout_ms isa Integer)
+            return [error_response(request_id, "timeout-ms must be a positive integer")]
+        end
+        if timeout_ms < 1
+            return [error_response(request_id, "timeout-ms must be ≥ 1")]
+        end
+        # Capping to ResourceLimits.max_eval_time_ms is deferred to Phase 7.
+    end
+
+    silent = get(request, "silent", false) === true
+    allow_stdin = get(request, "allow-stdin", true) !== false
+
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
     # before we reach this point.  This guard exists as a safety net for callers
     # that bypass the middleware stack (e.g., direct eval_responses calls in tests
     # or alternative pipelines).  With the default stack it is effectively dead code.
     ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
     session = something(ephemeral, ctx.session)
+
+    # module routing: resolve dotted path when the "module" field is present.
+    eval_module = session_module(session)
+    module_path = get(request, "module", nothing)
+    if module_path isa AbstractString
+        resolved = resolve_module(module_path)
+        if isnothing(resolved)
+            !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+            return [error_response(request_id, "Cannot resolve module: $(module_path)")]
+        end
+        eval_module = resolved
+    end
 
     try
         if session isa NamedSession
@@ -139,24 +195,41 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             lock(session.eval_lock) do
                 try_begin_eval!(session, current_task()) ||
                     return [error_response(request_id, "session was closed")]
-                # Pipe + feeder task: bridges session.stdin_channel to the eval's
-                # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
-                pipe = Base.Pipe()
-                Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
-                feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
-                try
-                    redirect_stdin(pipe.out) do
-                        _run_eval_core(session_module(session), request_id, code, max_repr_bytes)
+                if allow_stdin
+                    # Pipe + feeder task: bridges session.stdin_channel to the eval's
+                    # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
+                    pipe = Base.Pipe()
+                    Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
+                    feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
+                    try
+                        redirect_stdin(pipe.out) do
+                            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                        end
+                    finally
+                        schedule(feeder, InterruptException(); error=true)
+                        close(pipe.in)
+                        close(pipe.out)
+                        end_eval!(session)
                     end
-                finally
-                    schedule(feeder, InterruptException(); error=true)
-                    close(pipe.in)
-                    close(pipe.out)
-                    end_eval!(session)
+                else
+                    # allow-stdin false: redirect stdin to devnull so readline() raises EOFError.
+                    try
+                        redirect_stdin(devnull) do
+                            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                        end
+                    finally
+                        end_eval!(session)
+                    end
                 end
             end
         else
-            _run_eval_core(session_module(session), request_id, code, max_repr_bytes)
+            if allow_stdin
+                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+            else
+                redirect_stdin(devnull) do
+                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                end
+            end
         end
     finally
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
