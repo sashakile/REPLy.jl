@@ -55,6 +55,23 @@
         @test msgs[1]["ex"]["type"] == "UndefVarError"
     end
 
+    @testset "describe returns ops, versions, and encoding fields via default stack" begin
+        msgs = REPLy.build_handler()(Dict("op" => "describe", "id" => "integration-describe"))
+
+        @test length(msgs) == 1
+        msg = only(msgs)
+        @test msg["id"] == "integration-describe"
+        @test msg["status"] == ["done"]
+        @test haskey(msg, "ops")
+        @test haskey(msg["ops"], "eval")
+        @test haskey(msg["ops"], "describe")
+        @test haskey(msg, "versions")
+        @test haskey(msg["versions"], "julia")
+        @test haskey(msg["versions"], "reply")
+        @test "json" in msg["encodings-available"]
+        @test msg["encoding-current"] == "json"
+    end
+
     @testset "ephemeral eval flow does not leak sessions" begin
         manager = REPLy.SessionManager()
         handler = REPLy.build_handler(; manager=manager)
