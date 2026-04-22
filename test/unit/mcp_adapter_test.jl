@@ -211,4 +211,77 @@ end
         @test result["content"][1] == Dict("type" => "text", "text" => "UndefVarError: y not defined")
         @test occursin("top-level scope", result["content"][2]["text"])
     end
+
+    @testset "mcp_ensure_default_session! creates a session on first call" begin
+        manager = REPLy.SessionManager()
+        name = REPLy.mcp_ensure_default_session!(manager)
+
+        @test name isa String
+        @test !isnothing(REPLy.lookup_named_session(manager, name))
+    end
+
+    @testset "mcp_ensure_default_session! is idempotent — same name, no duplicate" begin
+        manager = REPLy.SessionManager()
+        name1 = REPLy.mcp_ensure_default_session!(manager)
+        name2 = REPLy.mcp_ensure_default_session!(manager)
+
+        @test name1 == name2
+        @test length(REPLy.list_named_sessions(manager)) == 1
+    end
+
+    @testset "mcp_ensure_default_session! is safe under concurrent calls" begin
+        manager = REPLy.SessionManager()
+        tasks = [@async REPLy.mcp_ensure_default_session!(manager) for _ in 1:20]
+        names = fetch.(tasks)
+
+        @test all(==(REPLy.MCP_DEFAULT_SESSION_NAME), names)
+        @test length(REPLy.list_named_sessions(manager)) == 1
+    end
+
+    @testset "mcp_new_session_result creates a named session and returns its id" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_new_session_result(manager)
+
+        @test result["isError"] == false
+        sessions = REPLy.list_named_sessions(manager)
+        @test length(sessions) == 1
+        @test result["content"][1]["text"] == "Session: $(sessions[1].name)"
+    end
+
+    @testset "mcp_list_sessions_result lists all named session names" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "alpha")
+        REPLy.create_named_session!(manager, "beta")
+        result = REPLy.mcp_list_sessions_result(manager)
+
+        @test result["isError"] == false
+        text = result["content"][1]["text"]
+        @test occursin("alpha", text)
+        @test occursin("beta", text)
+    end
+
+    @testset "mcp_list_sessions_result returns empty marker when no sessions exist" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_list_sessions_result(manager)
+
+        @test result["isError"] == false
+        @test result["content"][1]["text"] == "[]"
+    end
+
+    @testset "mcp_close_session_result closes an existing session" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "to-close")
+        result = REPLy.mcp_close_session_result(manager, "to-close")
+
+        @test result["isError"] == false
+        @test isnothing(REPLy.lookup_named_session(manager, "to-close"))
+    end
+
+    @testset "mcp_close_session_result errors for unknown session" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_close_session_result(manager, "nonexistent")
+
+        @test result["isError"] == true
+        @test occursin("nonexistent", result["content"][1]["text"])
+    end
 end

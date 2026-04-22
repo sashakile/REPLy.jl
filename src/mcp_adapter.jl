@@ -1,6 +1,12 @@
+using UUIDs: uuid4
+
 const MCP_PROTOCOL_VERSION = "2024-11-05"
 const MCP_EPHEMERAL_SESSION = "ephemeral"
+const MCP_DEFAULT_SESSION_NAME = "mcp-default"
 const DEFAULT_COLLECT_TIMEOUT_SECONDS = 30.0
+
+"""Type alias for the MCP `CallToolResult` dict shape returned by adapter helpers."""
+const CallToolResult = Dict{String,Any}
 
 """Return the MCP `initialize` result advertised by the reference adapter helpers."""
 function mcp_initialize_result()
@@ -130,6 +136,59 @@ end
 """Return a standard MCP 'not yet implemented' error result for stub tools (DRAFT-004)."""
 function mcp_stub_result(tool_name::AbstractString)
     return error_result("$tool_name is not yet implemented (DRAFT-004)")
+end
+
+"""
+    mcp_ensure_default_session!(manager; name=MCP_DEFAULT_SESSION_NAME) -> String
+
+Ensure the adapter's persistent default session exists in `manager`.
+Creates it if absent; returns the session name unchanged if it already exists.
+Thread-safe: the check-and-create is performed atomically under a single lock
+acquisition via `get_or_create_named_session!`.
+"""
+function mcp_ensure_default_session!(manager::SessionManager; name::AbstractString=MCP_DEFAULT_SESSION_NAME)
+    get_or_create_named_session!(manager, name)
+    return String(name)
+end
+
+"""
+    mcp_new_session_result(manager) -> CallToolResult
+
+Create a new named session with a UUID-derived identifier and return the session
+name in a non-error `CallToolResult`.
+"""
+function mcp_new_session_result(manager::SessionManager)
+    session_id = "mcp-" * string(uuid4())
+    create_named_session!(manager, session_id)
+    return CallToolResult("isError" => false, "content" => [text_block("Session: $session_id")])
+end
+
+"""
+    mcp_list_sessions_result(manager) -> CallToolResult
+
+List all named sessions in `manager` and return their names as a `CallToolResult`.
+Returns `"[]"` when no sessions exist.
+"""
+function mcp_list_sessions_result(manager::SessionManager)
+    names = sort([s.name for s in list_named_sessions(manager)])
+    text = isempty(names) ? "[]" : join(names, "\n")
+    return CallToolResult("isError" => false, "content" => [text_block(text)])
+end
+
+"""
+    mcp_close_session_result(manager, session_name) -> CallToolResult
+
+Close the named session `session_name` and return a non-error `CallToolResult`.
+Returns an error result if the session does not exist. The existence check and
+removal are performed atomically via `destroy_named_session!`, which returns
+`true` only when it actually removed an entry.
+"""
+function mcp_close_session_result(manager::SessionManager, session_name::AbstractString)
+    removed = destroy_named_session!(manager, String(session_name))
+    if !removed
+        return error_result("Session not found: $session_name")
+    end
+    return CallToolResult("isError" => false, "content" => [text_block("Closed session: $session_name")])
 end
 
 """
