@@ -12,7 +12,7 @@ export build_handler, serve, server_port, server_socket_path
 export RequestContext, HandlerContext, dispatch_middleware
 export validate_session_name, MAX_SESSION_NAME_BYTES
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
-    reply_stream_to_mcp_result
+    reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS
 
 include("errors.jl")
 include("protocol/message.jl")

@@ -1,5 +1,6 @@
 const MCP_PROTOCOL_VERSION = "2024-11-05"
 const MCP_EPHEMERAL_SESSION = "ephemeral"
+const DEFAULT_COLLECT_TIMEOUT_SECONDS = 30.0
 
 """Return the MCP `initialize` result advertised by the reference adapter helpers."""
 function mcp_initialize_result()
@@ -136,40 +137,63 @@ Collect Reply messages for `request_id` until the terminal `done` status arrives
 
 Messages for other request ids are buffered into `pending`, allowing callers to
 safely reuse the same transport across interleaved request streams.
+
+If no terminal message arrives within `timeout_seconds`, the transport is closed
+and a one-element collection containing a synthetic `["done", "timeout"]` terminal
+message is returned. A positive `timeout_seconds` is required.
 """
 function collect_reply_stream(
     transport::AbstractTransport,
     request_id::AbstractString;
     pending::AbstractDict{String, Vector{Dict{String, Any}}}=Dict{String, Vector{Dict{String, Any}}}(),
+    timeout_seconds::Real=DEFAULT_COLLECT_TIMEOUT_SECONDS,
 )
-    collected = Dict{String, Any}[]
+    timeout_seconds > 0 || throw(ArgumentError("timeout_seconds must be positive, got $timeout_seconds"))
 
-    while true
-        buffered = get(pending, request_id, nothing)
-        if buffered isa Vector{Dict{String, Any}} && !isempty(buffered)
-            msg = popfirst!(buffered)
-            if isempty(buffered)
-                delete!(pending, request_id)
+    # `collected` is owned exclusively by the async task — no shared-state race.
+    task = @async begin
+        collected = Dict{String, Any}[]
+        while true
+            buffered = get(pending, request_id, nothing)
+            if buffered isa Vector{Dict{String, Any}} && !isempty(buffered)
+                msg = popfirst!(buffered)
+                if isempty(buffered)
+                    delete!(pending, request_id)
+                end
+            else
+                msg = receive(transport)
+                isnothing(msg) && throw(EOFError())
+                msg_id = get(msg, "id", nothing)
+                msg_id isa AbstractString || continue
+
+                if msg_id != request_id
+                    push!(get!(pending, msg_id, Dict{String, Any}[]), msg)
+                    continue
+                end
             end
-        else
-            msg = receive(transport)
-            isnothing(msg) && throw(EOFError())
-            msg_id = get(msg, "id", nothing)
-            msg_id isa AbstractString || continue
 
-            if msg_id != request_id
-                push!(get!(pending, msg_id, Dict{String, Any}[]), msg)
-                continue
+            push!(collected, msg)
+
+            status = get(msg, "status", nothing)
+            if status isa AbstractVector && ("done" in status)
+                return collected
             end
-        end
-
-        push!(collected, msg)
-
-        status = get(msg, "status", nothing)
-        if status isa AbstractVector && ("done" in status)
-            return collected
         end
     end
+
+    timed_out = timedwait(() -> istaskdone(task), Float64(timeout_seconds)) === :timed_out
+
+    if timed_out
+        try close(transport) catch end
+        try wait(task) catch end
+        return [Dict{String, Any}(
+            "id" => String(request_id),
+            "status" => ["done", "timeout"],
+            "err" => "Timed out after $(timeout_seconds)s waiting for eval response",
+        )]
+    end
+
+    return fetch(task)
 end
 
 """
