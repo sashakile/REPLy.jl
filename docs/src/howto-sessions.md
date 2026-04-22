@@ -74,3 +74,81 @@ When a session is no longer needed, close it to free resources:
 ```json
 {"op": "close-session", "id": "close-1", "name": "experiment"}
 ```
+
+## 6. Session Naming Constraints
+
+Session names must satisfy these rules (enforced at all protocol boundaries):
+
+- Non-empty and non-blank
+- Only letters, digits, hyphens (`-`), and underscores (`_`)
+- At most `MAX_SESSION_NAME_BYTES` bytes (256)
+
+Names that violate these rules are rejected with a structured error response before reaching the session manager:
+
+```json
+{"op": "eval", "id": "req", "session": "my session!", "code": "1+1"}
+```
+
+```json
+{"id": "req", "status": ["error"], "err": "session name may only contain letters, digits, hyphens, and underscores"}
+```
+
+You can validate a name from Julia before sending:
+
+```julia
+using REPLy: validate_session_name
+err = validate_session_name("my-session")  # returns nothing (valid)
+err = validate_session_name("my session!") # returns error string
+```
+
+## 7. Inspect Session State
+
+Named sessions expose a lifecycle state machine with three states:
+
+| State | Meaning |
+|---|---|
+| `SessionIdle` | No eval in progress; ready to accept new requests |
+| `SessionRunning` | An eval is in flight |
+| `SessionClosed` | Terminal — session has been destroyed |
+
+You can read state from Julia using the thread-safe accessors:
+
+```julia
+using REPLy: create_named_session!, SessionManager, session_state, session_eval_task, session_last_active_at
+using REPLy: SessionIdle, SessionRunning, SessionClosed
+
+manager = SessionManager()
+session = create_named_session!(manager, "main")
+
+session_state(session)           # SessionIdle
+session_eval_task(session)       # nothing (idle)
+session_last_active_at(session)  # Unix timestamp of most recent activity
+```
+
+## 8. Sweep Idle Sessions
+
+In long-running servers, sessions that haven't been used recently can be automatically cleaned up using `sweep_idle_sessions!`:
+
+```julia
+using REPLy: SessionManager, create_named_session!, sweep_idle_sessions!
+
+manager = SessionManager()
+create_named_session!(manager, "old-session")
+
+sleep(120)  # simulate inactivity
+
+# Destroy any sessions idle for more than 60 seconds
+removed = sweep_idle_sessions!(manager; max_idle_seconds=60)
+# removed == ["old-session"]
+```
+
+This is useful for background cleanup tasks in servers that host many short-lived sessions. Only sessions in `SessionIdle` state are eligible for removal; any session currently in `SessionRunning` is skipped even if it exceeds the idle threshold.
+
+```julia
+# Example: periodic sweep in a background task
+@async while true
+    sleep(300)  # every 5 minutes
+    removed = sweep_idle_sessions!(manager; max_idle_seconds=1800)  # 30 min idle
+    isempty(removed) || @info "Swept idle sessions" names=removed
+end
+```

@@ -12,6 +12,7 @@ makedocs(
         "Home" => "index.md",
         "Guides" => [
             "How-to: Manage Sessions" => "howto-sessions.md",
+            "How-to: MCP Adapter" => "howto-mcp-adapter.md",
             "How-to: Unix Sockets" => "howto-unix-sockets.md",
             "Tutorial: Custom Client" => "tutorial-custom-client.md",
         ],
