@@ -17,6 +17,8 @@ export SessionState, SessionIdle, SessionRunning, SessionClosed
 export session_state, session_eval_task, session_last_active_at
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!
+export ResourceLimits
+export MiddlewareDescriptor, descriptor, validate_stack
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
@@ -25,6 +27,7 @@ export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
 include("errors.jl")
 include("protocol/message.jl")
 include("session/module_session.jl")
+include("config/resource_limits.jl")
 include("session/manager.jl")
 include("middleware/core.jl")
 include("middleware/eval.jl")
