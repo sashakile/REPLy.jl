@@ -43,8 +43,9 @@ end
 
 function handle_close_session(ctx::RequestContext, msg, request_id::AbstractString)
     name = get(msg, "name", nothing)
-    if !isa(name, AbstractString) || isempty(name)
-        return [error_response(request_id, "close-session requires a non-empty \"name\" parameter")]
+    err = validate_session_name(name)
+    if !isnothing(err)
+        return [error_response(request_id, "close-session \"name\": $(err)")]
     end
 
     session = lookup_named_session(ctx.manager, name)
@@ -60,11 +61,13 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
     source = get(msg, "source", nothing)
     name = get(msg, "name", nothing)
 
-    if !isa(source, AbstractString) || isempty(source)
-        return [error_response(request_id, "clone-session requires a non-empty \"source\" parameter")]
+    src_err = validate_session_name(source)
+    if !isnothing(src_err)
+        return [error_response(request_id, "clone-session \"source\": $(src_err)")]
     end
-    if !isa(name, AbstractString) || isempty(name)
-        return [error_response(request_id, "clone-session requires a non-empty \"name\" parameter")]
+    name_err = validate_session_name(name)
+    if !isnothing(name_err)
+        return [error_response(request_id, "clone-session \"name\": $(name_err)")]
     end
 
     # Check if destination already exists before attempting clone
