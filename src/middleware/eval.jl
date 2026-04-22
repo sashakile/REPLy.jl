@@ -170,6 +170,17 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     allow_stdin = get(request, "allow-stdin", true) !== false
     store_history = get(request, "store-history", true) !== false
 
+    # Concurrent eval limit enforcement
+    if !isnothing(ctx.server_state)
+        limit = ctx.server_state.limits.max_concurrent_evals
+        current = Threads.atomic_add!(ctx.server_state.active_evals, 1)
+        if current >= limit
+            Threads.atomic_sub!(ctx.server_state.active_evals, 1)
+            return [error_response(request_id, "Too many concurrent evals";
+                        status_flags=String["error", "concurrency-limit-reached"])]
+        end
+    end
+
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
     # before we reach this point.  This guard exists as a safety net for callers
     # that bypass the middleware stack (e.g., direct eval_responses calls in tests
@@ -184,6 +195,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         resolved = resolve_module(module_path)
         if isnothing(resolved)
             !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+            !isnothing(ctx.server_state) && Threads.atomic_sub!(ctx.server_state.active_evals, 1)
             return [error_response(request_id, "Cannot resolve module: $(module_path)")]
         end
         eval_module = resolved
@@ -238,6 +250,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         end
     finally
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+        !isnothing(ctx.server_state) && Threads.atomic_sub!(ctx.server_state.active_evals, 1)
     end
 end
 

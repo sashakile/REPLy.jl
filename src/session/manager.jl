@@ -56,6 +56,16 @@ session_count(manager::SessionManager) = lock(manager.lock) do
 end
 
 """
+    total_session_count(manager)
+
+Return the total number of active sessions: ephemeral + named.
+Used for `max_sessions` enforcement.
+"""
+total_session_count(manager::SessionManager) = lock(manager.lock) do
+    length(manager.ephemeral_sessions) + length(manager.named_sessions)
+end
+
+"""
     create_named_session!(manager, name)
 
 Create and register a persistent named session. The session is keyed by

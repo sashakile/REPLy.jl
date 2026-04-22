@@ -45,6 +45,14 @@ function handle_message(::SessionMiddleware, msg, next, ctx::RequestContext)
         return next(msg)
     end
 
+    if !isnothing(ctx.server_state)
+        request_id = String(get(msg, "id", ""))
+        if total_session_count(ctx.manager) >= ctx.server_state.limits.max_sessions
+            return [error_response(request_id, "Session limit reached";
+                        status_flags=String["error", "session-limit-reached"])]
+        end
+    end
+
     session = create_ephemeral_session!(ctx.manager)
     ctx.session = session
     try
