@@ -37,9 +37,10 @@ Persistent named session with explicit identity, lifecycle state, and activity t
 Tracked separately from ephemeral sessions so it can appear in `ls-sessions`
 output while ephemeral sessions never do.
 
-All mutable fields are protected by `session.lock`. Callers must hold the lock
-(or use the provided API functions) when reading or writing `state`, `eval_task`,
-or `last_active_at`.
+The fields `state`, `eval_task`, and `last_active_at` are protected by `session.lock`;
+use the provided accessor and transition functions rather than reading or writing them
+directly. The `eval_lock` field is a standalone serialization primitive — it is not
+governed by `session.lock` and must not be acquired while holding it.
 """
 mutable struct NamedSession
     name::String
@@ -49,11 +50,12 @@ mutable struct NamedSession
     eval_task::Union{Task, Nothing}
     last_active_at::Float64
     lock::ReentrantLock
+    eval_lock::ReentrantLock
 end
 
 function NamedSession(name::String, mod::Module)
     now = time()
-    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock())
+    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock())
 end
 
 """
@@ -127,7 +129,7 @@ end
 Atomically transition `session` from `SessionIdle` to `SessionRunning`, assign `task`,
 and update `last_active_at`. Throws `ArgumentError` if not in `SessionIdle`.
 
-Prefer this over calling `transition_session_state!` and `set_eval_task!` separately.
+Prefer this over calling `transition_session_state!` and `_set_eval_task!` separately.
 """
 function begin_eval!(session::NamedSession, task::Task)
     lock(session.lock) do
@@ -144,7 +146,7 @@ end
 Atomically transition `session` from `SessionRunning` to `SessionIdle`, clear the eval
 task, and update `last_active_at`. Throws `ArgumentError` if not in `SessionRunning`.
 
-Prefer this over calling `transition_session_state!` and `set_eval_task!` separately.
+Prefer this over calling `transition_session_state!` and `_set_eval_task!` separately.
 """
 function end_eval!(session::NamedSession)
     lock(session.lock) do
@@ -157,8 +159,8 @@ end
 
 # Internal: low-level mutators. Use begin_eval!/end_eval! in production code.
 
-set_eval_task!(session::NamedSession, task::Union{Task, Nothing}) =
+_set_eval_task!(session::NamedSession, task::Union{Task, Nothing}) =
     lock(session.lock) do; session.eval_task = task; session; end
 
-record_activity!(session::NamedSession) =
+_record_activity!(session::NamedSession) =
     lock(session.lock) do; session.last_active_at = time(); session; end
