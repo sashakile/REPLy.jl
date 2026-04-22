@@ -40,6 +40,46 @@
             @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
         end
 
+        @testset "receive throws MessageTooLargeError when line exceeds max_message_bytes" begin
+            line = "{\"op\":\"eval\",\"id\":\"1\",\"code\":\"" * repeat("x", 100) * "\"}\n"
+            transport = REPLy.JSONTransport(IOBuffer(line), ReentrantLock())
+            @test_throws REPLy.MessageTooLargeError REPLy.receive(transport; max_message_bytes=50)
+        end
+
+        @testset "receive accepts messages exactly at the byte limit" begin
+            line = "{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"
+            transport = REPLy.JSONTransport(IOBuffer(line), ReentrantLock())
+            @test !isnothing(REPLy.receive(transport; max_message_bytes=ncodeunits(chomp(line))))
+        end
+
+        @testset "handle_client! sends error and disconnects on oversized message" begin
+            listener = listen(ip"127.0.0.1", 0)
+            port = Int(getsockname(listener)[2])
+            server_task = @async begin
+                socket = accept(listener)
+                try
+                    REPLy.handle_client!(socket, _ -> [REPLy.done_response("1")]; max_message_bytes=50)
+                finally
+                    close(listener)
+                end
+            end
+
+            client = connect(port)
+            try
+                big_payload = Dict("id" => "1", "op" => "eval", "code" => repeat("x", 200))
+                send_request(client, big_payload)
+                msgs = collect_until_done(client)
+
+                @test length(msgs) == 1
+                @test "done" in msgs[1]["status"]
+                @test "error" in msgs[1]["status"]
+                @test msgs[1]["err"] == "message exceeds maximum size of 50 bytes"
+            finally
+                isopen(client) && close(client)
+                wait(server_task)
+            end
+        end
+
         @testset "handle_client! recovers from handler exceptions with non-string ids" begin
             listener = listen(ip"127.0.0.1", 0)
             port = Int(getsockname(listener)[2])
