@@ -89,7 +89,7 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         end
 
         # `result` is either a Vector{Dict} (error path) or a 3-tuple (success path).
-        result isa Vector && return result
+        result isa Vector && return (result, nothing)
         value, stdout_text, stderr_text = result
 
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
@@ -97,7 +97,7 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
             push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
         end
         push!(responses, done_response(request_id))
-        return responses
+        return (responses, Some(value))
     finally
         close(stdout_io)
         close(stderr_io)
@@ -167,6 +167,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
 
     silent = get(request, "silent", false) === true
     allow_stdin = get(request, "allow-stdin", true) !== false
+    store_history = get(request, "store-history", true) !== false
 
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
     # before we reach this point.  This guard exists as a safety net for callers
@@ -195,7 +196,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             lock(session.eval_lock) do
                 try_begin_eval!(session, current_task()) ||
                     return [error_response(request_id, "session was closed")]
-                if allow_stdin
+                msgs, captured = if allow_stdin
                     # Pipe + feeder task: bridges session.stdin_channel to the eval's
                     # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
                     pipe = Base.Pipe()
@@ -212,7 +213,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                         end_eval!(session)
                     end
                 else
-                    # allow-stdin false: redirect stdin to devnull so readline() raises EOFError.
+                    # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
                     try
                         redirect_stdin(devnull) do
                             _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
@@ -221,19 +222,37 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                         end_eval!(session)
                     end
                 end
+                _update_history!(session, captured, store_history)
+                msgs
             end
         else
-            if allow_stdin
+            msgs, _ = if allow_stdin
                 _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
             else
                 redirect_stdin(devnull) do
                     _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
                 end
             end
+            msgs
         end
     finally
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
     end
+end
+
+# Update ans binding and history for `session` when `store_history` is true
+# and `captured` is `Some(value)` (successful eval). Does nothing on error.
+function _update_history!(session::NamedSession, captured::Union{Some, Nothing}, store_history::Bool)
+    store_history && !isnothing(captured) || return
+    value = something(captured)
+    try
+        Core.eval(session_module(session), :(ans = $(QuoteNode(value))))
+    catch
+        # If ans update fails (e.g. type not quotable), skip silently.
+    end
+    push!(session.history, value)
+    clamp_history!(session)
+    return
 end
 
 function handle_message(mw::EvalMiddleware, msg, next, ctx::RequestContext)
