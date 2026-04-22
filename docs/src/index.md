@@ -90,7 +90,7 @@ Oversized messages produce a `MessageTooLargeError` internally; clients receive 
 
 ### Output truncation
 
-Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KiB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `EvalMiddleware` to `serve`:
+Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `EvalMiddleware` to `serve`:
 
 ```julia
 using REPLy

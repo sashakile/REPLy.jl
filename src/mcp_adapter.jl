@@ -216,11 +216,8 @@ function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::S
             return error_result("julia_close_session requires a string session argument")
         isempty(session) &&
             return error_result("julia_close_session requires a non-empty session argument")
-        try
-            validate_session_name(session)
-        catch e
-            return error_result(sprint(showerror, e))
-        end
+        err = validate_session_name(session)
+        isnothing(err) || return error_result(err)
         return mcp_close_session_result(manager, session)
     # Stub tools — not yet implemented
     elseif tool_name in ("julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt")

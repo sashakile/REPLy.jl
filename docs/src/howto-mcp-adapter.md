@@ -82,6 +82,7 @@ Then send the request over the transport and collect the response stream:
 using REPLy: collect_reply_stream, reply_stream_to_mcp_result
 
 # transport is a connected AbstractTransport (e.g., JSONTransport)
+send(transport, request)  # send the request first
 msgs = collect_reply_stream(transport, "req-1")
 result = reply_stream_to_mcp_result(msgs)
 # result["isError"] == false
@@ -118,6 +119,12 @@ result = reply_stream_to_mcp_result(msgs)
 # On timeout: result["isError"] == true, result["content"][1]["text"] == "Evaluation timed out"
 ```
 
+!!! note
+    When inspecting `msgs` directly (before passing to `reply_stream_to_mcp_result`), the
+    raw timeout message also includes an `"err"` field containing the wait duration, e.g.
+    `"Timed out after 10.0s waiting for eval response"`. This detail is collapsed into the
+    human-readable `"Evaluation timed out"` string by `reply_stream_to_mcp_result`.
+
 ## Session Management via MCP
 
 The lifecycle helpers operate directly on a `SessionManager`:
@@ -136,7 +143,7 @@ result = mcp_list_sessions_result(manager)
 
 # Close
 result = mcp_close_session_result(manager, session_name)
-result["isError"] == false  # or true if not found
+# result["isError"] is false on success, true if the session is not found
 ```
 
 The default session can be lazily created with `mcp_ensure_default_session!`, which is a no-op if the session already exists (thread-safe):
@@ -157,3 +164,8 @@ session_name = mcp_ensure_default_session!(manager; name="my-default")
 | `MCP_DEFAULT_SESSION_NAME` | `"mcp-default"` | Name of the adapter's persistent default session |
 | `MCP_EPHEMERAL_SESSION` | `"ephemeral"` | Session sentinel for one-shot (stateless) evaluation |
 | `DEFAULT_COLLECT_TIMEOUT_SECONDS` | `30.0` | Default timeout for `collect_reply_stream` |
+| `DEFAULT_CLOSE_GRACE_SECONDS` | `5.0` | Grace window (s) for `Base.close(server)` |
+
+## See Also
+
+- [How-to: Manage Persistent Sessions](howto-sessions.md) — session naming, lifecycle states, and idle sweep

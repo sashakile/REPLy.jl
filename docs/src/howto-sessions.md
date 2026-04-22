@@ -99,6 +99,10 @@ You can validate a name from Julia before sending:
 using REPLy: validate_session_name
 err = validate_session_name("my-session")  # returns nothing (valid)
 err = validate_session_name("my session!") # returns error string
+
+# Typical usage idiom:
+err = validate_session_name(name)
+isnothing(err) || error(err)  # or return error_response(..., err)
 ```
 
 ## 7. Inspect Session State
@@ -146,9 +150,29 @@ This is useful for background cleanup tasks in servers that host many short-live
 
 ```julia
 # Example: periodic sweep in a background task
-@async while true
+sweep_task = @async while true
     sleep(300)  # every 5 minutes
     removed = sweep_idle_sessions!(manager; max_idle_seconds=1800)  # 30 min idle
     isempty(removed) || @info "Swept idle sessions" names=removed
 end
 ```
+
+## See Also
+
+- [How-to: Use the MCP Adapter](howto-mcp-adapter.md) — MCP lifecycle tools, `mcp_call_tool`, session routing
+
+!!! note "Cleanup on shutdown"
+    Store the `@async` return value (as `sweep_task` above) so you can cancel it when the
+    server shuts down. Unanchored background tasks are silently abandoned when the process
+    exits. Use a `Channel` or `Condition` to signal the task to stop cleanly, e.g.:
+
+    ```julia
+    stop = Channel{Nothing}(1)
+    sweep_task = @async while !isready(stop)
+        sleep(300)
+        sweep_idle_sessions!(manager; max_idle_seconds=1800)
+    end
+    # ... later, on shutdown:
+    put!(stop, nothing)
+    wait(sweep_task)
+    ```

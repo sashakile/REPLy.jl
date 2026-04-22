@@ -1,4 +1,4 @@
-const DEFAULT_MAX_REPR_BYTES = 10_000  # 10 KiB
+const DEFAULT_MAX_REPR_BYTES = 10_000  # 10 KB
 
 const OUTPUT_TRUNCATION_MARKER = "…[truncated]"
 
