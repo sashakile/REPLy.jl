@@ -69,9 +69,15 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
     return server
 end
 
-function close_server!(server)
+const DEFAULT_CLOSE_GRACE_SECONDS = 5.0
+
+function close_server!(server; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
+    grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
     server.closing[] && return nothing
     server.closing[] = true
+
+    # Compute deadline before any blocking calls so the full budget is honoured.
+    deadline = time() + Float64(grace_seconds)
 
     for client in copy(server.clients)
         isopen(client) && close(client)
@@ -81,20 +87,24 @@ function close_server!(server)
 
     wait_for_server_task(server.accept_task)
 
+    # Wait for client tasks within the remaining grace budget. Closing the sockets
+    # above unblocks any in-flight readline(); tasks that are genuinely stuck are
+    # abandoned after the deadline rather than blocking the caller indefinitely.
     for task in copy(server.client_tasks)
-        istaskdone(task) || wait_for_server_task(task)
+        remaining = deadline - time()
+        remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
 
     return nothing
 end
 
-function Base.close(server::TCPServerHandle)
-    return close_server!(server)
+function Base.close(server::TCPServerHandle; kwargs...)
+    return close_server!(server; kwargs...)
 end
 
-function Base.close(server::UnixServerHandle)
+function Base.close(server::UnixServerHandle; kwargs...)
     try
-        close_server!(server)
+        close_server!(server; kwargs...)
     finally
         ispath(server.path) && rm(server.path; force=true)
     end

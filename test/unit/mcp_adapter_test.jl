@@ -1,3 +1,24 @@
+# A transport that blocks on receive until explicitly closed — used to test timeout paths.
+mutable struct ChannelTransport <: REPLy.AbstractTransport
+    ch::Channel{Union{Nothing, Dict{String, Any}}}
+    is_open::Ref{Bool}
+end
+ChannelTransport() = ChannelTransport(Channel{Union{Nothing, Dict{String, Any}}}(16), Ref(true))
+
+function REPLy.receive(t::ChannelTransport; kwargs...)
+    t.is_open[] || return nothing
+    try
+        return take!(t.ch)
+    catch
+        return nothing
+    end
+end
+Base.isopen(t::ChannelTransport) = t.is_open[]
+function Base.close(t::ChannelTransport)
+    t.is_open[] = false
+    close(t.ch)
+end
+
 @testset "mcp adapter" begin
     @testset "initialize payload declares supported protocol version" begin
         result = REPLy.mcp_initialize_result()
@@ -158,6 +179,26 @@
             "isError" => true,
             "content" => [Dict("type" => "text", "text" => "Unknown session: abc")],
         )
+    end
+
+    @testset "collect_reply_stream times out and returns synthetic timeout message" begin
+        transport = ChannelTransport()
+
+        t0 = time()
+        msgs = REPLy.collect_reply_stream(transport, "stuck-req"; timeout_seconds=0.1)
+        elapsed = time() - t0
+
+        @test elapsed < 1.0
+        @test length(msgs) == 1
+        @test msgs[1]["id"] == "stuck-req"
+        @test "done" in msgs[1]["status"]
+        @test "timeout" in msgs[1]["status"]
+    end
+
+    @testset "collect_reply_stream rejects non-positive timeout_seconds" begin
+        transport = ChannelTransport()
+        @test_throws ArgumentError REPLy.collect_reply_stream(transport, "bad-timeout"; timeout_seconds=0.0)
+        @test_throws ArgumentError REPLy.collect_reply_stream(transport, "bad-timeout"; timeout_seconds=-1.0)
     end
 
     @testset "structured reply errors include error message and stacktrace" begin

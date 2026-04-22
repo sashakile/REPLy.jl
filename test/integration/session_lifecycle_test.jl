@@ -138,6 +138,22 @@
         @test isempty(error_msgs)
     end
 
+    @testset "close_server! accepts grace_seconds and closes within budget" begin
+        server = REPLy.serve(; port=0)
+
+        t0 = time()
+        close(server; grace_seconds=5.0)
+        elapsed = time() - t0
+
+        @test elapsed < 5.0  # no stuck clients — should close almost instantly
+    end
+
+    @testset "close_server! rejects non-positive grace_seconds" begin
+        server = REPLy.serve(; port=0)
+        @test_throws ArgumentError close(server; grace_seconds=0.0)
+        close(server)  # cleanup
+    end
+
     @testset "session-not-found: request with non-existent session returns error" begin
         manager = REPLy.SessionManager()
         handler = REPLy.build_handler(; manager=manager)
