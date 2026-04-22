@@ -70,6 +70,13 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         return [error_response(request_id, "clone-session \"name\": $(name_err)")]
     end
 
+    # Enforce server-wide session limit before creating a new named session
+    if !isnothing(ctx.server_state) &&
+            total_session_count(ctx.manager) >= ctx.server_state.limits.max_sessions
+        return [error_response(request_id, "Session limit reached";
+                    status_flags=String["error", "session-limit-reached"])]
+    end
+
     # Check if destination already exists before attempting clone
     if !isnothing(lookup_named_session(ctx.manager, name))
         return [error_response(

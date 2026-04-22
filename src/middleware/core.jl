@@ -74,17 +74,23 @@ struct HandlerContext
 end
 
 """
-    RequestContext(manager::SessionManager, emitted::Vector{Dict{String, Any}}, session::Union{ModuleSession, NamedSession, Nothing})
+    RequestContext(manager, emitted, session, server_state)
 
 Context associated with a single incoming request. Tracks the `manager`, the
-list of `emitted` responses generated so far, and the `session` active for
-the request (if any).
+list of `emitted` responses generated so far, the `session` active for
+the request (if any), and the `server_state` (shared server-wide limits and counters).
+`server_state` is `nothing` when `build_handler` is called without a `state` argument
+(e.g. in unit tests that don't need limit enforcement).
 """
 mutable struct RequestContext
     manager::SessionManager
     emitted::Vector{Dict{String, Any}}
     session::Union{ModuleSession, NamedSession, Nothing}
+    server_state::Union{ServerState, Nothing}
 end
+
+RequestContext(manager::SessionManager, emitted::Vector{Dict{String, Any}}, session) =
+    RequestContext(manager, emitted, session, nothing)
 
 emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
@@ -125,14 +131,14 @@ function default_middleware_stack()
     return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), InterruptMiddleware(), StdinMiddleware(), EvalMiddleware(), UnknownOpMiddleware()]
 end
 
-function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack())
+function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict)
         validation_error = validate_request(msg)
         !isnothing(validation_error) && return [validation_error]
 
         request_id = String(get(msg, "id", ""))
-        ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing)
+        ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing, state)
         result = dispatch_middleware(middleware, 1, msg, ctx)
         return finalize_responses(ctx, result, request_id)
     end

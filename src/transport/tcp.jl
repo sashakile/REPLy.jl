@@ -1,8 +1,3 @@
-mutable struct ServerState
-    limits::ResourceLimits
-    max_message_bytes::Int
-end
-
 mutable struct TCPServerHandle
     listener::Sockets.TCPServer
     port::Int
