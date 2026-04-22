@@ -127,6 +127,39 @@
         @test out2 == "task-2\n"
     end
 
+    @testset "large repr output is truncated with marker" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
+        request = Dict("op" => "eval", "id" => "trunc-large", "code" => "repeat(\"x\", 10_000)")
+
+        responses = REPLy.handle_message(
+            REPLy.EvalMiddleware(; max_repr_bytes=20),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        value_msg = only(filter(m -> haskey(m, "value"), responses))
+        @test endswith(value_msg["value"], REPLy.OUTPUT_TRUNCATION_MARKER)
+        @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits(REPLy.OUTPUT_TRUNCATION_MARKER)
+    end
+
+    @testset "small repr output is not truncated" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
+        request = Dict("op" => "eval", "id" => "trunc-small", "code" => "42")
+
+        responses = REPLy.handle_message(
+            REPLy.EvalMiddleware(; max_repr_bytes=1000),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        value_msg = only(filter(m -> haskey(m, "value"), responses))
+        @test value_msg["value"] == "42"
+    end
+
     @testset "large buffered output completes without deadlock" begin
         handler = REPLy.build_handler()
         task = @async handler(Dict(

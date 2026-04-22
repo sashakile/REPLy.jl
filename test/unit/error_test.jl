@@ -96,4 +96,30 @@
         @test REPLy.fallback_render("repr", [1, 2]) == "<repr failed: Vector{Int64}>"
         @test REPLy.fallback_render("repr", Dict("a" => 1)) == "<repr failed: Dict{String, Int64}>"
     end
+
+    @testset "truncate_output appends marker and respects byte limit" begin
+        big = repeat("x", 1000)
+        result = REPLy.truncate_output(big, 10)
+        @test endswith(result, REPLy.OUTPUT_TRUNCATION_MARKER)
+        @test ncodeunits(result) == 10 + ncodeunits(REPLy.OUTPUT_TRUNCATION_MARKER)
+    end
+
+    @testset "truncate_output returns string unchanged when at or under limit" begin
+        s = "hello"
+        @test REPLy.truncate_output(s, 5) === s
+        @test REPLy.truncate_output(s, 100) === s
+    end
+
+    @testset "truncate_output handles UTF-8 multi-byte characters safely" begin
+        s = "héllo"  # é is 2 bytes: 'h'=byte1, 'é'=bytes2-3, 'l'=byte4
+        result = REPLy.truncate_output(s, 3)
+        @test endswith(result, REPLy.OUTPUT_TRUNCATION_MARKER)
+        @test isvalid(result)  # result must be valid UTF-8
+        @test startswith(result, "hé")  # prevind(s,4)=2, so s[1:2]="hé" (3 bytes)
+    end
+
+    @testset "truncate_output rejects non-positive max_bytes" begin
+        @test_throws ArgumentError REPLy.truncate_output("hello", 0)
+        @test_throws ArgumentError REPLy.truncate_output("hello", -1)
+    end
 end

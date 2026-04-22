@@ -6,7 +6,8 @@ using Sockets
 export protocol_name, version_string
 export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_response,
     error_response, receive, response_message, send!, validate_request,
-    DEFAULT_MAX_MESSAGE_BYTES
+    DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_REPR_BYTES, OUTPUT_TRUNCATION_MARKER,
+    truncate_output
 export build_handler, serve, server_port, server_socket_path
 export RequestContext, HandlerContext, dispatch_middleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,

@@ -1,3 +1,17 @@
+const DEFAULT_MAX_REPR_BYTES = 10_000  # 10 KiB
+
+const OUTPUT_TRUNCATION_MARKER = "…[truncated]"
+
+function truncate_output(s::AbstractString, max_bytes::Int)
+    max_bytes > 0 || throw(ArgumentError("max_bytes must be positive, got $max_bytes"))
+    ncodeunits(s) <= max_bytes && return s
+    j = thisind(s, max_bytes)
+    # If the character at j extends past max_bytes, back up to the previous boundary.
+    next_boundary = nextind(s, j) - 1
+    j = next_boundary > max_bytes ? prevind(s, j) : j
+    return s[1:j] * OUTPUT_TRUNCATION_MARKER
+end
+
 function safe_type_name(value)
     type_string = string(typeof(value))
     return replace(type_string, r"(?:^|\{|, )[^\{, ]+\." => s -> startswith(s, "{") || startswith(s, ", ") ? s[end-1:end] : "")
