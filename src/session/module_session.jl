@@ -41,7 +41,9 @@ output while ephemeral sessions never do.
 The fields `state`, `eval_task`, and `last_active_at` are protected by `session.lock`;
 use the provided accessor and transition functions rather than reading or writing them
 directly. The `eval_lock` field is a standalone serialization primitive — it is not
-governed by `session.lock` and must not be acquired while holding it.
+governed by `session.lock` and must not be acquired while holding it. The
+`stdin_channel` is an unbounded `Channel{String}` that buffers stdin text across
+evals; it is thread-safe and must not be accessed under `session.lock`.
 """
 mutable struct NamedSession
     name::String
@@ -52,11 +54,12 @@ mutable struct NamedSession
     last_active_at::Float64
     lock::ReentrantLock
     eval_lock::ReentrantLock
+    stdin_channel::Channel{String}
 end
 
 function NamedSession(name::String, mod::Module)
     now = time()
-    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock())
+    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf))
 end
 
 """
