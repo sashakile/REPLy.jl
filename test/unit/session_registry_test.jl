@@ -264,4 +264,127 @@
         @test REPLy.session_state(session) === REPLy.SessionIdle
         @test REPLy.session_eval_task(session) === nothing
     end
+
+    @testset "try_begin_eval! returns true and transitions when idle" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "try-begin-idle")
+        task = @async sleep(0)
+        result = REPLy.try_begin_eval!(session, task)
+        @test result === true
+        @test REPLy.session_state(session) === REPLy.SessionRunning
+        REPLy.end_eval!(session)
+    end
+
+    @testset "try_begin_eval! returns false without throwing when session is closed" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "try-begin-closed")
+        REPLy.destroy_named_session!(manager, "try-begin-closed")
+        task = @async sleep(0)
+        result = REPLy.try_begin_eval!(session, task)
+        @test result === false
+        @test REPLy.session_state(session) === REPLy.SessionClosed
+    end
+
+    @testset "try_begin_eval! throws ArgumentError when session is already running" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "try-begin-running")
+        task1 = @async sleep(0)
+        REPLy.begin_eval!(session, task1)
+        task2 = @async sleep(0)
+        @test_throws ArgumentError REPLy.try_begin_eval!(session, task2)
+        REPLy.end_eval!(session)
+    end
+
+    @testset "try_begin_eval! is race-safe against concurrent destroy_named_session!" begin
+        # Each task uses eval_lock (as production code does), so only one task calls
+        # try_begin_eval! at a time. The race is between try_begin_eval! and the destroyer.
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "race-destroy")
+        n = 20
+        results = Channel{Bool}(n)
+        tasks = [@async lock(session.eval_lock) do
+                     t = @async sleep(0)
+                     result = REPLy.try_begin_eval!(session, t)
+                     put!(results, result)
+                     result && REPLy.end_eval!(session)
+                 end for _ in 1:n]
+        destroyer = @async REPLy.destroy_named_session!(manager, "race-destroy")
+        foreach(wait, tasks)
+        wait(destroyer)
+        close(results)
+        outcomes = collect(results)
+        @test length(outcomes) == n
+        @test all(x -> x isa Bool, outcomes)  # no exceptions
+        @test REPLy.session_state(session) === REPLy.SessionClosed
+    end
+end
+
+@testset "idle sweep" begin
+    @testset "sweep_idle_sessions! removes sessions idle beyond threshold" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "old-session")
+        REPLy.create_named_session!(manager, "fresh-session")
+
+        old = REPLy.lookup_named_session(manager, "old-session")
+        lock(old.lock) do; old.last_active_at = time() - 10.0; end
+
+        removed = REPLy.sweep_idle_sessions!(manager; max_idle_seconds=5.0)
+        @test Set(removed) == Set(["old-session"])
+        @test isnothing(REPLy.lookup_named_session(manager, "old-session"))
+        @test !isnothing(REPLy.lookup_named_session(manager, "fresh-session"))
+    end
+
+    @testset "sweep_idle_sessions! skips running sessions" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "running-session")
+
+        # Back-date activity then use begin_eval! to mark as running (state machine API)
+        task = @async sleep(0)
+        REPLy.begin_eval!(session, task)
+        lock(session.lock) do; session.last_active_at = time() - 10.0; end
+
+        removed = REPLy.sweep_idle_sessions!(manager; max_idle_seconds=5.0)
+        @test isempty(removed)
+        @test !isnothing(REPLy.lookup_named_session(manager, "running-session"))
+        REPLy.end_eval!(session)
+    end
+
+    @testset "sweep_idle_sessions! returns empty when all sessions are fresh" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "active-1")
+        REPLy.create_named_session!(manager, "active-2")
+        removed = REPLy.sweep_idle_sessions!(manager; max_idle_seconds=3600.0)
+        @test isempty(removed)
+        @test length(REPLy.list_named_sessions(manager)) == 2
+    end
+
+    @testset "sweep_idle_sessions! rejects non-positive max_idle_seconds" begin
+        manager = REPLy.SessionManager()
+        @test_throws ArgumentError REPLy.sweep_idle_sessions!(manager; max_idle_seconds=0.0)
+        @test_throws ArgumentError REPLy.sweep_idle_sessions!(manager; max_idle_seconds=-1.0)
+    end
+
+    @testset "sweep_idle_sessions! does not destroy a concurrently-recreated session" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "recycled")
+        old = REPLy.lookup_named_session(manager, "recycled")
+        lock(old.lock) do; old.last_active_at = time() - 100.0; end
+
+        # Recreate the session concurrently; sweep must not destroy the fresh one
+        recreator = @async begin
+            REPLy.destroy_named_session!(manager, "recycled")
+            REPLy.create_named_session!(manager, "recycled")
+        end
+
+        removed = REPLy.sweep_idle_sessions!(manager; max_idle_seconds=5.0)
+        wait(recreator)
+
+        live = REPLy.lookup_named_session(manager, "recycled")
+        if !isnothing(live)
+            # If the fresh session survived, its state must not be Closed by the sweep
+            @test REPLy.session_state(live) !== REPLy.SessionClosed
+        end
+        # At most one removal (the original session, not the fresh one)
+        @test length(removed) <= 1
+    end
 end

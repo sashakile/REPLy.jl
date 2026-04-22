@@ -115,14 +115,15 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     try
         if session isa NamedSession
             # Serialize evals within this session (FIFO); independent across sessions.
+            # try_begin_eval! handles the race where destroy_named_session! runs concurrently:
+            # it returns false (no throw) when the session is already SessionClosed.
             lock(session.eval_lock) do
-                began = false
-                begin_eval!(session, current_task())
-                began = true
+                try_begin_eval!(session, current_task()) ||
+                    return [error_response(request_id, "session was closed")]
                 try
                     _run_eval_core(session_module(session), request_id, code, max_repr_bytes)
                 finally
-                    began && end_eval!(session)
+                    end_eval!(session)
                 end
             end
         else
