@@ -100,8 +100,10 @@ end
         for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
             result = REPLy.mcp_stub_result(tool)
             @test result["isError"] == true
-            @test occursin("not yet implemented", result["content"][1]["text"])
-            @test occursin(tool, result["content"][1]["text"])
+            text = result["content"][1]["text"]
+            @test occursin("not yet implemented", text)
+            @test occursin(tool, text)
+            @test !occursin("DRAFT", text)  # internal tracking refs must not leak to wire
         end
     end
 
@@ -283,5 +285,86 @@ end
 
         @test result["isError"] == true
         @test occursin("nonexistent", result["content"][1]["text"])
+    end
+
+    @testset "mcp_call_tool routes julia_new_session to mcp_new_session_result" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_new_session", Dict{String,Any}(), manager)
+
+        @test result["isError"] == false
+        @test occursin("Session:", result["content"][1]["text"])
+        @test length(REPLy.list_named_sessions(manager)) == 1
+    end
+
+    @testset "mcp_call_tool routes julia_list_sessions to mcp_list_sessions_result" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "s1")
+        REPLy.create_named_session!(manager, "s2")
+        result = REPLy.mcp_call_tool("julia_list_sessions", Dict{String,Any}(), manager)
+
+        @test result["isError"] == false
+        text = result["content"][1]["text"]
+        @test occursin("s1", text)
+        @test occursin("s2", text)
+    end
+
+    @testset "mcp_call_tool routes julia_close_session to mcp_close_session_result" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "to-close")
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}("session" => "to-close"), manager)
+
+        @test result["isError"] == false
+        @test isnothing(REPLy.lookup_named_session(manager, "to-close"))
+    end
+
+    @testset "mcp_call_tool returns error for julia_close_session with missing session arg" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}(), manager)
+
+        @test result["isError"] == true
+        @test occursin("string session argument", result["content"][1]["text"])
+    end
+
+    @testset "mcp_call_tool returns error for julia_close_session with empty session arg" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}("session" => ""), manager)
+
+        @test result["isError"] == true
+        @test occursin("non-empty", result["content"][1]["text"])
+    end
+
+    @testset "mcp_call_tool returns error for julia_close_session with non-string session arg" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}("session" => 42), manager)
+
+        @test result["isError"] == true
+        @test occursin("string session argument", result["content"][1]["text"])
+    end
+
+    @testset "mcp_call_tool returns stub for unimplemented tools" begin
+        manager = REPLy.SessionManager()
+        for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
+            result = REPLy.mcp_call_tool(tool, Dict{String,Any}(), manager)
+            @test result["isError"] == true
+            text = result["content"][1]["text"]
+            @test occursin("not yet implemented", text)
+            @test occursin(tool, text)
+        end
+    end
+
+    @testset "mcp_call_tool returns error for julia_eval (requires live transport)" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_eval", Dict{String,Any}("code" => "1+1"), manager)
+
+        @test result["isError"] == true
+        @test occursin("live transport", result["content"][1]["text"])
+    end
+
+    @testset "mcp_call_tool returns error for unknown tool name" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_nonexistent", Dict{String,Any}(), manager)
+
+        @test result["isError"] == true
+        @test occursin("julia_nonexistent", result["content"][1]["text"])
     end
 end

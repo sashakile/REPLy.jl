@@ -133,9 +133,10 @@ function mcp_eval_request(request_id::AbstractString, args::AbstractDict; defaul
     return request
 end
 
-"""Return a standard MCP 'not yet implemented' error result for stub tools (DRAFT-004)."""
+"""Return a standard MCP 'not yet implemented' error result for stub tools."""
 function mcp_stub_result(tool_name::AbstractString)
-    return error_result("$tool_name is not yet implemented (DRAFT-004)")
+    # Tracking reference: DRAFT-004
+    return error_result("$tool_name is not yet implemented")
 end
 
 """
@@ -189,6 +190,47 @@ function mcp_close_session_result(manager::SessionManager, session_name::Abstrac
         return error_result("Session not found: $session_name")
     end
     return CallToolResult("isError" => false, "content" => [text_block("Closed session: $session_name")])
+end
+
+"""
+    mcp_call_tool(tool_name, args, manager) -> CallToolResult
+
+Dispatch an MCP `tools/call` request to the appropriate adapter helper.
+
+Routes session lifecycle tools (`julia_new_session`, `julia_list_sessions`,
+`julia_close_session`) to their respective lifecycle helpers. Returns a stub
+error for tools that are not yet implemented (`julia_complete`, `julia_lookup`,
+`julia_load_file`, `julia_interrupt`). Returns an error for `julia_eval` (which
+requires a live transport and is handled by the full adapter loop) and for
+unknown tool names.
+"""
+function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::SessionManager)
+    # Lifecycle tools — primary dispatch targets
+    if tool_name == "julia_new_session"
+        return mcp_new_session_result(manager)
+    elseif tool_name == "julia_list_sessions"
+        return mcp_list_sessions_result(manager)
+    elseif tool_name == "julia_close_session"
+        session = get(args, "session", nothing)
+        session isa AbstractString ||
+            return error_result("julia_close_session requires a string session argument")
+        isempty(session) &&
+            return error_result("julia_close_session requires a non-empty session argument")
+        try
+            validate_session_name(session)
+        catch e
+            return error_result(sprint(showerror, e))
+        end
+        return mcp_close_session_result(manager, session)
+    # Stub tools — not yet implemented
+    elseif tool_name in ("julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt")
+        return mcp_stub_result(tool_name)
+    # julia_eval requires a live transport; cannot be dispatched statically
+    elseif tool_name == "julia_eval"
+        return error_result("julia_eval requires a live transport and cannot be dispatched via mcp_call_tool")
+    else
+        return error_result("Unknown tool: $tool_name")
+    end
 end
 
 """

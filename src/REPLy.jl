@@ -18,7 +18,7 @@ export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
-    mcp_close_session_result, MCP_DEFAULT_SESSION_NAME
+    mcp_close_session_result, mcp_call_tool, MCP_DEFAULT_SESSION_NAME
 
 include("errors.jl")
 include("protocol/message.jl")
