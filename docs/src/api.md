@@ -2,5 +2,5 @@
 
 ```@autodocs
 Modules = [REPLy]
-Order   = [:function, :type]
+Order   = [:constant, :function, :type]
 ```
