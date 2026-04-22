@@ -59,7 +59,7 @@ function finalize_responses(ctx::RequestContext, result, request_id::AbstractStr
 end
 
 function default_middleware_stack()
-    return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), EvalMiddleware(), UnknownOpMiddleware()]
+    return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), EvalMiddleware(), UnknownOpMiddleware()]
 end
 
 function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack())
