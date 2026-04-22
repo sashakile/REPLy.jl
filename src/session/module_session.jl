@@ -31,6 +31,9 @@ No transition out of `SessionClosed` is possible.
     SessionClosed
 end
 
+"""Maximum number of entries kept in each `NamedSession`'s history vector."""
+const MAX_SESSION_HISTORY_SIZE = 1000
+
 """
     NamedSession
 
@@ -45,6 +48,7 @@ governed by `session.lock` and must not be acquired while holding it. The
 `stdin_channel` is an unbounded `Channel{String}` that buffers stdin text across
 evals; it is thread-safe and must not be accessed under `session.lock`.
 """
+
 mutable struct NamedSession
     name::String
     session_mod::Module
@@ -55,11 +59,24 @@ mutable struct NamedSession
     lock::ReentrantLock
     eval_lock::ReentrantLock
     stdin_channel::Channel{String}
+    history::Vector{Any}
 end
 
 function NamedSession(name::String, mod::Module)
     now = time()
-    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf))
+    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[])
+end
+
+"""
+    clamp_history!(session)
+
+Drop the oldest entries from `session.history` so it does not exceed
+`MAX_SESSION_HISTORY_SIZE`. Called after each history push.
+"""
+function clamp_history!(session::NamedSession)
+    excess = length(session.history) - MAX_SESSION_HISTORY_SIZE
+    excess > 0 && deleteat!(session.history, 1:excess)
+    return session
 end
 
 """
