@@ -237,12 +237,12 @@
         @test REPLy.session_eval_task(session) === nothing
     end
 
-    @testset "record_activity! updates last_active_at" begin
+    @testset "_record_activity! updates last_active_at" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "lifecycle-record-activity")
         before = REPLy.session_last_active_at(session)
         sleep(0.01)
-        REPLy.record_activity!(session)
+        REPLy._record_activity!(session)
         @test REPLy.session_last_active_at(session) > before
     end
 

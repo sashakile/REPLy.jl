@@ -177,4 +177,67 @@
         @test sum(ncodeunits(msg["out"]) for msg in out_msgs) == 200000
         @test only(filter(msg -> haskey(msg, "value"), msgs))["value"] == "1"
     end
+
+    @testset "named session: eval updates last_active_at" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "activity-test")
+        mw = REPLy.EvalMiddleware()
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        before = REPLy.session_last_active_at(session)
+        sleep(0.005)
+
+        REPLy.handle_message(mw, Dict("op" => "eval", "id" => "act1", "code" => "1+1"), _ -> nothing, ctx)
+
+        @test REPLy.session_state(session) === REPLy.SessionIdle
+        @test REPLy.session_eval_task(session) === nothing
+        @test REPLy.session_last_active_at(session) > before
+    end
+
+    @testset "named session: eval_lock is held during eval and released after" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lock-hold-test")
+        mw = REPLy.EvalMiddleware()
+
+        eval_started = Channel{Nothing}(1)
+        eval_proceed = Channel{Nothing}(1)
+        mod = REPLy.session_module(session)
+        Core.eval(mod, :(eval_started = $eval_started))
+        Core.eval(mod, :(eval_proceed = $eval_proceed))
+
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        t = @async REPLy.handle_message(
+            mw,
+            Dict("op" => "eval", "id" => "lock1",
+                 "code" => "put!(eval_started, nothing); take!(eval_proceed)"),
+            _ -> nothing, ctx,
+        )
+
+        take!(eval_started)  # eval is now running inside eval_lock
+
+        held = !trylock(session.eval_lock)
+        @test held  # eval_lock is held while eval is running
+
+        put!(eval_proceed, nothing)
+        wait(t)
+
+        released = trylock(session.eval_lock)
+        @test released  # eval_lock is released after eval completes
+        released && unlock(session.eval_lock)
+    end
+
+    @testset "cross-session eval_locks are independent" begin
+        manager = REPLy.SessionManager()
+        s1 = REPLy.create_named_session!(manager, "ind-s1")
+        s2 = REPLy.create_named_session!(manager, "ind-s2")
+
+        @test s1.eval_lock !== s2.eval_lock
+
+        lock(s1.eval_lock) do
+            got = trylock(s2.eval_lock)
+            @test got
+            got && unlock(s2.eval_lock)
+        end
+    end
 end
