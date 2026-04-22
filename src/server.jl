@@ -12,7 +12,7 @@ function wait_for_server_task(task::Task)
 end
 
 """
-    serve(; host=ip"127.0.0.1", port=5555, socket_path=nothing, manager=SessionManager(), middleware=default_middleware_stack())
+    serve(; host=ip"127.0.0.1", port=5555, socket_path=nothing, manager=SessionManager(), middleware=default_middleware_stack(), max_message_bytes=DEFAULT_MAX_MESSAGE_BYTES)
 
 Start the REPLy JSON-RPC server. If `socket_path` is provided, a Unix domain socket server
 is created at that path. Otherwise, a TCP server is started on the given `host` and `port`.
@@ -23,11 +23,14 @@ is created at that path. Otherwise, a TCP server is started on the given `host` 
 - `socket_path`: An optional path for a Unix domain socket server. Mutually exclusive with `host`/`port`.
 - `manager`: The `SessionManager` used to track state across sessions.
 - `middleware`: A vector of middleware handlers to process incoming requests.
+- `max_message_bytes`: Maximum allowed inbound message size in bytes. Requests exceeding this
+  limit are rejected with a structured error response and the connection is closed (default: `DEFAULT_MAX_MESSAGE_BYTES`, 1 MiB).
 
 # Returns
 A server handle (`TCPServerHandle` or `UnixServerHandle`) which can be closed with `close(server)`.
 """
-function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack())
+function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
+    max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
     handler = build_handler(; manager=manager, middleware=middleware)
     closing = Ref(false)
 
@@ -44,6 +47,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
             IO[],
             handler,
             closing,
+            max_message_bytes,
         )
         server.accept_task = @async accept_loop!(listener, server)
         return server
@@ -59,6 +63,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         IO[],
         handler,
         closing,
+        max_message_bytes,
     )
     server.accept_task = @async accept_loop!(listener, server)
     return server

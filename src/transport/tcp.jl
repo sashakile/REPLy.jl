@@ -6,6 +6,7 @@ mutable struct TCPServerHandle
     clients::Vector{IO}
     handler::Function
     closing::Base.RefValue{Bool}
+    max_message_bytes::Int
 end
 
 mutable struct UnixServerHandle
@@ -16,18 +17,30 @@ mutable struct UnixServerHandle
     clients::Vector{IO}
     handler::Function
     closing::Base.RefValue{Bool}
+    max_message_bytes::Int
 end
 
 is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
 safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "id", "")) : ""
 
-function handle_client!(socket::IO, handler::Function)
+function handle_client!(socket::IO, handler::Function; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
     transport = JSONTransport(socket, ReentrantLock())
 
     try
         while isopen(transport)
-            msg = receive(transport)
+            msg = try
+                receive(transport; max_message_bytes=max_message_bytes)
+            catch ex
+                if ex isa MessageTooLargeError
+                    try
+                        send!(transport, error_response("", "message exceeds maximum size of $(ex.limit) bytes"))
+                    catch
+                    end
+                    return nothing
+                end
+                rethrow()
+            end
             isnothing(msg) && return nothing
 
             responses = try
@@ -66,7 +79,7 @@ function accept_loop!(listener, handle)
         push!(handle.clients, socket)
         task = @async begin
             try
-                handle_client!(socket, handle.handler)
+                handle_client!(socket, handle.handler; max_message_bytes=handle.max_message_bytes)
             finally
                 filter!(client -> client !== socket, handle.clients)
                 filter!(existing -> existing !== current_task(), handle.client_tasks)

@@ -5,6 +5,10 @@ struct JSONTransport <: AbstractTransport
     lock::ReentrantLock
 end
 
+struct MessageTooLargeError <: Exception
+    limit::Int
+end
+
 function send!(transport::JSONTransport, msg::Dict)
     lock(transport.lock) do
         write(transport.io, JSON3.write(msg))
@@ -14,7 +18,12 @@ function send!(transport::JSONTransport, msg::Dict)
     return nothing
 end
 
-function receive(transport::JSONTransport)::Union{Dict{String, Any}, Nothing}
+const DEFAULT_MAX_MESSAGE_BYTES = 1_048_576  # 1 MiB
+
+# Note: readline() buffers the full message in memory before the size check fires.
+# This protects against processing and parsing oversized payloads but does not prevent
+# the OS-level allocation of the line. True streaming enforcement would require a custom reader.
+function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{Dict{String, Any}, Nothing}
     while !eof(transport.io)
         line = try
             readline(transport.io)
@@ -27,6 +36,10 @@ function receive(transport::JSONTransport)::Union{Dict{String, Any}, Nothing}
         end
 
         isempty(strip(line)) && continue
+
+        if ncodeunits(line) > max_message_bytes
+            throw(MessageTooLargeError(max_message_bytes))
+        end
 
         msg = try
             JSON3.read(line)
