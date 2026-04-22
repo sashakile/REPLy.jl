@@ -1,6 +1,7 @@
 module REPLy
 
 using JSON3
+using REPL
 using Sockets
 
 export protocol_name, version_string
@@ -27,6 +28,9 @@ include("session/manager.jl")
 include("middleware/core.jl")
 include("middleware/eval.jl")
 include("middleware/describe.jl")
+include("middleware/load_file.jl")
+include("middleware/complete.jl")
+include("middleware/lookup.jl")
 include("middleware/session.jl")
 include("middleware/session_ops.jl")
 include("middleware/unknown_op.jl")
