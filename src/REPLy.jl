@@ -10,6 +10,7 @@ export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_respo
     truncate_output
 export build_handler, serve, server_port, server_socket_path
 export RequestContext, HandlerContext, dispatch_middleware
+export validate_session_name, MAX_SESSION_NAME_BYTES
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result
 

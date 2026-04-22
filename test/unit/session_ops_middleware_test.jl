@@ -217,6 +217,55 @@
         @test length(REPLy.list_named_sessions(manager)) == 2
     end
 
+    @testset "session name validation rejects invalid names with format error" begin
+        handler = REPLy.build_handler()
+
+        for (label, name) in [
+            ("whitespace-only", "   "),
+            ("disallowed chars", "my session!"),
+            ("dot in name", "my.session"),
+            ("slash in name", "a/b"),
+        ]
+            msgs = handler(Dict("op" => "close-session", "id" => "val-$label", "name" => name))
+            assert_conformance(msgs, "val-$label")
+            terminal = filter(m -> haskey(m, "status"), msgs)[end]
+            @test "error" in terminal["status"]
+            # Must be a format error, not a "session not found" error
+            @test !("session-not-found" in terminal["status"])
+        end
+    end
+
+    @testset "session name validation rejects names over max length" begin
+        handler = REPLy.build_handler()
+        long_name = repeat("a", REPLy.MAX_SESSION_NAME_BYTES + 1)
+        msgs = handler(Dict("op" => "close-session", "id" => "val-long", "name" => long_name))
+        assert_conformance(msgs, "val-long")
+        terminal = filter(m -> haskey(m, "status"), msgs)[end]
+        @test "error" in terminal["status"]
+        @test !("session-not-found" in terminal["status"])
+    end
+
+    @testset "session name validation accepts valid names" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        for name in ["alpha", "my-session", "session_1", "ABC-123"]
+            REPLy.create_named_session!(manager, name)
+            msgs = handler(Dict("op" => "close-session", "id" => "val-ok-$name", "name" => name))
+            assert_conformance(msgs, "val-ok-$name")
+            @test !("error" in filter(m -> haskey(m, "status"), msgs)[end]["status"])
+        end
+    end
+
+    @testset "session routing rejects invalid session name before lookup" begin
+        handler = REPLy.build_handler()
+        msgs = handler(Dict("op" => "eval", "id" => "route-bad", "session" => "bad name!", "code" => "1+1"))
+        assert_conformance(msgs, "route-bad")
+        terminal = filter(m -> haskey(m, "status"), msgs)[end]
+        @test "error" in terminal["status"]
+        @test !("session-not-found" in terminal["status"])
+    end
+
     @testset "clone-session preserves original session" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "keeper")
