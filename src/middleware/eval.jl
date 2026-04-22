@@ -73,7 +73,11 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
                     read_captured_output(stdout_io),
                     read_captured_output(stderr_io),
                 )
-                append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
+                if ex isa InterruptException
+                    push!(output_messages, response_message(request_id, "status" => ["done", "interrupted"]))
+                else
+                    append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
+                end
                 return output_messages
             end
 
