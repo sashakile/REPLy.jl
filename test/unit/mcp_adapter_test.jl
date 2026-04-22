@@ -341,6 +341,14 @@ end
         @test occursin("string session argument", result["content"][1]["text"])
     end
 
+    @testset "mcp_call_tool returns error for julia_close_session with invalid name" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}("session" => "my session!"), manager)
+
+        @test result["isError"] == true
+        @test occursin("letters, digits", result["content"][1]["text"])
+    end
+
     @testset "mcp_call_tool returns stub for unimplemented tools" begin
         manager = REPLy.SessionManager()
         for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
