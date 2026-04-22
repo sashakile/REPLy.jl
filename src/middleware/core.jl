@@ -23,13 +23,16 @@ mutable struct RequestContext
     session::Union{ModuleSession, NamedSession, Nothing}
 end
 
-struct EvalMiddleware <: AbstractMiddleware end
+struct EvalMiddleware <: AbstractMiddleware
+    max_repr_bytes::Int
+end
+EvalMiddleware(; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) = EvalMiddleware(max_repr_bytes)
 
 const EVAL_IO_CAPTURE_LOCK = ReentrantLock()
 
 emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
-safe_repr(value) = safe_render("repr", repr, value)
+safe_repr(value; max_bytes::Int=DEFAULT_MAX_REPR_BYTES) = truncate_output(safe_render("repr", repr, value), max_bytes)
 
 handle_message(::AbstractMiddleware, msg, next, ctx::RequestContext) = next(msg)
 
@@ -58,7 +61,7 @@ function eval_parsed(module_::Module, exprs)
     return Core.eval(module_, exprs)
 end
 
-function eval_responses(ctx::RequestContext, request::AbstractDict)
+function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = String(request["id"])
     code = get(request, "code", "")
     code isa AbstractString || return [error_response(request_id, "code must be a string")]
@@ -101,7 +104,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
                 read_captured_output(stdout_io),
                 read_captured_output(stderr_io),
             )
-            push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
+            push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
             push!(responses, done_response(request_id))
             return responses
         finally
@@ -116,9 +119,9 @@ function eval_responses(ctx::RequestContext, request::AbstractDict)
     end
 end
 
-function handle_message(::EvalMiddleware, msg, next, ctx::RequestContext)
+function handle_message(mw::EvalMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "eval" || return next(msg)
-    return eval_responses(ctx, msg)
+    return eval_responses(ctx, msg; max_repr_bytes=mw.max_repr_bytes)
 end
 
 """
