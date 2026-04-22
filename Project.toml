@@ -6,6 +6,7 @@ version = "0.1.0"
 [deps]
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
 julia = "1.10"
@@ -14,6 +15,7 @@ JET = "0.9, 0.10, 0.11"
 JSON3 = "1"
 Sockets = "1"
 Test = "1"
+UUIDs = "1"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

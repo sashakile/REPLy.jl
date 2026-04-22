@@ -97,24 +97,43 @@ function lookup_named_session(manager::SessionManager, name::AbstractString)
 end
 
 """
-    destroy_named_session!(manager, name)
+    destroy_named_session!(manager, name) -> Bool
 
-Remove the named session registered under `name`. This operation is
-idempotent — calling it when no such session exists is safe.
+Remove the named session registered under `name`. Returns `true` if a session
+was removed, `false` if no such session existed. This operation is idempotent —
+calling it when no such session exists is safe.
 """
 function destroy_named_session!(manager::SessionManager, name::AbstractString)
     lock(manager.lock) do
         session = get(manager.named_sessions, String(name), nothing)
-        if !isnothing(session)
-            # Transition to terminal state under session.lock before removing from the dict.
-            # Lock order: manager.lock (outer) → session.lock (inner).
-            lock(session.lock) do
-                session.state = SessionClosed
-            end
-            delete!(manager.named_sessions, String(name))
+        isnothing(session) && return false
+        # Transition to terminal state under session.lock before removing from the dict.
+        # Lock order: manager.lock (outer) → session.lock (inner).
+        lock(session.lock) do
+            session.state = SessionClosed
         end
+        delete!(manager.named_sessions, String(name))
+        return true
     end
-    return nothing
+end
+
+"""
+    get_or_create_named_session!(manager, name) -> NamedSession
+
+Return the existing named session registered under `name`, or atomically create
+and register one if absent. The check-and-create is performed under a single
+`manager.lock` acquisition to prevent concurrent callers from each creating a
+session and silently replacing the other's work.
+"""
+function get_or_create_named_session!(manager::SessionManager, name::AbstractString)
+    lock(manager.lock) do
+        key = String(name)
+        existing = get(manager.named_sessions, key, nothing)
+        isnothing(existing) || return existing
+        session = NamedSession(key, Module(gensym(:REPLyNamedSession)))
+        manager.named_sessions[key] = session
+        return session
+    end
 end
 
 """
