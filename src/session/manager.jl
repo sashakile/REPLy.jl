@@ -12,11 +12,12 @@ The invariant that ephemeral sessions never appear in `list_named_sessions`
 is enforced by keeping the two registries strictly separate.
 """
 mutable struct SessionManager
+    lock::ReentrantLock
     ephemeral_sessions::Vector{ModuleSession}
     named_sessions::Dict{String,NamedSession}
 end
 
-SessionManager() = SessionManager(ModuleSession[], Dict{String,NamedSession}())
+SessionManager() = SessionManager(ReentrantLock(), ModuleSession[], Dict{String,NamedSession}())
 
 """
     create_ephemeral_session!(manager)
@@ -24,9 +25,11 @@ SessionManager() = SessionManager(ModuleSession[], Dict{String,NamedSession}())
 Create and register a new ephemeral session backed by an anonymous module.
 """
 function create_ephemeral_session!(manager::SessionManager)
-    session = ModuleSession(Module(gensym(:REPLySession)))
-    push!(manager.ephemeral_sessions, session)
-    return session
+    lock(manager.lock) do
+        session = ModuleSession(Module(gensym(:REPLySession)))
+        push!(manager.ephemeral_sessions, session)
+        return session
+    end
 end
 
 """
@@ -36,7 +39,9 @@ Remove `session` from `manager`. This operation is idempotent so cleanup code
 can call it safely from both success and error paths.
 """
 function destroy_session!(manager::SessionManager, session::ModuleSession)
-    filter!(existing -> existing !== session, manager.ephemeral_sessions)
+    lock(manager.lock) do
+        filter!(existing -> existing !== session, manager.ephemeral_sessions)
+    end
     return nothing
 end
 
@@ -46,7 +51,9 @@ end
 Return the number of registered ephemeral sessions. Named sessions are not
 counted here; use `length(list_named_sessions(manager))` for those.
 """
-session_count(manager::SessionManager) = length(manager.ephemeral_sessions)
+session_count(manager::SessionManager) = lock(manager.lock) do
+    length(manager.ephemeral_sessions)
+end
 
 """
     create_named_session!(manager, name)
@@ -60,9 +67,11 @@ module and its bindings become unreachable via the registry.
 Name validation (e.g. rejecting empty strings) is the caller's responsibility.
 """
 function create_named_session!(manager::SessionManager, name::AbstractString)
-    session = NamedSession(String(name), Module(gensym(:REPLyNamedSession)), time())
-    manager.named_sessions[session.name] = session
-    return session
+    lock(manager.lock) do
+        session = NamedSession(String(name), Module(gensym(:REPLyNamedSession)), time())
+        manager.named_sessions[session.name] = session
+        return session
+    end
 end
 
 """
@@ -71,7 +80,9 @@ end
 Return all registered persistent named sessions. Ephemeral sessions are
 never included — this is the authoritative source for `ls-sessions`.
 """
-list_named_sessions(manager::SessionManager) = collect(values(manager.named_sessions))
+list_named_sessions(manager::SessionManager) = lock(manager.lock) do
+    collect(values(manager.named_sessions))
+end
 
 """
     lookup_named_session(manager, name)
@@ -80,7 +91,9 @@ Return the `NamedSession` registered under `name`, or `nothing` if no such
 session exists.
 """
 function lookup_named_session(manager::SessionManager, name::AbstractString)
-    get(manager.named_sessions, String(name), nothing)
+    lock(manager.lock) do
+        get(manager.named_sessions, String(name), nothing)
+    end
 end
 
 """
@@ -90,7 +103,9 @@ Remove the named session registered under `name`. This operation is
 idempotent — calling it when no such session exists is safe.
 """
 function destroy_named_session!(manager::SessionManager, name::AbstractString)
-    delete!(manager.named_sessions, String(name))
+    lock(manager.lock) do
+        delete!(manager.named_sessions, String(name))
+    end
     return nothing
 end
 
@@ -107,14 +122,24 @@ Throws `ArgumentError` if `dest_name` already exists — callers must check
 or close the existing session first.
 """
 function clone_named_session!(manager::SessionManager, source_name::AbstractString, dest_name::AbstractString)
-    source = lookup_named_session(manager, source_name)
-    isnothing(source) && return nothing
+    # Hold the lock only for the structural dict operations. The binding copy
+    # (deepcopy + Core.eval) runs outside the lock so it does not block other
+    # tasks for the duration of potentially slow copies.
+    source, dest = lock(manager.lock) do
+        src = get(manager.named_sessions, String(source_name), nothing)
+        isnothing(src) && return (nothing, nothing)
 
-    if !isnothing(lookup_named_session(manager, dest_name))
-        throw(ArgumentError("session already exists: $(dest_name)"))
+        if haskey(manager.named_sessions, String(dest_name))
+            throw(ArgumentError("session already exists: $(dest_name)"))
+        end
+
+        dst = NamedSession(String(dest_name), Module(gensym(:REPLyNamedSession)), time())
+        manager.named_sessions[dst.name] = dst
+        (src, dst)
     end
 
-    dest = create_named_session!(manager, dest_name)
+    (isnothing(source) || isnothing(dest)) && return nothing
+
     source_mod = session_module(source)
     dest_mod = session_module(dest)
 
@@ -126,6 +151,7 @@ function clone_named_session!(manager::SessionManager, source_name::AbstractStri
         startswith(String(sym), "#") && continue
         if isdefined(source_mod, sym)
             val = getfield(source_mod, sym)
+            val isa Module && continue
             copied = ismutable(val) ? deepcopy(val) : val
             Core.eval(dest_mod, :($(sym) = $(QuoteNode(copied))))
         end

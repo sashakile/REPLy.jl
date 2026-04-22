@@ -122,6 +122,39 @@
         @test REPLy.lookup_named_session(manager, "existing-dst") !== nothing
     end
 
+    @testset "clone_named_session! skips Module-typed bindings without throwing" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "mod-src")
+        # Bind a module into the session — deepcopy of Module throws, so this
+        # exercises the skip guard.
+        Core.eval(REPLy.session_module(source), :(import Base; m = Base))
+
+        clone = REPLy.clone_named_session!(manager, "mod-src", "mod-dst")
+        @test clone !== nothing
+        # The Module binding is skipped, so it will be undefined in the clone.
+        @test !isdefined(REPLy.session_module(clone), :m)
+    end
+
+    @testset "concurrent create and destroy do not corrupt state" begin
+        manager = REPLy.SessionManager()
+        n = 10
+        tasks = [
+            @async begin
+                for i in 1:20
+                    name = "concurrent-$(Threads.threadid())-$i"
+                    REPLy.create_named_session!(manager, name)
+                    REPLy.destroy_named_session!(manager, name)
+                end
+            end
+            for _ in 1:n
+        ]
+        foreach(wait, tasks)
+        # After all tasks complete, the registry should not contain any leftover entries
+        # from this test (all were created and then destroyed).
+        leftover = filter(s -> startswith(REPLy.session_name(s), "concurrent-"), REPLy.list_named_sessions(manager))
+        @test isempty(leftover)
+    end
+
     @testset "ephemeral session count unaffected by named sessions" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "named1")
