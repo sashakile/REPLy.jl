@@ -115,18 +115,20 @@ function mcp_eval_request(request_id::AbstractString, args::AbstractDict; defaul
 
     module_name = get(args, "module", nothing)
     if !isnothing(module_name)
-        module_name isa AbstractString || throw(ArgumentError("module must be a string when provided"))
-        request["module"] = module_name
+        throw(ArgumentError("module field is not yet supported (CORR-005)"))
     end
 
     timeout_ms = get(args, "timeout_ms", nothing)
     if !isnothing(timeout_ms)
-        timeout_ms isa Integer || throw(ArgumentError("timeout_ms must be an integer when provided"))
-        timeout_ms >= 1 || throw(ArgumentError("timeout_ms must be ≥ 1"))
-        request["timeout-ms"] = timeout_ms
+        throw(ArgumentError("timeout_ms field is not yet supported (CORR-005)"))
     end
 
     return request
+end
+
+"""Return a standard MCP 'not yet implemented' error result for stub tools (DRAFT-004)."""
+function mcp_stub_result(tool_name::AbstractString)
+    return error_result("$tool_name is not yet implemented (DRAFT-004)")
 end
 
 """

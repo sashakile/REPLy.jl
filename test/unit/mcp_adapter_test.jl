@@ -44,8 +44,6 @@
     @testset "eval request uses default session and disables stdin" begin
         request = REPLy.mcp_eval_request("req-1", Dict(
             "code" => "1 + 1",
-            "module" => "Main",
-            "timeout_ms" => 250,
         ); default_session="session-default")
 
         @test request == Dict(
@@ -53,8 +51,6 @@
             "id" => "req-1",
             "code" => "1 + 1",
             "session" => "session-default",
-            "module" => "Main",
-            "timeout-ms" => 250,
             "allow-stdin" => false,
         )
     end
@@ -72,10 +68,20 @@
     @testset "eval request rejects invalid adapter arguments" begin
         @test_throws ArgumentError REPLy.mcp_eval_request("bad-code", Dict(); default_session="session-default")
         @test_throws ArgumentError REPLy.mcp_eval_request("bad-session", Dict("code" => "1 + 1", "session" => 1); default_session="session-default")
-        @test_throws ArgumentError REPLy.mcp_eval_request("bad-module", Dict("code" => "1 + 1", "module" => 2); default_session="session-default")
-        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-type", Dict("code" => "1 + 1", "timeout_ms" => "250"); default_session="session-default")
-        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-zero", Dict("code" => "1 + 1", "timeout_ms" => 0); default_session="session-default")
-        @test_throws ArgumentError REPLy.mcp_eval_request("bad-timeout-negative", Dict("code" => "1 + 1", "timeout_ms" => -5); default_session="session-default")
+    end
+
+    @testset "eval request rejects not-yet-supported module and timeout_ms fields" begin
+        @test_throws ArgumentError REPLy.mcp_eval_request("has-module", Dict("code" => "1 + 1", "module" => "Main"); default_session="session-default")
+        @test_throws ArgumentError REPLy.mcp_eval_request("has-timeout", Dict("code" => "1 + 1", "timeout_ms" => 250); default_session="session-default")
+    end
+
+    @testset "mcp_stub_result returns not-yet-implemented error for unimplemented tools" begin
+        for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
+            result = REPLy.mcp_stub_result(tool)
+            @test result["isError"] == true
+            @test occursin("not yet implemented", result["content"][1]["text"])
+            @test occursin(tool, result["content"][1]["text"])
+        end
     end
 
     @testset "reply stream is collected until done" begin
