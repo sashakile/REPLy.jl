@@ -1,3 +1,8 @@
+mutable struct ServerState
+    limits::ResourceLimits
+    max_message_bytes::Int
+end
+
 mutable struct TCPServerHandle
     listener::Sockets.TCPServer
     port::Int
@@ -6,7 +11,7 @@ mutable struct TCPServerHandle
     clients::Vector{IO}
     handler::Function
     closing::Base.RefValue{Bool}
-    max_message_bytes::Int
+    state::ServerState
 end
 
 mutable struct UnixServerHandle
@@ -17,7 +22,7 @@ mutable struct UnixServerHandle
     clients::Vector{IO}
     handler::Function
     closing::Base.RefValue{Bool}
-    max_message_bytes::Int
+    state::ServerState
 end
 
 is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
@@ -79,7 +84,7 @@ function accept_loop!(listener, handle)
         push!(handle.clients, socket)
         task = @async begin
             try
-                handle_client!(socket, handle.handler; max_message_bytes=handle.max_message_bytes)
+                handle_client!(socket, handle.handler; max_message_bytes=handle.state.max_message_bytes)
             finally
                 filter!(client -> client !== socket, handle.clients)
                 filter!(existing -> existing !== current_task(), handle.client_tasks)

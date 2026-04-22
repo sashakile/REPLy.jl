@@ -30,6 +30,7 @@ include("helpers/server.jl")
         include("unit/eval_option_compliance_test.jl")
         include("unit/store_history_test.jl")
         include("unit/resource_limits_test.jl")
+        include("unit/server_state_test.jl")
         include("unit/middleware_descriptor_test.jl")
         include("unit/mcp_adapter_test.jl")
     end

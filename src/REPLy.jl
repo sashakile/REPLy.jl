@@ -9,7 +9,7 @@ export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_respo
     error_response, receive, response_message, send!, validate_request,
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_REPR_BYTES, OUTPUT_TRUNCATION_MARKER,
     truncate_output
-export build_handler, serve, server_port, server_socket_path
+export build_handler, serve, server_port, server_socket_path, ServerState
 export get_or_create_named_session!
 export RequestContext, HandlerContext, dispatch_middleware
 export validate_session_name, MAX_SESSION_NAME_BYTES
