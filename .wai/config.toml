@@ -1,8 +1,8 @@
 [project]
 name = "REPLy.jl"
-version = "2026.4.4"
+version = "2026.4.7"
 description = ""
-tool_commit = "cc21ba8"
+tool_commit = "bf66bc0"
 
 [[plugins]]
 name = "beads"
