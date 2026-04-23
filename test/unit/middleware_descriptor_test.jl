@@ -126,6 +126,9 @@ end
         @test "ls-sessions"    in desc.provides
         @test "close-session"  in desc.provides
         @test "clone-session"  in desc.provides
+        # Canonical OpenSpec names
+        @test "close"          in desc.provides
+        @test "clone"          in desc.provides
         @test "session"        in desc.requires
     end
 

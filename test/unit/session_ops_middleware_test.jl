@@ -482,3 +482,127 @@ end
         @test "error" in terminal["status"]
     end
 end
+
+@testset "canonical op names: 'close' and 'clone' (OpenSpec protocol names)" begin
+    @testset "close op destroys a named session" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "canon-close-target")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "canon-close-1", "name" => "canon-close-target"))
+
+        assert_conformance(msgs, "canon-close-1")
+        @test REPLy.lookup_named_session(manager, "canon-close-target") === nothing
+        @test isempty(REPLy.list_named_sessions(manager))
+    end
+
+    @testset "close op returns error for non-existent session" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "canon-close-missing", "name" => "ghost"))
+
+        assert_conformance(msgs, "canon-close-missing")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test !isempty(terminal)
+        @test "error" in terminal[end]["status"]
+        @test "session-not-found" in terminal[end]["status"]
+    end
+
+    @testset "close op requires name parameter" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "canon-close-no-name"))
+
+        assert_conformance(msgs, "canon-close-no-name")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        @test occursin("name", terminal[end]["err"])
+    end
+
+    @testset "clone op creates a new session with copied bindings" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "canon-original")
+        Core.eval(REPLy.session_module(source), :(x = 42))
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "clone",
+            "id" => "canon-clone-1",
+            "source" => "canon-original",
+            "name" => "canon-copy",
+        ))
+
+        assert_conformance(msgs, "canon-clone-1")
+        clone = REPLy.lookup_named_session(manager, "canon-copy")
+        @test clone !== nothing
+        @test REPLy.session_name(clone) == "canon-copy"
+        @test Core.eval(REPLy.session_module(clone), :x) == 42
+    end
+
+    @testset "clone op returns error for non-existent source" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "clone",
+            "id" => "canon-clone-missing-src",
+            "source" => "no-such-session",
+            "name" => "new-copy",
+        ))
+
+        assert_conformance(msgs, "canon-clone-missing-src")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        @test "session-not-found" in terminal[end]["status"]
+    end
+
+    @testset "clone op returns error when destination already exists" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "canon-src-exists")
+        REPLy.create_named_session!(manager, "canon-dst-exists")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "clone",
+            "id" => "canon-clone-dup",
+            "source" => "canon-src-exists",
+            "name" => "canon-dst-exists",
+        ))
+
+        assert_conformance(msgs, "canon-clone-dup")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test !isempty(terminal)
+        @test "error" in terminal[end]["status"]
+        @test "session-already-exists" in terminal[end]["status"]
+    end
+
+    @testset "deprecated 'close-session' still works (backward compat)" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-close-target")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close-session", "id" => "compat-close-1", "name" => "compat-close-target"))
+
+        assert_conformance(msgs, "compat-close-1")
+        @test REPLy.lookup_named_session(manager, "compat-close-target") === nothing
+    end
+
+    @testset "deprecated 'clone-session' still works (backward compat)" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-original")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "clone-session",
+            "id" => "compat-clone-1",
+            "source" => "compat-original",
+            "name" => "compat-copy",
+        ))
+
+        assert_conformance(msgs, "compat-clone-1")
+        clone = REPLy.lookup_named_session(manager, "compat-copy")
+        @test clone !== nothing
+    end
+end
