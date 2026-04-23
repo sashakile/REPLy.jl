@@ -32,9 +32,10 @@ A server handle (`TCPServerHandle` or `UnixServerHandle`) which can be closed wi
 """
 function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
     max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
-    handler = build_handler(; manager=manager, middleware=middleware)
     closing = Ref(false)
     state = ServerState(limits, max_message_bytes)
+    stack = materialize_middleware_stack(middleware)
+    handler = build_handler(; manager=manager, middleware=stack, state=state)
 
     if !isnothing(socket_path)
         if host != ip"127.0.0.1" || Int(port) != 5555
@@ -48,6 +49,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
             Task[],
             IO[],
             handler,
+            stack,
             closing,
             state,
         )
@@ -64,6 +66,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         Task[],
         IO[],
         handler,
+        stack,
         closing,
         state,
     )
@@ -73,30 +76,51 @@ end
 
 const DEFAULT_CLOSE_GRACE_SECONDS = 5.0
 
+function interrupt_active_evals!(state::ServerState)
+    for task in active_eval_tasks(state)
+        istaskdone(task) && continue
+        try
+            schedule(task, InterruptException(); error=true)
+        catch
+        end
+    end
+    return nothing
+end
+
+function shutdown_middleware_stack!(middleware::Vector{AbstractMiddleware})
+    for mw in reverse(middleware)
+        shutdown_middleware!(mw)
+    end
+    return nothing
+end
+
 function close_server!(server; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
     grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
     server.closing[] && return nothing
     server.closing[] = true
 
-    # Compute deadline before any blocking calls so the full budget is honoured.
     deadline = time() + Float64(grace_seconds)
+
+    isopen(server.listener) && close(server.listener)
+    wait_for_server_task(server.accept_task)
+
+    interrupt_active_evals!(server.state)
+
+    for task in active_eval_tasks(server.state)
+        remaining = deadline - time()
+        remaining > 0 && timedwait(() -> istaskdone(task), remaining)
+    end
 
     for client in copy(server.clients)
         isopen(client) && close(client)
     end
 
-    isopen(server.listener) && close(server.listener)
-
-    wait_for_server_task(server.accept_task)
-
-    # Wait for client tasks within the remaining grace budget. Closing the sockets
-    # above unblocks any in-flight readline(); tasks that are genuinely stuck are
-    # abandoned after the deadline rather than blocking the caller indefinitely.
     for task in copy(server.client_tasks)
         remaining = deadline - time()
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
 
+    shutdown_middleware_stack!(server.middleware)
     return nothing
 end
 

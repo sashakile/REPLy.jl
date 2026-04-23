@@ -5,6 +5,7 @@ mutable struct TCPServerHandle
     client_tasks::Vector{Task}
     clients::Vector{IO}
     handler::Function
+    middleware::Vector{AbstractMiddleware}
     closing::Base.RefValue{Bool}
     state::ServerState
 end
@@ -16,6 +17,7 @@ mutable struct UnixServerHandle
     client_tasks::Vector{Task}
     clients::Vector{IO}
     handler::Function
+    middleware::Vector{AbstractMiddleware}
     closing::Base.RefValue{Bool}
     state::ServerState
 end

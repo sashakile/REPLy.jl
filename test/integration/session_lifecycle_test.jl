@@ -1,3 +1,10 @@
+mutable struct ShutdownProbe <: REPLy.AbstractMiddleware
+    name::String
+    recorder::Vector{String}
+end
+
+REPLy.shutdown_middleware!(mw::ShutdownProbe) = push!(mw.recorder, mw.name)
+
 @testset "integration: named session lifecycle" begin
     @testset "named session persists bindings across lookups" begin
         manager = REPLy.SessionManager()
@@ -152,6 +159,52 @@
         server = REPLy.serve(; port=0)
         @test_throws ArgumentError close(server; grace_seconds=0.0)
         close(server)  # cleanup
+    end
+
+    @testset "close_server! interrupts in-flight evals before closing clients" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "shutdown-eval")
+        server = REPLy.serve(; port=0, manager=manager)
+        sock = connect(REPLy.server_port(server))
+
+        try
+            send_request(sock, Dict(
+                "op" => "eval",
+                "id" => "shutdown-1",
+                "session" => "shutdown-eval",
+                "code" => "while true; sleep(0.05); end",
+            ))
+
+            timeout = time() + 5.0
+            while REPLy.session_state(session) != REPLy.SessionRunning
+                time() > timeout && error("timed out waiting for eval to start")
+                sleep(0.01)
+            end
+
+            reader = @async collect_until_done(sock; timeout_s=5.0)
+            close(server; grace_seconds=1.0)
+            msgs = fetch(reader)
+
+            @test REPLy.session_state(session) == REPLy.SessionIdle
+            @test server.state.active_evals[] == 0
+            terminals = filter(m -> haskey(m, "status"), msgs)
+            @test !isempty(terminals)
+            @test "interrupted" in terminals[end]["status"]
+        finally
+            isopen(sock) && close(sock)
+            close(server)
+        end
+    end
+
+    @testset "close_server! shuts down middleware in reverse order" begin
+        recorder = String[]
+        first = ShutdownProbe("first", recorder)
+        second = ShutdownProbe("second", recorder)
+        server = REPLy.serve(; port=0, middleware=REPLy.AbstractMiddleware[first, second])
+
+        close(server)
+
+        @test recorder == ["second", "first"]
     end
 
     @testset "session-not-found: request with non-existent session returns error" begin
