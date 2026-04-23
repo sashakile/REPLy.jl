@@ -46,10 +46,10 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
             "returns"  => String[],
         ),
         "clone" => Dict{String, Any}(
-            "doc"      => "Clone a named session to a new name.",
-            "requires" => ["source", "name"],
-            "optional" => String[],
-            "returns"  => ["session", "name"],
+            "doc"      => "Clone a named session to a new name. Source is identified by 'session' (spec) or 'source' (compat). Optional 'type' field: 'light' (default) or 'heavy' (post-v1.0, returns not-supported).",
+            "requires" => ["name"],
+            "optional" => ["session", "source", "type"],
+            "returns"  => ["new-session", "name"],
         ),
         "clone-session" => Dict{String, Any}(
             "doc"      => "Deprecated alias for 'clone'. Clone a named session to a new name.",
@@ -149,16 +149,49 @@ function handle_close_session(ctx::RequestContext, msg, request_id::AbstractStri
 end
 
 function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractString, op::AbstractString="clone")
-    source = get(msg, "source", nothing)
+    # Source resolution:
+    # - Canonical "clone" op: accept "session" field (spec) or "source" field (compat).
+    #   When "session" is present, SessionMiddleware has already validated and resolved it
+    #   into ctx.session; we extract the UUID from there to avoid a second lookup.
+    # - Deprecated "clone-session" op: only accepts "source" field.
+    source_str = get(msg, "source", nothing)
+    if op == "clone" && isnothing(source_str)
+        # Use "session" field if "source" is absent — may already be resolved in ctx.session
+        session_field = get(msg, "session", nothing)
+        if !isnothing(session_field)
+            # SessionMiddleware has validated and looked up ctx.session for us; use its UUID.
+            # ctx.session may be Nothing, ModuleSession, or NamedSession — only NamedSession has a UUID.
+            resolved = ctx.session
+            if resolved isa NamedSession
+                source_str = session_id(resolved)
+            else
+                source_str = session_field
+            end
+        end
+    end
+
     name = get(msg, "name", nothing)
 
-    src_err = validate_session_name(source)
+    src_err = validate_session_name(source_str)
     if !isnothing(src_err)
-        return [error_response(request_id, "$(op) \"source\": $(src_err)")]
+        return [error_response(request_id, "$(op) \"source\"/\"session\": $(src_err)")]
     end
     name_err = validate_session_name(name)
     if !isnothing(name_err)
         return [error_response(request_id, "$(op) \"name\": $(name_err)")]
+    end
+
+    # Type field: only "light" (or absent) is supported; "heavy" is post-v1.0.
+    # Any unrecognized type is rejected to keep the contract strict.
+    if op == "clone"
+        clone_type = get(msg, "type", nothing)
+        if clone_type == "heavy"
+            return [error_response(request_id, "heavy sessions are post-v1.0";
+                        status_flags=String["not-supported"])]
+        elseif !isnothing(clone_type) && clone_type != "light"
+            return [error_response(request_id, "clone \"type\": unknown value $(repr(clone_type)); accepted values are \"light\" or absent")]
+        end
+        # "light" or absent is accepted — no action needed.
     end
 
     # Enforce server-wide session limit before creating a new named session
@@ -179,7 +212,7 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
 
     local cloned
     try
-        cloned = clone_named_session!(ctx.manager, source, name)
+        cloned = clone_named_session!(ctx.manager, source_str, name)
     catch e
         e isa ArgumentError || rethrow(e)
         return [error_response(
@@ -189,14 +222,15 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         )]
     end
     if isnothing(cloned)
-        return [session_not_found_response(request_id, source)]
+        return [session_not_found_response(request_id, source_str)]
     end
 
-    return [
-        response_message(request_id,
-            "session" => session_id(cloned),
-            "name"    => isempty(session_name(cloned)) ? nothing : session_name(cloned),
-        ),
-        done_response(request_id),
-    ]
+    cloned_id = session_id(cloned)
+    alias = isempty(session_name(cloned)) ? nothing : session_name(cloned)
+    # Canonical "clone" returns "new-session" (spec) + "session" (compat).
+    # Deprecated "clone-session" returns only "session" per its declared contract.
+    pairs = op == "clone" ?
+        ("new-session" => cloned_id, "session" => cloned_id, "name" => alias) :
+        ("session" => cloned_id, "name" => alias)
+    return [response_message(request_id, pairs...), done_response(request_id)]
 end

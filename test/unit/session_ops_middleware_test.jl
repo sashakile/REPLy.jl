@@ -606,3 +606,187 @@ end
         @test clone !== nothing
     end
 end
+
+@testset "clone op: spec-compliant schema (REPLy_jl-ojy)" begin
+    @testset "clone accepts 'session' field as source identifier" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "spec-src")
+        Core.eval(REPLy.session_module(source), :(spec_val = 77))
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"      => "clone",
+            "id"      => "spec-clone-session-field",
+            "session" => "spec-src",
+            "name"    => "spec-dst",
+        ))
+
+        assert_conformance(msgs, "spec-clone-session-field")
+        clone = REPLy.lookup_named_session(manager, "spec-dst")
+        @test clone !== nothing
+        @test Core.eval(REPLy.session_module(clone), :spec_val) == 77
+    end
+
+    @testset "clone with 'session' field returns 'new-session' UUID key in response" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "ns-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"      => "clone",
+            "id"      => "spec-clone-new-session-key",
+            "session" => "ns-src",
+            "name"    => "ns-dst",
+        ))
+
+        assert_conformance(msgs, "spec-clone-new-session-key")
+        resp = filter(m -> haskey(m, "new-session"), msgs)
+        @test !isempty(resp)
+        @test resp[1]["new-session"] isa AbstractString
+        @test length(resp[1]["new-session"]) == 36  # UUID length
+        @test resp[1]["name"] == "ns-dst"
+    end
+
+    @testset "clone with 'source' field also returns 'new-session' UUID key (backward compat)" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-ns-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"    => "clone",
+            "id"    => "spec-clone-source-compat",
+            "source" => "compat-ns-src",
+            "name"  => "compat-ns-dst",
+        ))
+
+        assert_conformance(msgs, "spec-clone-source-compat")
+        resp = filter(m -> haskey(m, "new-session"), msgs)
+        @test !isempty(resp)
+        @test resp[1]["new-session"] isa AbstractString
+        @test length(resp[1]["new-session"]) == 36
+    end
+
+    @testset "clone with type='light' succeeds" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "light-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"      => "clone",
+            "id"      => "spec-clone-light",
+            "session" => "light-src",
+            "name"    => "light-dst",
+            "type"    => "light",
+        ))
+
+        assert_conformance(msgs, "spec-clone-light")
+        clone = REPLy.lookup_named_session(manager, "light-dst")
+        @test clone !== nothing
+    end
+
+    @testset "clone with type='heavy' returns not-supported error" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "heavy-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"      => "clone",
+            "id"      => "spec-clone-heavy",
+            "session" => "heavy-src",
+            "name"    => "heavy-dst",
+            "type"    => "heavy",
+        ))
+
+        assert_conformance(msgs, "spec-clone-heavy")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test !isempty(terminal)
+        @test "not-supported" in terminal[end]["status"]
+        @test occursin("post-v1.0", get(terminal[end], "err", ""))
+        # Session should NOT have been created
+        @test REPLy.lookup_named_session(manager, "heavy-dst") === nothing
+    end
+
+    @testset "clone 'session' field falls back to 'source' when only source present" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "fallback-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # Old-style request with 'source' only — must still work for the canonical 'clone' op
+        msgs = handler(Dict(
+            "op"    => "clone",
+            "id"    => "spec-clone-fallback",
+            "source" => "fallback-src",
+            "name"  => "fallback-dst",
+        ))
+
+        assert_conformance(msgs, "spec-clone-fallback")
+        @test REPLy.lookup_named_session(manager, "fallback-dst") !== nothing
+    end
+
+    @testset "clone returns error for missing source (neither 'session' nor 'source' present)" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "clone", "id" => "spec-clone-no-src", "name" => "no-src-dst"))
+
+        assert_conformance(msgs, "spec-clone-no-src")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+    end
+
+    @testset "clone with 'session' field validates source name" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"      => "clone",
+            "id"      => "spec-clone-bad-session",
+            "session" => "bad name!",
+            "name"    => "dst",
+        ))
+
+        assert_conformance(msgs, "spec-clone-bad-session")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        @test !("session-not-found" in terminal[end]["status"])
+    end
+
+    @testset "clone rejects unknown type value" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "type-src")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"     => "clone",
+            "id"     => "spec-clone-bad-type",
+            "source" => "type-src",
+            "name"   => "type-dst",
+            "type"   => "medium",
+        ))
+
+        assert_conformance(msgs, "spec-clone-bad-type")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        # Session should not have been created
+        @test REPLy.lookup_named_session(manager, "type-dst") === nothing
+    end
+
+    @testset "deprecated clone-session response does not include new-session key" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-src-schema")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op"     => "clone-session",
+            "id"     => "compat-schema-check",
+            "source" => "compat-src-schema",
+            "name"   => "compat-dst-schema",
+        ))
+
+        assert_conformance(msgs, "compat-schema-check")
+        resp = filter(m -> haskey(m, "session"), msgs)
+        @test !isempty(resp)
+        @test !haskey(resp[1], "new-session")  # deprecated op does not include spec key
+        @test haskey(resp[1], "session")
+    end
+end
