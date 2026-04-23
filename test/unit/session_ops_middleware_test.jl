@@ -283,3 +283,202 @@
         @test length(REPLy.list_named_sessions(manager)) == 2
     end
 end
+
+@testset "hybrid session identity (UUID + name alias)" begin
+    @testset "new-session without name returns UUID and null name" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-anon"))
+
+        assert_conformance(msgs, "ns-anon")
+        resp = filter(m -> haskey(m, "session"), msgs)
+        @test length(resp) == 1
+        @test resp[1]["session"] isa AbstractString
+        @test length(resp[1]["session"]) == 36  # UUID length
+        @test resp[1]["name"] === nothing
+    end
+
+    @testset "new-session with name returns UUID and alias" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-named", "name" => "myapp"))
+
+        assert_conformance(msgs, "ns-named")
+        resp = filter(m -> haskey(m, "session"), msgs)
+        @test length(resp) == 1
+        @test resp[1]["session"] isa AbstractString
+        @test length(resp[1]["session"]) == 36
+        @test resp[1]["name"] == "myapp"
+    end
+
+    @testset "new-session creates session accessible by returned UUID" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-uuid-lookup", "name" => "lookup-test"))
+        resp = filter(m -> haskey(m, "session"), msgs)
+        uuid = resp[1]["session"]
+
+        # Session should be accessible by UUID
+        session = REPLy.lookup_named_session(manager, uuid)
+        @test !isnothing(session)
+        @test REPLy.session_id(session) == uuid
+        @test REPLy.session_name(session) == "lookup-test"
+    end
+
+    @testset "new-session creates session accessible by name alias" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-name-lookup", "name" => "named-test"))
+        resp = filter(m -> haskey(m, "session"), msgs)
+        uuid = resp[1]["session"]
+
+        # Session should be accessible by name alias
+        session_by_name = REPLy.lookup_named_session(manager, "named-test")
+        session_by_uuid = REPLy.lookup_named_session(manager, uuid)
+        @test !isnothing(session_by_name)
+        @test !isnothing(session_by_uuid)
+        @test session_by_name === session_by_uuid
+    end
+
+    @testset "eval with UUID session identifier routes correctly" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "uuid-eval-test")
+        uuid = REPLy.session_id(session)
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "eval",
+            "id" => "uuid-eval-1",
+            "code" => "x_uuid = 99",
+            "session" => uuid,
+        ))
+        assert_conformance(msgs, "uuid-eval-1")
+        @test any(get(m, "value", nothing) == "99" for m in msgs)
+    end
+
+    @testset "eval with name alias and UUID are interchangeable" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "interchangeable")
+        uuid = REPLy.session_id(session)
+        handler = REPLy.build_handler(; manager=manager)
+
+        # Define variable using name alias
+        msgs = handler(Dict(
+            "op" => "eval",
+            "id" => "inter-1",
+            "code" => "aliased_var = 7",
+            "session" => "interchangeable",
+        ))
+        assert_conformance(msgs, "inter-1")
+        @test any(get(m, "value", nothing) == "7" for m in msgs)
+
+        # Read variable using UUID
+        msgs = handler(Dict(
+            "op" => "eval",
+            "id" => "inter-2",
+            "code" => "aliased_var",
+            "session" => uuid,
+        ))
+        assert_conformance(msgs, "inter-2")
+        @test any(get(m, "value", nothing) == "7" for m in msgs)
+    end
+
+    @testset "close-session accepts UUID" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "close-by-uuid")
+        uuid = REPLy.session_id(session)
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close-session", "id" => "close-uuid", "name" => uuid))
+        assert_conformance(msgs, "close-uuid")
+        @test REPLy.lookup_named_session(manager, uuid) === nothing
+        @test REPLy.lookup_named_session(manager, "close-by-uuid") === nothing
+    end
+
+    @testset "close-session accepts name alias" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "close-by-name")
+        uuid = REPLy.session_id(session)
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close-session", "id" => "close-name", "name" => "close-by-name"))
+        assert_conformance(msgs, "close-name")
+        @test REPLy.lookup_named_session(manager, uuid) === nothing
+        @test REPLy.lookup_named_session(manager, "close-by-name") === nothing
+    end
+
+    @testset "clone-session source accepts UUID" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "clone-src-uuid")
+        uuid = REPLy.session_id(source)
+        Core.eval(REPLy.session_module(source), :(uuid_val = 55))
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "clone-session",
+            "id" => "clone-by-uuid",
+            "source" => uuid,
+            "name" => "cloned-from-uuid",
+        ))
+        assert_conformance(msgs, "clone-by-uuid")
+        resp = filter(m -> haskey(m, "session"), msgs)
+        @test !isempty(resp)
+        clone = REPLy.lookup_named_session(manager, "cloned-from-uuid")
+        @test !isnothing(clone)
+        @test Core.eval(REPLy.session_module(clone), :uuid_val) == 55
+    end
+
+    @testset "ls-sessions response includes UUID session field" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "ls-uuid-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-with-uuid"))
+        assert_conformance(msgs, "ls-with-uuid")
+        sessions_msg = filter(m -> haskey(m, "sessions"), msgs)
+        sessions = sessions_msg[1]["sessions"]
+        @test length(sessions) == 1
+        @test haskey(sessions[1], "session")
+        @test length(sessions[1]["session"]) == 36  # UUID length
+        @test sessions[1]["name"] == "ls-uuid-test"
+        @test haskey(sessions[1], "created-at")
+    end
+
+    @testset "ls-sessions session with no alias has null name" begin
+        manager = REPLy.SessionManager()
+        # Create a session with empty name (no alias)
+        REPLy.create_named_session!(manager, "")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-no-alias"))
+        sessions_msg = filter(m -> haskey(m, "sessions"), msgs)
+        sessions = sessions_msg[1]["sessions"]
+        @test length(sessions) == 1
+        @test haskey(sessions[1], "session")
+        @test sessions[1]["name"] === nothing
+    end
+
+    @testset "new-session rejects invalid name" begin
+        handler = REPLy.build_handler()
+
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-bad-name", "name" => "bad name!"))
+        assert_conformance(msgs, "ns-bad-name")
+        terminal = filter(m -> haskey(m, "status"), msgs)[end]
+        @test "error" in terminal["status"]
+        @test !("session-not-found" in terminal["status"])
+    end
+
+    @testset "new-session rejects empty name string (use no name field for unnamed session)" begin
+        handler = REPLy.build_handler()
+
+        # Explicit empty string is rejected — omit the "name" field entirely for an unnamed session
+        msgs = handler(Dict("op" => "new-session", "id" => "ns-empty-name", "name" => ""))
+        assert_conformance(msgs, "ns-empty-name")
+        terminal = filter(m -> haskey(m, "status"), msgs)[end]
+        @test "error" in terminal["status"]
+    end
+end

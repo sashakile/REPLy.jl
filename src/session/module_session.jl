@@ -47,9 +47,13 @@ directly. The `eval_lock` field is a standalone serialization primitive — it i
 governed by `session.lock` and must not be acquired while holding it. The
 `stdin_channel` is an unbounded `Channel{String}` that buffers stdin text across
 evals; it is thread-safe and must not be accessed under `session.lock`.
+
+- `id` — canonical UUID string (generated at creation, never changes).
+- `name` — optional human-readable alias (may be empty string for unnamed sessions).
 """
 
 mutable struct NamedSession
+    id::String
     name::String
     session_mod::Module
     created_at::Float64
@@ -62,9 +66,9 @@ mutable struct NamedSession
     history::Vector{Any}
 end
 
-function NamedSession(name::String, mod::Module)
+function NamedSession(id::String, name::String, mod::Module)
     now = time()
-    return NamedSession(name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[])
+    return NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[])
 end
 
 """
@@ -80,9 +84,17 @@ function clamp_history!(session::NamedSession)
 end
 
 """
+    session_id(session)
+
+Return the canonical UUID string that identifies a persistent `NamedSession`.
+"""
+session_id(session::NamedSession) = session.id
+
+"""
     session_name(session)
 
-Return the string name that identifies a persistent `NamedSession`.
+Return the optional alias name for a persistent `NamedSession`.
+May be an empty string if no alias was provided at creation.
 """
 session_name(session::NamedSession) = session.name
 

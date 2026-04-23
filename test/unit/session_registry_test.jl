@@ -319,6 +319,96 @@
     end
 end
 
+@testset "UUID session identity" begin
+    @testset "create_named_session! assigns a UUID id" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "uuid-check")
+        id = REPLy.session_id(session)
+        @test id isa String
+        @test length(id) == 36  # UUID format: 8-4-4-4-12
+        @test occursin(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", id)
+    end
+
+    @testset "each session gets a distinct UUID" begin
+        manager = REPLy.SessionManager()
+        s1 = REPLy.create_named_session!(manager, "id-s1")
+        s2 = REPLy.create_named_session!(manager, "id-s2")
+        @test REPLy.session_id(s1) != REPLy.session_id(s2)
+    end
+
+    @testset "lookup_named_session finds session by UUID" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "by-uuid")
+        uuid = REPLy.session_id(session)
+        found = REPLy.lookup_named_session(manager, uuid)
+        @test !isnothing(found)
+        @test found === session
+    end
+
+    @testset "lookup_named_session finds session by name alias" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "by-name")
+        found = REPLy.lookup_named_session(manager, "by-name")
+        @test !isnothing(found)
+        @test found === session
+    end
+
+    @testset "lookup by UUID and by name return the same session" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "same-session")
+        uuid = REPLy.session_id(session)
+        @test REPLy.lookup_named_session(manager, uuid) === REPLy.lookup_named_session(manager, "same-session")
+    end
+
+    @testset "destroy_named_session! by UUID removes both UUID and alias entries" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "destroy-by-uuid")
+        uuid = REPLy.session_id(session)
+        REPLy.destroy_named_session!(manager, uuid)
+        @test REPLy.lookup_named_session(manager, uuid) === nothing
+        @test REPLy.lookup_named_session(manager, "destroy-by-uuid") === nothing
+    end
+
+    @testset "destroy_named_session! by name removes both UUID and alias entries" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "destroy-by-name")
+        uuid = REPLy.session_id(session)
+        REPLy.destroy_named_session!(manager, "destroy-by-name")
+        @test REPLy.lookup_named_session(manager, uuid) === nothing
+        @test REPLy.lookup_named_session(manager, "destroy-by-name") === nothing
+    end
+
+    @testset "session with empty name is still accessible by UUID" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "")
+        uuid = REPLy.session_id(session)
+        @test REPLy.session_name(session) == ""
+        found = REPLy.lookup_named_session(manager, uuid)
+        @test !isnothing(found)
+        @test found === session
+    end
+
+    @testset "clone_named_session! assigns a new UUID to the clone" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "clone-uuid-src")
+        clone = REPLy.clone_named_session!(manager, "clone-uuid-src", "clone-uuid-dst")
+        @test !isnothing(clone)
+        @test REPLy.session_id(clone) != REPLy.session_id(source)
+        @test length(REPLy.session_id(clone)) == 36
+    end
+
+    @testset "clone_named_session! source can be referenced by UUID" begin
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "clone-src-by-uuid")
+        uuid = REPLy.session_id(source)
+        Core.eval(REPLy.session_module(source), :(cloned_marker = :marker))
+
+        clone = REPLy.clone_named_session!(manager, uuid, "clone-dst-from-uuid")
+        @test !isnothing(clone)
+        @test Core.eval(REPLy.session_module(clone), :cloned_marker) === :marker
+    end
+end
+
 @testset "idle sweep" begin
     @testset "sweep_idle_sessions! removes sessions idle beyond threshold" begin
         manager = REPLy.SessionManager()
