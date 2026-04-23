@@ -163,6 +163,44 @@ function _stdin_feeder(channel::Channel{String}, pipe_in::IO)
     end
 end
 
+"""
+    _revise_if_present()
+
+Inner implementation for the Revise hook: checks whether `Main.Revise` and
+`Main.Revise.revise` are defined in the *current* world age and, if so, calls
+`revise()`.
+
+This function is intended to be invoked via `Base.invokelatest` (see
+`_maybe_revise!`) so that it executes in the latest world — necessary when
+Revise (or a test mock) was loaded after the `REPLy` module was compiled.
+"""
+function _revise_if_present()
+    if isdefined(Main, :Revise) && isdefined(Main.Revise, :revise)
+        Main.Revise.revise()
+    end
+    return nothing
+end
+
+"""
+    _maybe_revise!()
+
+Call `Main.Revise.revise()` if Revise is loaded in `Main` and defines a
+callable `revise` function.  Any error thrown by `revise()` is caught and
+logged with `@warn` — it must never abort the eval that follows.
+
+The entire check-and-call is dispatched via `Base.invokelatest` so that
+`Main.Revise` bindings created after `REPLy` was compiled (including test
+mocks) are always visible regardless of the current world age.
+"""
+function _maybe_revise!()
+    try
+        Base.invokelatest(_revise_if_present)
+    catch ex
+        @warn "Revise.revise() failed; continuing eval" exception=(ex, catch_backtrace())
+    end
+    return nothing
+end
+
 function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = String(request["id"])
     code = get(request, "code", "")
@@ -266,6 +304,11 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                     try_begin_eval!(session, current_task()) ||
                         return [error_response(request_id, "session was closed")]
                     this_eval_id[] = session_eval_id(session)
+                    # Revise hook: call Revise.revise() before each named-session eval
+                    # so long-running sessions pick up code changes automatically.
+                    # The hook is skipped when revise_hook_enabled=false in server limits.
+                    revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
+                    revise_enabled && _maybe_revise!()
                     inner_msgs, captured = if allow_stdin
                         # Pipe + feeder task: bridges session.stdin_channel to the eval's
                         # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
