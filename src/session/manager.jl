@@ -227,6 +227,7 @@ function try_begin_eval!(session::NamedSession, task::Task)
         _transition_state_unlocked!(session, SessionRunning)
         session.eval_task = task
         session.last_active_at = time()
+        session.eval_id += 1
         return true
     end
 end

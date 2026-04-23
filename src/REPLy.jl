@@ -18,7 +18,7 @@ export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!
 export validate_session_name, MAX_SESSION_NAME_BYTES
 export session_id
 export SessionState, SessionIdle, SessionRunning, SessionClosed
-export session_state, session_eval_task, session_last_active_at, session_eval_count, session_module_name
+export session_state, session_eval_task, session_last_active_at, session_eval_count, session_eval_id, session_module_name
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits

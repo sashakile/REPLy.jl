@@ -96,4 +96,156 @@
         msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "eval", "id" => "i5"), ctx)
         @test "unknown-op" in only(msgs)["status"]
     end
+
+    @testset "interrupt running eval includes interrupted-id in response" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "int-id-session")
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+
+        eval_stack = REPLy.AbstractMiddleware[
+            REPLy.SessionMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+        interrupt_stack = REPLy.AbstractMiddleware[
+            REPLy.InterruptMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+
+        eval_done = Channel{Vector{Dict{String, Any}}}(1)
+        @async begin
+            eval_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+            msgs = REPLy.dispatch_middleware(eval_stack, 1, Dict(
+                "op" => "eval",
+                "id" => "eval-int-id",
+                "session" => "int-id-session",
+                "code" => "sleep(10)",
+            ), eval_ctx)
+            put!(eval_done, msgs)
+        end
+
+        timeout = time() + 5.0
+        while REPLy.session_state(REPLy.lookup_named_session(manager, "int-id-session")) !== REPLy.SessionRunning
+            yield()
+            time() > timeout && error("timed out waiting for eval to start")
+        end
+
+        int_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        int_msgs = REPLy.dispatch_middleware(interrupt_stack, 1,
+            Dict("op" => "interrupt", "id" => "i-int-id", "session" => "int-id-session"), int_ctx)
+
+        @test haskey(int_msgs[1], "interrupted-id")
+        @test int_msgs[1]["interrupted-id"] isa Integer
+        @test int_msgs[1]["interrupted-id"] == 1
+
+        timedwait(() -> isready(eval_done), 5.0)
+    end
+
+    @testset "interrupt idle session returns interrupted-id == nothing" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "int-id-idle")
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        stack = REPLy.AbstractMiddleware[REPLy.InterruptMiddleware(), REPLy.UnknownOpMiddleware()]
+
+        msgs = REPLy.dispatch_middleware(stack, 1,
+            Dict("op" => "interrupt", "id" => "i-idle-id", "session" => "int-id-idle"), ctx)
+
+        @test haskey(msgs[1], "interrupted-id")
+        @test isnothing(msgs[1]["interrupted-id"])
+    end
+
+    @testset "interrupt-id matches running eval — interrupts and returns interrupted-id" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "int-id-match")
+
+        eval_stack = REPLy.AbstractMiddleware[
+            REPLy.SessionMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+        interrupt_stack = REPLy.AbstractMiddleware[
+            REPLy.InterruptMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+
+        eval_done = Channel{Vector{Dict{String, Any}}}(1)
+        @async begin
+            eval_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+            msgs = REPLy.dispatch_middleware(eval_stack, 1, Dict(
+                "op" => "eval",
+                "id" => "eval-match",
+                "session" => "int-id-match",
+                "code" => "sleep(10)",
+            ), eval_ctx)
+            put!(eval_done, msgs)
+        end
+
+        timeout = time() + 5.0
+        while REPLy.session_state(REPLy.lookup_named_session(manager, "int-id-match")) !== REPLy.SessionRunning
+            yield()
+            time() > timeout && error("timed out waiting for eval to start")
+        end
+
+        # interrupt-id == 1 matches the running eval
+        int_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        int_msgs = REPLy.dispatch_middleware(interrupt_stack, 1,
+            Dict("op" => "interrupt", "id" => "i-match", "session" => "int-id-match",
+                 "interrupt-id" => 1), int_ctx)
+
+        @test int_msgs[1]["interrupted"] == ["int-id-match"]
+        @test int_msgs[1]["interrupted-id"] == 1
+
+        timedwait(() -> isready(eval_done), 5.0)
+    end
+
+    @testset "interrupt-id does not match running eval — no-op success" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "int-id-mismatch")
+
+        eval_stack = REPLy.AbstractMiddleware[
+            REPLy.SessionMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+        interrupt_stack = REPLy.AbstractMiddleware[
+            REPLy.InterruptMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+
+        eval_done = Channel{Vector{Dict{String, Any}}}(1)
+        @async begin
+            eval_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+            msgs = REPLy.dispatch_middleware(eval_stack, 1, Dict(
+                "op" => "eval",
+                "id" => "eval-mismatch",
+                "session" => "int-id-mismatch",
+                "code" => "sleep(10)",
+            ), eval_ctx)
+            put!(eval_done, msgs)
+        end
+
+        timeout = time() + 5.0
+        while REPLy.session_state(REPLy.lookup_named_session(manager, "int-id-mismatch")) !== REPLy.SessionRunning
+            yield()
+            time() > timeout && error("timed out waiting for eval to start")
+        end
+
+        # interrupt-id == 99 does not match the running eval (which has id 1)
+        int_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        int_msgs = REPLy.dispatch_middleware(interrupt_stack, 1,
+            Dict("op" => "interrupt", "id" => "i-mismatch", "session" => "int-id-mismatch",
+                 "interrupt-id" => 99), int_ctx)
+
+        @test int_msgs[1]["interrupted"] == []
+        @test isnothing(int_msgs[1]["interrupted-id"])
+
+        # Eval should still be running (not interrupted)
+        session = REPLy.lookup_named_session(manager, "int-id-mismatch")
+        @test REPLy.session_state(session) === REPLy.SessionRunning
+
+        # Clean up: interrupt without id
+        REPLy.dispatch_middleware(interrupt_stack, 1,
+            Dict("op" => "interrupt", "id" => "i-cleanup", "session" => "int-id-mismatch"), int_ctx)
+        timedwait(() -> isready(eval_done), 5.0)
+    end
 end

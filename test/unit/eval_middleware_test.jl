@@ -327,3 +327,94 @@ end
         @test any(get(m, "value", nothing) == "42" for m in follow_msgs)
     end
 end
+
+@testset "eval-id in eval response" begin
+    @testset "named session eval returns eval-id in done message" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-resp")
+        mw = REPLy.EvalMiddleware()
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        msgs = REPLy.handle_message(mw,
+            Dict("op" => "eval", "id" => "eid1", "code" => "1+1"),
+            _ -> nothing, ctx)
+
+        done_msg = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs))
+        @test haskey(done_msg, "eval-id")
+        @test done_msg["eval-id"] isa Integer
+        @test done_msg["eval-id"] == 1
+    end
+
+    @testset "successive evals return incrementing eval-id" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-incr-resp")
+        mw = REPLy.EvalMiddleware()
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        msgs1 = REPLy.handle_message(mw,
+            Dict("op" => "eval", "id" => "eid2a", "code" => "1"),
+            _ -> nothing, ctx)
+        msgs2 = REPLy.handle_message(mw,
+            Dict("op" => "eval", "id" => "eid2b", "code" => "2"),
+            _ -> nothing, ctx)
+
+        done1 = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs1))
+        done2 = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs2))
+
+        @test done1["eval-id"] == 1
+        @test done2["eval-id"] == 2
+    end
+
+    @testset "interrupted eval includes eval-id in terminal message" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-interrupted")
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        eval_stack = REPLy.AbstractMiddleware[
+            REPLy.SessionMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+        interrupt_stack = REPLy.AbstractMiddleware[
+            REPLy.InterruptMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ]
+
+        eval_done = Channel{Vector{Dict{String, Any}}}(1)
+        eval_task = @async begin
+            eval_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+            msgs = REPLy.dispatch_middleware(eval_stack, 1, Dict(
+                "op" => "eval",
+                "id" => "eval-id-int-eval",
+                "session" => "eval-id-interrupted",
+                "code" => "sleep(10)",
+            ), eval_ctx)
+            put!(eval_done, msgs)
+        end
+
+        timeout = time() + 5.0
+        while REPLy.session_state(session) !== REPLy.SessionRunning
+            yield()
+            time() > timeout && error("timed out waiting for eval to start")
+        end
+
+        int_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        REPLy.dispatch_middleware(interrupt_stack, 1,
+            Dict("op" => "interrupt", "id" => "iid-int", "session" => "eval-id-interrupted"), int_ctx)
+
+        eval_msgs = timedwait(() -> isready(eval_done), 5.0) === :ok ? take!(eval_done) : nothing
+        @test !isnothing(eval_msgs)
+        terminal = only(filter(m -> haskey(m, "status"), eval_msgs))
+        @test "interrupted" in terminal["status"]
+        @test haskey(terminal, "eval-id")
+        @test terminal["eval-id"] isa Integer
+    end
+
+    @testset "ephemeral session eval does not include eval-id" begin
+        handler = REPLy.build_handler()
+        msgs = handler(Dict("op" => "eval", "id" => "eid-eph", "code" => "42"))
+
+        done_msg = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs))
+        @test !haskey(done_msg, "eval-id")
+    end
+end

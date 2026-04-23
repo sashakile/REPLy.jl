@@ -65,11 +65,12 @@ mutable struct NamedSession
     stdin_channel::Channel{String}
     history::Vector{Any}
     eval_count::Int
+    eval_id::Int
 end
 
 function NamedSession(id::String, name::String, mod::Module)
     now = time()
-    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[], 0)
+    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[], 0, 0)
     return s
 end
 
@@ -143,6 +144,15 @@ Return the number of eval operations that have completed on `session`. Thread-sa
 session_eval_count(session::NamedSession) = lock(session.lock) do; session.eval_count; end
 
 """
+    session_eval_id(session)
+
+Return the monotonic eval ID for the most recently started (or currently running) eval
+on `session`. Starts at 0 (no eval has started yet); increments at the *start* of each
+eval so the running eval always has a known, stable ID. Thread-safe.
+"""
+session_eval_id(session::NamedSession) = lock(session.lock) do; session.eval_id; end
+
+"""
     session_module_name(session)
 
 Return the module name for `session`. Always `"<anonymous>"` for light sessions,
@@ -186,6 +196,7 @@ function begin_eval!(session::NamedSession, task::Task)
         _transition_state_unlocked!(session, SessionRunning)
         session.eval_task = task
         session.last_active_at = time()
+        session.eval_id += 1
     end
     return session
 end
