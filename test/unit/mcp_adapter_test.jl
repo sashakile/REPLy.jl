@@ -214,43 +214,48 @@ end
         @test occursin("top-level scope", result["content"][2]["text"])
     end
 
-    @testset "mcp_ensure_default_session! creates a session on first call" begin
+    @testset "mcp_ensure_default_session! creates a session on first call and returns UUID" begin
         manager = REPLy.SessionManager()
-        name = REPLy.mcp_ensure_default_session!(manager)
+        uuid = REPLy.mcp_ensure_default_session!(manager)
 
-        @test name isa String
-        @test !isnothing(REPLy.lookup_named_session(manager, name))
+        @test uuid isa String
+        # The returned value is the canonical UUID — the session must be reachable by it.
+        @test !isnothing(REPLy.lookup_named_session(manager, uuid))
+        # The session must also be reachable by the default name alias.
+        @test !isnothing(REPLy.lookup_named_session(manager, REPLy.MCP_DEFAULT_SESSION_NAME))
     end
 
-    @testset "mcp_ensure_default_session! is idempotent — same name, no duplicate" begin
+    @testset "mcp_ensure_default_session! is idempotent — same UUID, no duplicate" begin
         manager = REPLy.SessionManager()
-        name1 = REPLy.mcp_ensure_default_session!(manager)
-        name2 = REPLy.mcp_ensure_default_session!(manager)
+        uuid1 = REPLy.mcp_ensure_default_session!(manager)
+        uuid2 = REPLy.mcp_ensure_default_session!(manager)
 
-        @test name1 == name2
+        @test uuid1 == uuid2
         @test length(REPLy.list_named_sessions(manager)) == 1
     end
 
     @testset "mcp_ensure_default_session! is safe under concurrent calls" begin
         manager = REPLy.SessionManager()
         tasks = [@async REPLy.mcp_ensure_default_session!(manager) for _ in 1:20]
-        names = fetch.(tasks)
+        uuids = fetch.(tasks)
 
-        @test all(==(REPLy.MCP_DEFAULT_SESSION_NAME), names)
+        # All concurrent calls must return the same canonical UUID.
+        @test allequal(uuids)
         @test length(REPLy.list_named_sessions(manager)) == 1
     end
 
-    @testset "mcp_new_session_result creates a named session and returns its id" begin
+    @testset "mcp_new_session_result creates a session and returns its canonical UUID" begin
         manager = REPLy.SessionManager()
         result = REPLy.mcp_new_session_result(manager)
 
         @test result["isError"] == false
         sessions = REPLy.list_named_sessions(manager)
         @test length(sessions) == 1
-        @test result["content"][1]["text"] == "Session: $(sessions[1].name)"
+        # The response text must contain the canonical UUID (session.id), not a name alias.
+        @test result["content"][1]["text"] == "Session: $(REPLy.session_id(sessions[1]))"
     end
 
-    @testset "mcp_list_sessions_result lists all named session names" begin
+    @testset "mcp_list_sessions_result lists canonical UUIDs with optional name aliases" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "alpha")
         REPLy.create_named_session!(manager, "beta")
@@ -258,8 +263,14 @@ end
 
         @test result["isError"] == false
         text = result["content"][1]["text"]
+        # Name aliases must appear in the output.
         @test occursin("alpha", text)
         @test occursin("beta", text)
+        # Canonical UUIDs must also appear (each line includes the UUID).
+        sessions = REPLy.list_named_sessions(manager)
+        for s in sessions
+            @test occursin(REPLy.session_id(s), text)
+        end
     end
 
     @testset "mcp_list_sessions_result returns empty marker when no sessions exist" begin
@@ -270,13 +281,24 @@ end
         @test result["content"][1]["text"] == "[]"
     end
 
-    @testset "mcp_close_session_result closes an existing session" begin
+    @testset "mcp_close_session_result closes an existing session by name alias" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "to-close")
         result = REPLy.mcp_close_session_result(manager, "to-close")
 
         @test result["isError"] == false
         @test isnothing(REPLy.lookup_named_session(manager, "to-close"))
+    end
+
+    @testset "mcp_close_session_result closes an existing session by canonical UUID" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "named-session")
+        uuid = REPLy.session_id(session)
+        result = REPLy.mcp_close_session_result(manager, uuid)
+
+        @test result["isError"] == false
+        @test isnothing(REPLy.lookup_named_session(manager, uuid))
+        @test isnothing(REPLy.lookup_named_session(manager, "named-session"))
     end
 
     @testset "mcp_close_session_result errors for unknown session" begin
@@ -315,6 +337,31 @@ end
 
         @test result["isError"] == false
         @test isnothing(REPLy.lookup_named_session(manager, "to-close"))
+    end
+
+    @testset "mcp_call_tool julia_close_session accepts canonical UUID" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "named")
+        uuid = REPLy.session_id(session)
+        result = REPLy.mcp_call_tool("julia_close_session", Dict{String,Any}("session" => uuid), manager)
+
+        @test result["isError"] == false
+        @test isnothing(REPLy.lookup_named_session(manager, uuid))
+    end
+
+    @testset "mcp_call_tool julia_new_session returns canonical UUID usable for session reuse" begin
+        manager = REPLy.SessionManager()
+        result = REPLy.mcp_call_tool("julia_new_session", Dict{String,Any}(), manager)
+
+        @test result["isError"] == false
+        text = result["content"][1]["text"]
+        # Extract the UUID from "Session: <uuid>"
+        uuid = last(split(text, ": "; limit=2))
+        # The UUID must identify a live session (can be looked up by UUID).
+        @test !isnothing(REPLy.lookup_named_session(manager, uuid))
+        # The UUID must be usable as the default_session for an eval request.
+        request = REPLy.mcp_eval_request("req-uuid", Dict("code" => "1+1"); default_session=uuid)
+        @test request["session"] == uuid
     end
 
     @testset "mcp_call_tool returns error for julia_close_session with missing session arg" begin

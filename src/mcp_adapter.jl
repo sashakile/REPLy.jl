@@ -1,5 +1,3 @@
-using UUIDs: uuid4
-
 const MCP_PROTOCOL_VERSION = "2024-11-05"
 const MCP_EPHEMERAL_SESSION = "ephemeral"
 const MCP_DEFAULT_SESSION_NAME = "mcp-default"
@@ -143,46 +141,58 @@ end
     mcp_ensure_default_session!(manager; name=MCP_DEFAULT_SESSION_NAME) -> String
 
 Ensure the adapter's persistent default session exists in `manager`.
-Creates it if absent; returns the session name unchanged if it already exists.
+Creates it if absent; returns the canonical UUID of the session (whether
+newly created or already existing). The `name` alias is registered so the
+session can also be found by name, but the UUID is the canonical identity
+used for routing.
 Thread-safe: the check-and-create is performed atomically under a single lock
 acquisition via `get_or_create_named_session!`.
 """
 function mcp_ensure_default_session!(manager::SessionManager; name::AbstractString=MCP_DEFAULT_SESSION_NAME)
-    get_or_create_named_session!(manager, name)
-    return String(name)
+    session = get_or_create_named_session!(manager, name)
+    return session_id(session)
 end
 
 """
     mcp_new_session_result(manager) -> CallToolResult
 
-Create a new named session with a UUID-derived identifier and return the session
-name in a non-error `CallToolResult`.
+Create a new unnamed session and return its canonical UUID in a non-error
+`CallToolResult`. The UUID is the spec-compliant identity for all subsequent ops.
 """
 function mcp_new_session_result(manager::SessionManager)
-    session_id = "mcp-" * string(uuid4())
-    create_named_session!(manager, session_id)
-    return CallToolResult("isError" => false, "content" => [text_block("Session: $session_id")])
+    session = create_named_session!(manager, "")
+    uuid = session_id(session)
+    return CallToolResult("isError" => false, "content" => [text_block("Session: $uuid")])
 end
 
 """
     mcp_list_sessions_result(manager) -> CallToolResult
 
-List all named sessions in `manager` and return their names as a `CallToolResult`.
-Returns `"[]"` when no sessions exist.
+List all named sessions in `manager` and return their canonical UUIDs (with
+optional name aliases) as a `CallToolResult`. Returns `"[]"` when no sessions
+exist. Each line is `"<uuid>"` for unnamed sessions or `"<uuid> (<name>)"` for
+sessions that have a name alias.
 """
 function mcp_list_sessions_result(manager::SessionManager)
-    names = sort([s.name for s in list_named_sessions(manager)])
-    text = isempty(names) ? "[]" : join(names, "\n")
-    return CallToolResult("isError" => false, "content" => [text_block(text)])
+    sessions = sort(list_named_sessions(manager); by=s -> session_id(s))
+    if isempty(sessions)
+        return CallToolResult("isError" => false, "content" => [text_block("[]")])
+    end
+    lines = map(sessions) do s
+        uuid = session_id(s)
+        name = session_name(s)
+        isempty(name) ? uuid : "$uuid ($name)"
+    end
+    return CallToolResult("isError" => false, "content" => [text_block(join(lines, "\n"))])
 end
 
 """
-    mcp_close_session_result(manager, session_name) -> CallToolResult
+    mcp_close_session_result(manager, session_id_or_name) -> CallToolResult
 
-Close the named session `session_name` and return a non-error `CallToolResult`.
-Returns an error result if the session does not exist. The existence check and
-removal are performed atomically via `destroy_named_session!`, which returns
-`true` only when it actually removed an entry.
+Close the session identified by UUID or name alias and return a non-error
+`CallToolResult`. Returns an error result if the session does not exist. The
+existence check and removal are performed atomically via `destroy_named_session!`,
+which returns `true` only when it actually removed an entry.
 """
 function mcp_close_session_result(manager::SessionManager, session_name::AbstractString)
     removed = destroy_named_session!(manager, String(session_name))
