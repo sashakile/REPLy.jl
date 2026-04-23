@@ -1,8 +1,10 @@
 module REPLy
 
+using Dates
 using JSON3
 using REPL
 using Sockets
+using UUIDs
 
 export protocol_name, version_string
 export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_response,
@@ -18,6 +20,7 @@ export session_state, session_eval_task, session_last_active_at
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits
+export AuditLog, AuditLogEntry, audit_entries, record_audit!
 export MiddlewareDescriptor, descriptor, validate_stack
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
@@ -29,6 +32,7 @@ include("protocol/message.jl")
 include("session/module_session.jl")
 include("config/resource_limits.jl")
 include("config/server_state.jl")
+include("security/audit.jl")
 include("session/manager.jl")
 include("middleware/core.jl")
 include("middleware/eval.jl")

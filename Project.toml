@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Sasha Kile"]
 
 [deps]
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
@@ -11,6 +12,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
 Aqua = "0.8"
+Dates = "1"
 JET = "0.9, 0.10, 0.11"
 JSON3 = "1"
 REPL = "1"
