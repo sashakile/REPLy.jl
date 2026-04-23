@@ -790,3 +790,130 @@ end
         @test haskey(resp[1], "session")
     end
 end
+
+@testset "close op: spec-compliant schema (REPLy_jl-db4)" begin
+    @testset "close accepts 'session' field as session identifier (name alias)" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "spec-close-target")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-session-field", "session" => "spec-close-target"))
+
+        assert_conformance(msgs, "spec-close-session-field")
+        @test REPLy.lookup_named_session(manager, "spec-close-target") === nothing
+        @test isempty(REPLy.list_named_sessions(manager))
+    end
+
+    @testset "close accepts 'session' field as session identifier (UUID)" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "spec-close-uuid-target")
+        uuid = REPLy.session_id(session)
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-uuid-field", "session" => uuid))
+
+        assert_conformance(msgs, "spec-close-uuid-field")
+        @test REPLy.lookup_named_session(manager, uuid) === nothing
+        @test REPLy.lookup_named_session(manager, "spec-close-uuid-target") === nothing
+    end
+
+    @testset "close 'session' field takes priority over 'name' when both present" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "priority-target")
+        REPLy.create_named_session!(manager, "priority-other")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # 'session' should win; 'priority-other' should survive
+        msgs = handler(Dict(
+            "op"      => "close",
+            "id"      => "spec-close-priority",
+            "session" => "priority-target",
+            "name"    => "priority-other",
+        ))
+
+        assert_conformance(msgs, "spec-close-priority")
+        @test REPLy.lookup_named_session(manager, "priority-target") === nothing
+        @test REPLy.lookup_named_session(manager, "priority-other") !== nothing
+    end
+
+    @testset "close falls back to 'name' when 'session' field is absent (backward compat)" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-name-target")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-name-compat", "name" => "compat-name-target"))
+
+        assert_conformance(msgs, "spec-close-name-compat")
+        @test REPLy.lookup_named_session(manager, "compat-name-target") === nothing
+    end
+
+    @testset "close requires either 'session' or 'name' field (neither present is an error)" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-no-field"))
+
+        assert_conformance(msgs, "spec-close-no-field")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+    end
+
+    @testset "close 'session' field validates the identifier before lookup" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-bad-session", "session" => "bad name!"))
+
+        assert_conformance(msgs, "spec-close-bad-session")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        @test !("session-not-found" in terminal[end]["status"])
+    end
+
+    @testset "close returns error for non-existent session via 'session' field" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "close", "id" => "spec-close-ghost-session", "session" => "no-such-session"))
+
+        assert_conformance(msgs, "spec-close-ghost-session")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        @test "session-not-found" in terminal[end]["status"]
+    end
+
+    @testset "deprecated close-session still requires 'name' field only" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "dep-close-target")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # With 'name' field — should work
+        msgs = handler(Dict("op" => "close-session", "id" => "dep-close-with-name", "name" => "dep-close-target"))
+        assert_conformance(msgs, "dep-close-with-name")
+        @test REPLy.lookup_named_session(manager, "dep-close-target") === nothing
+    end
+
+    @testset "deprecated close-session does not accept 'session' field as fallback" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "dep-no-session-field")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # Providing 'session' but not 'name' must fail for close-session (name-only op)
+        msgs = handler(Dict("op" => "close-session", "id" => "dep-close-session-field", "session" => "dep-no-session-field"))
+        assert_conformance(msgs, "dep-close-session-field")
+        terminal = filter(m -> haskey(m, "status"), msgs)
+        @test "error" in terminal[end]["status"]
+        # Session must still be intact
+        @test REPLy.lookup_named_session(manager, "dep-no-session-field") !== nothing
+    end
+
+    @testset "op_info for 'close' lists 'session' as required, 'name' as optional" begin
+        mw = REPLy.SessionOpsMiddleware()
+        desc = REPLy.descriptor(mw)
+        close_info = desc.op_info["close"]
+        @test "session" in close_info["requires"]
+        @test "name" in close_info["optional"]
+        @test !("name" in close_info["requires"])
+        @test !("session" in close_info["optional"])
+    end
+end

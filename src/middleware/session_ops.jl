@@ -34,9 +34,9 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
             "returns"  => ["sessions"],
         ),
         "close" => Dict{String, Any}(
-            "doc"      => "Close a named session by UUID or name alias.",
-            "requires" => ["name"],
-            "optional" => String[],
+            "doc"      => "Close a named session by UUID or name alias. Use 'session' field (spec); 'name' is accepted as a deprecated compat alias.",
+            "requires" => ["session"],
+            "optional" => ["name"],
             "returns"  => String[],
         ),
         "close-session" => Dict{String, Any}(
@@ -132,15 +132,35 @@ function handle_ls_sessions(ctx::RequestContext, request_id::AbstractString)
 end
 
 function handle_close_session(ctx::RequestContext, msg, request_id::AbstractString, op::AbstractString="close")
-    name = get(msg, "name", nothing)
-    err = validate_session_name(name)
-    if !isnothing(err)
-        return [error_response(request_id, "$(op) \"name\": $(err)")]
+    # Session resolution:
+    # - Canonical "close" op: accept "session" field (spec) first; fall back to "name" (compat).
+    #   When "session" is present, SessionMiddleware has already validated and resolved it
+    #   into ctx.session; use the UUID from there to avoid a second lookup.
+    # - Deprecated "close-session" op: use only "name" field (existing behavior unchanged).
+    if op == "close"
+        session_field = get(msg, "session", nothing)
+        if !isnothing(session_field)
+            # SessionMiddleware has validated and looked up ctx.session for us; use its UUID.
+            resolved = ctx.session
+            identifier = resolved isa NamedSession ? session_id(resolved) : session_field
+            field_used = "session"
+        else
+            identifier = get(msg, "name", nothing)
+            field_used = "name"
+        end
+    else
+        identifier = get(msg, "name", nothing)
+        field_used = "name"
     end
 
-    session = lookup_named_session(ctx.manager, name)
+    err = validate_session_name(identifier)
+    if !isnothing(err)
+        return [error_response(request_id, "$(op) \"$(field_used)\": $(err)")]
+    end
+
+    session = lookup_named_session(ctx.manager, identifier)
     if isnothing(session)
-        return [session_not_found_response(request_id, name)]
+        return [session_not_found_response(request_id, identifier)]
     end
 
     # Destroy by UUID to ensure correct removal regardless of input form.
