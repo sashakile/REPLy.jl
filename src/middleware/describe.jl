@@ -74,6 +74,10 @@ encoding support. All other ops are forwarded to the next middleware.
 """
 struct DescribeMiddleware <: AbstractMiddleware end
 
+descriptor(::DescribeMiddleware) = MiddlewareDescriptor(
+    provides = Set(["describe"]),
+)
+
 function handle_message(::DescribeMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "describe" || return next(msg)
     request_id = String(get(msg, "id", ""))

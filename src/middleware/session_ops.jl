@@ -11,6 +11,12 @@ first, and *before* `UnknownOpMiddleware` so these ops are not rejected.
 """
 struct SessionOpsMiddleware <: AbstractMiddleware end
 
+descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
+    provides = Set(["ls-sessions", "close-session", "clone-session"]),
+    requires = Set(["session"]),
+    expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
+)
+
 function handle_message(::SessionOpsMiddleware, msg, next, ctx::RequestContext)
     op = get(msg, "op", nothing)
     op in ("ls-sessions", "close-session", "clone-session") || return next(msg)

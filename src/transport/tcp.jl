@@ -24,8 +24,16 @@ is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
 safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "id", "")) : ""
 
-function handle_client!(socket::IO, handler::Function; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
+function handle_client!(socket::IO, handler::Function;
+    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
+    rate_limit_per_min::Int=0,
+)
     transport = JSONTransport(socket, ReentrantLock())
+
+    # Per-connection rate-limit state: sliding 60-second window.
+    # When rate_limit_per_min == 0, enforcement is disabled.
+    rl_window_start = time()
+    rl_count        = 0
 
     try
         while isopen(transport)
@@ -42,6 +50,25 @@ function handle_client!(socket::IO, handler::Function; max_message_bytes::Int=DE
                 rethrow()
             end
             isnothing(msg) && return nothing
+
+            # Rate limiting: reset window when 60 s have elapsed.
+            if rate_limit_per_min > 0
+                now = time()
+                if now - rl_window_start >= 60.0
+                    rl_window_start = now
+                    rl_count        = 0
+                end
+                rl_count += 1
+                if rl_count > rate_limit_per_min
+                    request_id = safe_request_id(msg)
+                    try
+                        send!(transport, error_response(request_id, "Rate limit exceeded";
+                            status_flags=String["error", "rate-limited"]))
+                    catch
+                    end
+                    continue
+                end
+            end
 
             responses = try
                 handler(msg)
@@ -79,7 +106,10 @@ function accept_loop!(listener, handle)
         push!(handle.clients, socket)
         task = @async begin
             try
-                handle_client!(socket, handle.handler; max_message_bytes=handle.state.max_message_bytes)
+                handle_client!(socket, handle.handler;
+                    max_message_bytes  = handle.state.max_message_bytes,
+                    rate_limit_per_min = handle.state.limits.rate_limit_per_min,
+                )
             finally
                 filter!(client -> client !== socket, handle.clients)
                 filter!(existing -> existing !== current_task(), handle.client_tasks)

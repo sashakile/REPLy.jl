@@ -18,7 +18,13 @@ struct EvalMiddleware <: AbstractMiddleware
     max_repr_bytes::Int
 end
 EvalMiddleware(; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) = EvalMiddleware(max_repr_bytes)
-EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_repr_bytes)  # only max_repr_bytes is active; other fields deferred to Phase 7
+EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_repr_bytes)
+
+descriptor(::EvalMiddleware) = MiddlewareDescriptor(
+    provides = Set(["eval"]),
+    requires = Set(["session"]),
+    expects  = ["must appear after SessionMiddleware"],
+)
 
 # `redirect_stdout(IOStream)` uses dup2 (a process-global operation), so concurrent
 # calls would race on file descriptors 1 and 2.  This lock serializes IO capture
@@ -163,11 +169,21 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         if timeout_ms < 1
             return [error_response(request_id, "timeout-ms must be ≥ 1")]
         end
-        # Capping to ResourceLimits.max_eval_time_ms is deferred to Phase 7.
     end
 
-    silent = get(request, "silent", false) === true
-    allow_stdin = get(request, "allow-stdin", true) !== false
+    # Effective timeout: per-request value capped at server max, or server max alone.
+    effective_timeout_ms = if !isnothing(timeout_ms) && !isnothing(ctx.server_state)
+        min(Int(timeout_ms), ctx.server_state.limits.max_eval_time_ms)
+    elseif !isnothing(timeout_ms)
+        Int(timeout_ms)
+    elseif !isnothing(ctx.server_state)
+        ctx.server_state.limits.max_eval_time_ms
+    else
+        nothing
+    end
+
+    silent        = get(request, "silent", false) === true
+    allow_stdin   = get(request, "allow-stdin", true) !== false
     store_history = get(request, "store-history", true) !== false
 
     # Concurrent eval limit enforcement
@@ -201,54 +217,108 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         eval_module = resolved
     end
 
-    try
-        if session isa NamedSession
-            # Serialize evals within this session (FIFO); independent across sessions.
-            # try_begin_eval! handles the race where destroy_named_session! runs concurrently:
-            # it returns false (no throw) when the session is already SessionClosed.
-            lock(session.eval_lock) do
-                try_begin_eval!(session, current_task()) ||
-                    return [error_response(request_id, "session was closed")]
-                msgs, captured = if allow_stdin
-                    # Pipe + feeder task: bridges session.stdin_channel to the eval's
-                    # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
-                    pipe = Base.Pipe()
-                    Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
-                    feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
-                    try
-                        redirect_stdin(pipe.out) do
-                            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
-                        end
-                    finally
-                        schedule(feeder, InterruptException(); error=true)
-                        close(pipe.in)
-                        close(pipe.out)
-                        end_eval!(session)
-                    end
-                else
-                    # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
-                    try
-                        redirect_stdin(devnull) do
-                            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
-                        end
-                    finally
-                        end_eval!(session)
-                    end
-                end
-                _update_history!(session, captured, store_history)
-                msgs
-            end
-        else
-            msgs, _ = if allow_stdin
-                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
-            else
-                redirect_stdin(devnull) do
-                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+    # Timeout state: timed_out is set by the timer before firing InterruptException.
+    # cancel_ch (created only when a timeout is configured) receives a value when the
+    # eval completes, causing the timer to abort before it fires.
+    timed_out = Ref(false)
+    cancel_ch = isnothing(effective_timeout_ms) ? nothing : Channel{Nothing}(1)
+
+    if !isnothing(effective_timeout_ms)
+        eval_task = current_task()
+        ch = cancel_ch  # local alias for the closure below
+        @async begin
+            result = timedwait(
+                () -> isready(ch),
+                effective_timeout_ms / 1000.0;
+                pollint=0.05,
+            )
+            if result === :timed_out && !isready(ch) && !istaskdone(eval_task)
+                timed_out[] = true
+                try
+                    schedule(eval_task, InterruptException(); error=true)
+                catch
                 end
             end
-            msgs
         end
+    end
+
+    try
+        msgs = try
+            if session isa NamedSession
+                # Serialize evals within this session (FIFO); independent across sessions.
+                # try_begin_eval! handles the race where destroy_named_session! runs concurrently:
+                # it returns false (no throw) when the session is already SessionClosed.
+                lock(session.eval_lock) do
+                    try_begin_eval!(session, current_task()) ||
+                        return [error_response(request_id, "session was closed")]
+                    inner_msgs, captured = if allow_stdin
+                        # Pipe + feeder task: bridges session.stdin_channel to the eval's
+                        # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
+                        pipe = Base.Pipe()
+                        Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
+                        feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
+                        try
+                            redirect_stdin(pipe.out) do
+                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                            end
+                        finally
+                            schedule(feeder, InterruptException(); error=true)
+                            close(pipe.in)
+                            close(pipe.out)
+                            end_eval!(session)
+                        end
+                    else
+                        # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
+                        try
+                            redirect_stdin(devnull) do
+                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                            end
+                        finally
+                            end_eval!(session)
+                        end
+                    end
+                    _update_history!(session, captured, store_history)
+                    inner_msgs
+                end
+            else
+                m, _ = if allow_stdin
+                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                else
+                    redirect_stdin(devnull) do
+                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                    end
+                end
+                m
+            end
+        catch ex
+            # InterruptException may escape _run_eval_core when it fires while the task
+            # is blocked waiting for EVAL_IO_CAPTURE_LOCK rather than inside eval_parsed.
+            ex isa InterruptException || rethrow()
+            if timed_out[]
+                [response_message(request_id, "status" => ["done", "error", "timeout"], "err" => "eval timed out")]
+            else
+                [response_message(request_id, "status" => ["done", "interrupted"])]
+            end
+        end
+
+        # Replace any "interrupted" terminal with a "timeout" response when the timer fired.
+        if timed_out[]
+            msgs = map(msgs) do m
+                if haskey(m, "status") && "interrupted" in m["status"]
+                    response_message(request_id, "status" => ["done", "error", "timeout"],
+                        "err" => "eval timed out")
+                else
+                    m
+                end
+            end
+        end
+
+        msgs
     finally
+        # Signal the timer to abort (if one was started).
+        if !isnothing(cancel_ch)
+            isready(cancel_ch) || put!(cancel_ch, nothing)
+        end
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
         !isnothing(ctx.server_state) && Threads.atomic_sub!(ctx.server_state.active_evals, 1)
     end
