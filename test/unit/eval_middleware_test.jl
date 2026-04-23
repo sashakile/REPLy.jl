@@ -241,3 +241,89 @@
         end
     end
 end
+
+@testset "eval timeout cancellation" begin
+    @testset "eval completes before timeout — no timeout status" begin
+        limits  = REPLy.ResourceLimits(max_eval_time_ms=5_000)
+        manager = REPLy.SessionManager()
+        state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        handler = REPLy.build_handler(; manager=manager, state=state)
+
+        msgs = handler(Dict("op" => "eval", "id" => "to1", "code" => "1 + 1"))
+        terminal = last(msgs)
+        @test "done" in terminal["status"]
+        @test !("timeout" in terminal["status"])
+        @test !("error"   in terminal["status"])
+    end
+
+    @testset "eval exceeds timeout-ms — returns timeout status" begin
+        handler = REPLy.build_handler()
+
+        msgs = handler(Dict(
+            "op"         => "eval",
+            "id"         => "to2",
+            "code"       => "sleep(600)",
+            "timeout-ms" => 300,
+        ))
+        terminal = last(msgs)
+        @test "done"    in terminal["status"]
+        @test "error"   in terminal["status"]
+        @test "timeout" in terminal["status"]
+        @test terminal["err"] == "eval timed out"
+    end
+
+    @testset "timeout-ms is capped by server max_eval_time_ms" begin
+        # max_eval_time_ms=300 ms means even a large per-request timeout is capped
+        limits  = REPLy.ResourceLimits(max_eval_time_ms=300, max_concurrent_evals=10)
+        manager = REPLy.SessionManager()
+        state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        handler = REPLy.build_handler(; manager=manager, state=state)
+
+        msgs = handler(Dict(
+            "op"         => "eval",
+            "id"         => "to3",
+            "code"       => "sleep(600)",
+            "timeout-ms" => 60_000,  # large value — should be capped to 300 ms
+        ))
+        terminal = last(msgs)
+        @test "timeout" in terminal["status"]
+    end
+
+    @testset "server max_eval_time_ms enforced without per-request timeout-ms" begin
+        limits  = REPLy.ResourceLimits(max_eval_time_ms=300, max_concurrent_evals=10)
+        manager = REPLy.SessionManager()
+        state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        handler = REPLy.build_handler(; manager=manager, state=state)
+
+        msgs = handler(Dict("op" => "eval", "id" => "to4", "code" => "sleep(600)"))
+        terminal = last(msgs)
+        @test "timeout" in terminal["status"]
+    end
+
+    @testset "after timeout the session is usable for new evals" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "ts1")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # Timeout the named session
+        timeout_msgs = handler(Dict(
+            "op"         => "eval",
+            "id"         => "to5a",
+            "code"       => "sleep(600)",
+            "session"    => "ts1",
+            "timeout-ms" => 300,
+        ))
+        @test "timeout" in last(timeout_msgs)["status"]
+
+        # Follow-up eval should succeed
+        follow_msgs = handler(Dict(
+            "op"      => "eval",
+            "id"      => "to5b",
+            "code"    => "42",
+            "session" => "ts1",
+        ))
+        @test "done" in last(follow_msgs)["status"]
+        @test !("timeout" in last(follow_msgs)["status"])
+        @test any(get(m, "value", nothing) == "42" for m in follow_msgs)
+    end
+end

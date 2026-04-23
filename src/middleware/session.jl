@@ -1,5 +1,10 @@
 struct SessionMiddleware <: AbstractMiddleware end
 
+descriptor(::SessionMiddleware) = MiddlewareDescriptor(
+    provides = Set(["session"]),
+    expects  = ["must appear first in stack to provide named-session routing for downstream middleware"],
+)
+
 const MAX_SESSION_NAME_BYTES = 256
 const SESSION_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 

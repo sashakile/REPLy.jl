@@ -18,6 +18,12 @@ All other ops are forwarded to the next middleware.
 """
 struct InterruptMiddleware <: AbstractMiddleware end
 
+descriptor(::InterruptMiddleware) = MiddlewareDescriptor(
+    provides = Set(["interrupt"]),
+    requires = Set(["session"]),
+    expects  = ["must appear after SessionMiddleware"],
+)
+
 function handle_message(::InterruptMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "interrupt" || return next(msg)
     return interrupt_responses(ctx, msg)

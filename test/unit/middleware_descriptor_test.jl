@@ -113,3 +113,61 @@
         @test desc.expects[1] == "some ordering constraint"
     end
 end
+
+@testset "Built-in middleware descriptors" begin
+    @testset "SessionMiddleware provides session capability" begin
+        desc = REPLy.descriptor(REPLy.SessionMiddleware())
+        @test "session" in desc.provides
+        @test isempty(desc.requires)
+    end
+
+    @testset "SessionOpsMiddleware provides session ops and requires session" begin
+        desc = REPLy.descriptor(REPLy.SessionOpsMiddleware())
+        @test "ls-sessions"    in desc.provides
+        @test "close-session"  in desc.provides
+        @test "clone-session"  in desc.provides
+        @test "session"        in desc.requires
+    end
+
+    @testset "DescribeMiddleware provides describe" begin
+        desc = REPLy.descriptor(REPLy.DescribeMiddleware())
+        @test "describe" in desc.provides
+        @test isempty(desc.requires)
+    end
+
+    @testset "InterruptMiddleware provides interrupt and requires session" begin
+        desc = REPLy.descriptor(REPLy.InterruptMiddleware())
+        @test "interrupt" in desc.provides
+        @test "session"   in desc.requires
+    end
+
+    @testset "StdinMiddleware provides stdin and requires session" begin
+        desc = REPLy.descriptor(REPLy.StdinMiddleware())
+        @test "stdin"   in desc.provides
+        @test "session" in desc.requires
+    end
+
+    @testset "EvalMiddleware provides eval and requires session" begin
+        desc = REPLy.descriptor(REPLy.EvalMiddleware())
+        @test "eval"    in desc.provides
+        @test "session" in desc.requires
+    end
+
+    @testset "UnknownOpMiddleware provides unknown-op" begin
+        desc = REPLy.descriptor(REPLy.UnknownOpMiddleware())
+        @test "unknown-op" in desc.provides
+        @test isempty(desc.requires)
+    end
+
+    @testset "default_middleware_stack passes validate_stack" begin
+        stack = REPLy.default_middleware_stack()
+        errors = REPLy.validate_stack(stack)
+        @test isempty(errors)
+    end
+
+    @testset "default_middleware_stack has no duplicate provides" begin
+        stack = REPLy.default_middleware_stack()
+        all_provides = [op for mw in stack for op in REPLy.descriptor(mw).provides]
+        @test length(all_provides) == length(unique(all_provides))
+    end
+end

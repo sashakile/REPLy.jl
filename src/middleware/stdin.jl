@@ -19,6 +19,12 @@ All other ops are forwarded to the next middleware.
 """
 struct StdinMiddleware <: AbstractMiddleware end
 
+descriptor(::StdinMiddleware) = MiddlewareDescriptor(
+    provides = Set(["stdin"]),
+    requires = Set(["session"]),
+    expects  = ["must appear after SessionMiddleware"],
+)
+
 function handle_message(::StdinMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "stdin" || return next(msg)
     return stdin_responses(ctx, msg)
