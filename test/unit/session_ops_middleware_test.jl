@@ -917,3 +917,133 @@ end
         @test !("session" in close_info["optional"])
     end
 end
+
+@testset "ls-sessions expanded response fields (REPLy_jl-4ye)" begin
+    @testset "ls-sessions includes 'created' ISO 8601 timestamp" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "ts-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-created-ts"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test length(sessions) == 1
+        s = sessions[1]
+        @test haskey(s, "created")
+        @test s["created"] isa AbstractString
+        # Must look like an ISO 8601 datetime: YYYY-MM-DDTHH:MM:SS
+        @test occursin(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", s["created"])
+    end
+
+    @testset "ls-sessions keeps backward-compat 'created-at' float field" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "compat-ts")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-compat-ts"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        s = sessions[1]
+        @test haskey(s, "created-at")
+        @test s["created-at"] isa Number
+    end
+
+    @testset "ls-sessions includes 'last-activity' ISO 8601 timestamp" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "lact-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-last-activity"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        s = sessions[1]
+        @test haskey(s, "last-activity")
+        @test s["last-activity"] isa AbstractString
+        @test occursin(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", s["last-activity"])
+    end
+
+    @testset "ls-sessions includes 'type' field equal to 'light'" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "type-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-type"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test sessions[1]["type"] == "light"
+    end
+
+    @testset "ls-sessions includes 'module' field equal to '<anonymous>'" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "mod-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-module"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test sessions[1]["module"] == "<anonymous>"
+    end
+
+    @testset "ls-sessions includes 'eval-count' field starting at 0" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "evalcnt-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-evalcnt"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test haskey(sessions[1], "eval-count")
+        @test sessions[1]["eval-count"] == 0
+    end
+
+    @testset "ls-sessions includes 'pid' field as null for light sessions" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "pid-test")
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ls-pid"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test haskey(sessions[1], "pid")
+        @test sessions[1]["pid"] === nothing
+    end
+
+    @testset "eval-count increments after each eval completion on a named session" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "evalcnt-incr")
+        handler = REPLy.build_handler(; manager=manager)
+
+        @test REPLy.session_eval_count(session) == 0
+
+        handler(Dict("op" => "eval", "id" => "ec-1", "code" => "1+1", "session" => "evalcnt-incr"))
+        @test REPLy.session_eval_count(session) == 1
+
+        handler(Dict("op" => "eval", "id" => "ec-2", "code" => "2+2", "session" => "evalcnt-incr"))
+        @test REPLy.session_eval_count(session) == 2
+    end
+
+    @testset "eval-count is reflected in ls-sessions after evals" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "evalcnt-ls")
+        handler = REPLy.build_handler(; manager=manager)
+
+        handler(Dict("op" => "eval", "id" => "ecls-1", "code" => "42", "session" => "evalcnt-ls"))
+        handler(Dict("op" => "eval", "id" => "ecls-2", "code" => "43", "session" => "evalcnt-ls"))
+
+        msgs = handler(Dict("op" => "ls-sessions", "id" => "ecls-ls"))
+        sessions = filter(m -> haskey(m, "sessions"), msgs)[1]["sessions"]
+        @test sessions[1]["eval-count"] == 2
+    end
+
+    @testset "session_eval_count accessor is thread-safe" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "ec-accessor")
+
+        @test REPLy.session_eval_count(session) == 0
+        # Directly simulate two eval completions
+        REPLy.begin_eval!(session, current_task())
+        REPLy.end_eval!(session)
+        REPLy.begin_eval!(session, current_task())
+        REPLy.end_eval!(session)
+        @test REPLy.session_eval_count(session) == 2
+    end
+
+    @testset "session_module_name returns '<anonymous>' for light sessions" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "modname-test")
+        @test REPLy.session_module_name(session) == "<anonymous>"
+    end
+end
