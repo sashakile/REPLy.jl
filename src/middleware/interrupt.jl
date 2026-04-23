@@ -22,6 +22,14 @@ descriptor(::InterruptMiddleware) = MiddlewareDescriptor(
     provides = Set(["interrupt"]),
     requires = Set(["session"]),
     expects  = ["must appear after SessionMiddleware"],
+    op_info  = Dict{String, Dict{String, Any}}(
+        "interrupt" => Dict{String, Any}(
+            "doc"      => "Interrupt an in-flight evaluation.",
+            "requires" => ["session"],
+            "optional" => ["interrupt-id"],
+            "returns"  => ["interrupted"],
+        ),
+    ),
 )
 
 function handle_message(::InterruptMiddleware, msg, next, ctx::RequestContext)

@@ -1,18 +1,21 @@
 abstract type AbstractMiddleware end
 
 """
-    MiddlewareDescriptor(; provides, requires, expects)
+    MiddlewareDescriptor(; provides, requires, expects, op_info)
 
-Metadata describing a middleware's interface contract used for startup validation.
+Metadata describing a middleware's interface contract used for startup validation
+and dynamic describe responses.
 
 - `provides::Set{String}` — operation names (e.g. `"eval"`) this middleware handles.
 - `requires::Set{String}` — names that must be provided by some *earlier* middleware in the stack.
 - `expects::Vector{String}` — human-readable ordering constraints (informational; not enforced by `validate_stack`).
+- `op_info::Dict{String, Dict{String, Any}}` — per-op metadata (doc, requires, optional, returns) used to build describe responses dynamically.
 """
 @kwdef struct MiddlewareDescriptor
     provides::Set{String}  = Set{String}()
     requires::Set{String}  = Set{String}()
     expects::Vector{String} = String[]
+    op_info::Dict{String, Dict{String, Any}} = Dict{String, Dict{String, Any}}()
 end
 
 """
@@ -132,6 +135,15 @@ function default_middleware_stack()
 end
 
 function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
+    # Build ops catalog from middleware descriptors
+    ops_catalog = Dict{String, Any}()
+    for mw in middleware
+        desc = descriptor(mw)
+        merge!(ops_catalog, desc.op_info)
+    end
+    # Inject catalog into DescribeMiddleware (if present in stack)
+    stack = AbstractMiddleware[mw isa DescribeMiddleware ? DescribeMiddleware(ops_catalog) : mw for mw in middleware]
+
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict)
         validation_error = validate_request(msg)
@@ -139,7 +151,7 @@ function build_handler(; manager::SessionManager=SessionManager(), middleware::V
 
         request_id = String(get(msg, "id", ""))
         ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing, state)
-        result = dispatch_middleware(middleware, 1, msg, ctx)
+        result = dispatch_middleware(stack, 1, msg, ctx)
         return finalize_responses(ctx, result, request_id)
     end
 end

@@ -24,32 +24,35 @@ const DEFAULT_MAX_MESSAGE_BYTES = 1_048_576  # 1 MiB
 # This protects against processing and parsing oversized payloads but does not prevent
 # the OS-level allocation of the line. True streaming enforcement would require a custom reader.
 function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{Dict{String, Any}, Nothing}
-    while !eof(transport.io)
-        line = try
-            readline(transport.io)
-        catch ex
-            # REQ-RPL-040b: disconnects/partial reads must not escape to callers.
-            if ex isa EOFError
+    # REQ-RPL-040b: disconnects/partial reads must not escape to callers.
+    # Wrap the entire loop so IOError from eof() (e.g. ECONNRESET) is also caught.
+    try
+        while !eof(transport.io)
+            line = try
+                readline(transport.io)
+            catch
                 return nothing
             end
-            return nothing
+
+            isempty(strip(line)) && continue
+
+            if ncodeunits(line) > max_message_bytes
+                throw(MessageTooLargeError(max_message_bytes))
+            end
+
+            msg = try
+                JSON3.read(line)
+            catch
+                # Malformed wire JSON is treated as a closed boundary.
+                return nothing
+            end
+
+            msg isa JSON3.Object || continue
+            return Dict{String, Any}(String(key) => value for (key, value) in pairs(msg))
         end
-
-        isempty(strip(line)) && continue
-
-        if ncodeunits(line) > max_message_bytes
-            throw(MessageTooLargeError(max_message_bytes))
-        end
-
-        msg = try
-            JSON3.read(line)
-        catch
-            # REQ-RPL-040b: malformed wire JSON is treated as a closed boundary.
-            return nothing
-        end
-
-        msg isa JSON3.Object || continue
-        return Dict{String, Any}(String(key) => value for (key, value) in pairs(msg))
+    catch ex
+        ex isa MessageTooLargeError && rethrow()
+        return nothing
     end
 
     return nothing

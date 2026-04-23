@@ -23,6 +23,14 @@ descriptor(::StdinMiddleware) = MiddlewareDescriptor(
     provides = Set(["stdin"]),
     requires = Set(["session"]),
     expects  = ["must appear after SessionMiddleware"],
+    op_info  = Dict{String, Dict{String, Any}}(
+        "stdin" => Dict{String, Any}(
+            "doc"      => "Send input to a running eval waiting on stdin.",
+            "requires" => ["session", "input"],
+            "optional" => String[],
+            "returns"  => String[],
+        ),
+    ),
 )
 
 function handle_message(::StdinMiddleware, msg, next, ctx::RequestContext)
