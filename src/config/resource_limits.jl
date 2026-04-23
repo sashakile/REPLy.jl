@@ -2,7 +2,7 @@
 # All fields have safe defaults suitable for interactive REPL use.
 
 """
-    ResourceLimits(; max_repr_bytes, max_eval_time_ms, max_output_bytes, max_session_history, max_sessions, max_concurrent_evals, rate_limit_per_min)
+    ResourceLimits(; max_repr_bytes, max_eval_time_ms, max_output_bytes, max_session_history, max_sessions, max_concurrent_evals, rate_limit_per_min, revise_hook_enabled)
 
 Immutable configuration struct for resource limits applied to eval requests and sessions.
 
@@ -14,6 +14,7 @@ Fields:
 - `max_sessions::Int` — maximum total active sessions (named + ephemeral) allowed at one time (default: 100). Enforced by `SessionMiddleware` and `SessionOpsMiddleware`.
 - `max_concurrent_evals::Int` — maximum number of eval operations that may run concurrently server-wide (default: 10). Enforced by `EvalMiddleware`.
 - `rate_limit_per_min::Int` — maximum number of requests a single connection may send per 60-second sliding window (default: 600). Enforced by the transport layer (Phase 7B).
+- `revise_hook_enabled::Bool` — when `true` (default), `EvalMiddleware` calls `Main.Revise.revise()` before each named-session eval if `Revise` is loaded in `Main`. Set to `false` to disable the hook entirely.
 """
 @kwdef struct ResourceLimits
     max_repr_bytes::Int        = DEFAULT_MAX_REPR_BYTES
@@ -23,4 +24,5 @@ Fields:
     max_sessions::Int          = 100
     max_concurrent_evals::Int  = 10
     rate_limit_per_min::Int    = 600
+    revise_hook_enabled::Bool  = true
 end

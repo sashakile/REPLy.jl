@@ -36,6 +36,7 @@ include("helpers/server.jl")
         include("unit/mcp_adapter_test.jl")
         include("unit/disconnect_cleanup_test.jl")
         include("unit/audit_log_test.jl")
+        include("unit/revise_hook_test.jl")
     end
 
     @testset "integration" begin
@@ -57,6 +58,7 @@ include("helpers/server.jl")
             include("e2e/unix_socket_test.jl")
             include("e2e/named_session_eval_test.jl")
             include("e2e/multi_listener_test.jl")
+            include("e2e/revise_hook_test.jl")
         else
             @test_broken isdefined(REPLy, :serve)
         end
