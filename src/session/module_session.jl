@@ -64,11 +64,13 @@ mutable struct NamedSession
     eval_lock::ReentrantLock
     stdin_channel::Channel{String}
     history::Vector{Any}
+    eval_count::Int
 end
 
 function NamedSession(id::String, name::String, mod::Module)
     now = time()
-    return NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[])
+    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[], 0)
+    return s
 end
 
 """
@@ -134,6 +136,21 @@ Return the Unix timestamp (seconds) of the most recent activity on `session`. Th
 session_last_active_at(session::NamedSession) = lock(session.lock) do; session.last_active_at; end
 
 """
+    session_eval_count(session)
+
+Return the number of eval operations that have completed on `session`. Thread-safe.
+"""
+session_eval_count(session::NamedSession) = lock(session.lock) do; session.eval_count; end
+
+"""
+    session_module_name(session)
+
+Return the module name for `session`. Always `"<anonymous>"` for light sessions,
+since they are backed by gensym'd anonymous modules.
+"""
+session_module_name(::NamedSession) = "<anonymous>"
+
+"""
     transition_session_state!(session, new_state)
 
 Transition `session` between `SessionIdle` and `SessionRunning`. Throws `ArgumentError`
@@ -186,6 +203,7 @@ function end_eval!(session::NamedSession)
         _transition_state_unlocked!(session, SessionIdle)
         session.eval_task = nothing
         session.last_active_at = time()
+        session.eval_count += 1
     end
     return session
 end

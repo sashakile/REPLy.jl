@@ -117,11 +117,18 @@ end
 
 function handle_ls_sessions(ctx::RequestContext, request_id::AbstractString)
     sessions = list_named_sessions(ctx.manager)
+    _iso(ts) = Dates.format(Dates.unix2datetime(ts), Dates.ISODateTimeFormat)
     session_list = [
         Dict{String, Any}(
-            "session"    => session_id(s),
-            "name"       => isempty(session_name(s)) ? nothing : session_name(s),
-            "created-at" => session_created_at(s),
+            "session"       => session_id(s),
+            "name"          => isempty(session_name(s)) ? nothing : session_name(s),
+            "created"       => _iso(session_created_at(s)),
+            "created-at"    => session_created_at(s),
+            "last-activity" => _iso(session_last_active_at(s)),
+            "type"          => "light",
+            "module"        => session_module_name(s),
+            "eval-count"    => session_eval_count(s),
+            "pid"           => nothing,
         )
         for s in sessions
     ]
