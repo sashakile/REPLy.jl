@@ -20,6 +20,18 @@ struct LoadFileMiddleware <: AbstractMiddleware
 end
 LoadFileMiddleware(; load_file_allowlist=nothing) = LoadFileMiddleware(load_file_allowlist)
 
+descriptor(::LoadFileMiddleware) = MiddlewareDescriptor(
+    provides = Set(["load-file"]),
+    op_info  = Dict{String, Dict{String, Any}}(
+        "load-file" => Dict{String, Any}(
+            "doc"      => "Load and evaluate a Julia source file.",
+            "requires" => ["file"],
+            "optional" => ["session"],
+            "returns"  => ["out", "err", "value", "ns"],
+        ),
+    ),
+)
+
 function handle_message(mw::LoadFileMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "load-file" || return next(msg)
     return load_file_responses(ctx, msg; load_file_allowlist=mw.load_file_allowlist)

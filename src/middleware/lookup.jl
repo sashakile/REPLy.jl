@@ -11,6 +11,18 @@ returns documentation and method signatures when found, and returns
 """
 struct LookupMiddleware <: AbstractMiddleware end
 
+descriptor(::LookupMiddleware) = MiddlewareDescriptor(
+    provides = Set(["lookup"]),
+    op_info  = Dict{String, Dict{String, Any}}(
+        "lookup" => Dict{String, Any}(
+            "doc"      => "Look up Julia symbol documentation.",
+            "requires" => ["symbol"],
+            "optional" => ["session", "module"],
+            "returns"  => ["doc"],
+        ),
+    ),
+)
+
 function handle_message(::LookupMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "lookup" || return next(msg)
     return lookup_responses(ctx, msg)

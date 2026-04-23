@@ -34,6 +34,7 @@ include("helpers/server.jl")
         include("unit/resource_enforcement_test.jl")
         include("unit/middleware_descriptor_test.jl")
         include("unit/mcp_adapter_test.jl")
+        include("unit/disconnect_cleanup_test.jl")
     end
 
     @testset "integration" begin

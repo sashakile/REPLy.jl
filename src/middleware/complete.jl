@@ -11,6 +11,18 @@ are forwarded to the next middleware.
 """
 struct CompleteMiddleware <: AbstractMiddleware end
 
+descriptor(::CompleteMiddleware) = MiddlewareDescriptor(
+    provides = Set(["complete"]),
+    op_info  = Dict{String, Dict{String, Any}}(
+        "complete" => Dict{String, Any}(
+            "doc"      => "Return tab-completions for Julia code.",
+            "requires" => ["code", "pos"],
+            "optional" => ["session"],
+            "returns"  => ["completions"],
+        ),
+    ),
+)
+
 function handle_message(::CompleteMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "complete" || return next(msg)
     return complete_responses(ctx, msg)

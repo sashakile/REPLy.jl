@@ -24,6 +24,14 @@ descriptor(::EvalMiddleware) = MiddlewareDescriptor(
     provides = Set(["eval"]),
     requires = Set(["session"]),
     expects  = ["must appear after SessionMiddleware"],
+    op_info  = Dict{String, Dict{String, Any}}(
+        "eval" => Dict{String, Any}(
+            "doc"      => "Evaluate Julia code in a session module.",
+            "requires" => ["code"],
+            "optional" => ["session", "module", "timeout-ms", "allow-stdin", "silent", "store-history"],
+            "returns"  => ["out", "err", "value", "ns"],
+        ),
+    ),
 )
 
 # `redirect_stdout(IOStream)` uses dup2 (a process-global operation), so concurrent

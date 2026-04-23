@@ -170,4 +170,39 @@ end
         all_provides = [op for mw in stack for op in REPLy.descriptor(mw).provides]
         @test length(all_provides) == length(unique(all_provides))
     end
+
+    @testset "MiddlewareDescriptor op_info field is empty by default" begin
+        desc = REPLy.MiddlewareDescriptor(provides=Set(["eval"]), requires=Set(["session"]), expects=["session must precede eval"])
+        @test isempty(desc.op_info)
+    end
+
+    @testset "DescribeMiddleware descriptor has describe op_info" begin
+        desc = REPLy.descriptor(REPLy.DescribeMiddleware())
+        @test haskey(desc.op_info, "describe")
+        @test haskey(desc.op_info["describe"], "doc")
+    end
+
+    @testset "EvalMiddleware descriptor has eval op_info" begin
+        desc = REPLy.descriptor(REPLy.EvalMiddleware())
+        @test haskey(desc.op_info, "eval")
+        @test "code" in desc.op_info["eval"]["requires"]
+    end
+
+    @testset "CompleteMiddleware provides complete" begin
+        desc = REPLy.descriptor(REPLy.CompleteMiddleware())
+        @test "complete" in desc.provides
+        @test haskey(desc.op_info, "complete")
+    end
+
+    @testset "LookupMiddleware provides lookup" begin
+        desc = REPLy.descriptor(REPLy.LookupMiddleware())
+        @test "lookup" in desc.provides
+        @test haskey(desc.op_info, "lookup")
+    end
+
+    @testset "LoadFileMiddleware provides load-file" begin
+        desc = REPLy.descriptor(REPLy.LoadFileMiddleware())
+        @test "load-file" in desc.provides
+        @test haskey(desc.op_info, "load-file")
+    end
 end

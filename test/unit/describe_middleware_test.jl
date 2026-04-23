@@ -17,53 +17,59 @@
         @test msg["status"] == ["done"]
     end
 
-    @testset "describe ops catalog includes all required operations" begin
-        manager = REPLy.SessionManager()
-        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
-        stack = REPLy.AbstractMiddleware[REPLy.DescribeMiddleware(), REPLy.UnknownOpMiddleware()]
+    @testset "describe ops catalog reflects middleware stack via build_handler" begin
+        handler = REPLy.build_handler()  # uses default_middleware_stack()
+        responses = handler(Dict("op" => "describe", "id" => "d2"))
+        ops = only(responses)["ops"]
 
-        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "describe", "id" => "d2"), ctx)
-        ops = only(msgs)["ops"]
-
-        required_ops = ["eval", "clone-session", "close-session", "complete", "lookup",
-                        "interrupt", "ls-sessions", "stdin", "load-file", "describe"]
-        for op in required_ops
+        # Default stack provides these ops (not load-file, complete, lookup — those are optional)
+        default_ops = ["eval", "interrupt", "stdin", "describe",
+                       "ls-sessions", "close-session", "clone-session"]
+        for op in default_ops
             @test haskey(ops, op)
         end
+
+        # Optional middleware not in default stack should NOT appear
+        @test !haskey(ops, "load-file")
+        @test !haskey(ops, "complete")
+        @test !haskey(ops, "lookup")
     end
 
-    @testset "each op descriptor has doc, requires, optional, and returns" begin
-        manager = REPLy.SessionManager()
-        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
-        stack = REPLy.AbstractMiddleware[REPLy.DescribeMiddleware(), REPLy.UnknownOpMiddleware()]
+    @testset "each op in default stack has doc, requires, optional, and returns" begin
+        handler = REPLy.build_handler()
+        responses = handler(Dict("op" => "describe", "id" => "d3"))
+        ops = only(responses)["ops"]
 
-        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "describe", "id" => "d3"), ctx)
-        ops = only(msgs)["ops"]
-
-        for (name, descriptor) in ops
-            @test descriptor isa AbstractDict
-            @test haskey(descriptor, "doc")
-            @test haskey(descriptor, "requires")
-            @test haskey(descriptor, "optional")
-            @test haskey(descriptor, "returns")
-            @test descriptor["doc"] isa AbstractString
-            @test descriptor["requires"] isa AbstractVector
-            @test descriptor["optional"] isa AbstractVector
-            @test descriptor["returns"] isa AbstractVector
+        for (name, op_desc) in ops
+            @test op_desc isa AbstractDict
+            @test haskey(op_desc, "doc")
+            @test haskey(op_desc, "requires")
+            @test haskey(op_desc, "optional")
+            @test haskey(op_desc, "returns")
+            @test op_desc["doc"] isa AbstractString
+            @test op_desc["requires"] isa AbstractVector
+            @test op_desc["optional"] isa AbstractVector
+            @test op_desc["returns"] isa AbstractVector
         end
     end
 
     @testset "eval op descriptor has expected required and optional fields" begin
-        manager = REPLy.SessionManager()
-        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
-        stack = REPLy.AbstractMiddleware[REPLy.DescribeMiddleware(), REPLy.UnknownOpMiddleware()]
-
-        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "describe", "id" => "d4"), ctx)
-        eval_desc = only(msgs)["ops"]["eval"]
+        handler = REPLy.build_handler()
+        responses = handler(Dict("op" => "describe", "id" => "d4"))
+        eval_desc = only(responses)["ops"]["eval"]
 
         @test "code" in eval_desc["requires"]
         @test "session" in eval_desc["optional"]
         @test "value" in eval_desc["returns"]
+    end
+
+    @testset "optional middleware ops appear when middleware added to stack" begin
+        stack_base = REPLy.default_middleware_stack()
+        stack = vcat(stack_base[1:end-1], [REPLy.CompleteMiddleware(), stack_base[end]])
+        handler = REPLy.build_handler(; middleware=stack)
+        responses = handler(Dict("op" => "describe", "id" => "d4b"))
+        ops = only(responses)["ops"]
+        @test haskey(ops, "complete")
     end
 
     @testset "versions contains julia and reply keys" begin
@@ -100,7 +106,7 @@
         msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "eval", "id" => "d7"), ctx)
 
         @test msgs isa Vector
-        @test only(msgs)["err"] isa AbstractString  # UnknownOpMiddleware returns error
+        @test only(msgs)["err"] isa AbstractString
         @test occursin("eval", only(msgs)["err"])
     end
 end

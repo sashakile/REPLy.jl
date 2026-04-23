@@ -15,6 +15,26 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
     provides = Set(["ls-sessions", "close-session", "clone-session"]),
     requires = Set(["session"]),
     expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
+    op_info  = Dict{String, Dict{String, Any}}(
+        "ls-sessions" => Dict{String, Any}(
+            "doc"      => "List all active named sessions.",
+            "requires" => String[],
+            "optional" => String[],
+            "returns"  => ["sessions"],
+        ),
+        "close-session" => Dict{String, Any}(
+            "doc"      => "Close a named session by name.",
+            "requires" => ["name"],
+            "optional" => String[],
+            "returns"  => String[],
+        ),
+        "clone-session" => Dict{String, Any}(
+            "doc"      => "Clone a named session to a new name.",
+            "requires" => ["source", "name"],
+            "optional" => String[],
+            "returns"  => ["name"],
+        ),
+    ),
 )
 
 function handle_message(::SessionOpsMiddleware, msg, next, ctx::RequestContext)
