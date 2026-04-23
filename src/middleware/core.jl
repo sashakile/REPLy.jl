@@ -25,6 +25,7 @@ Return the `MiddlewareDescriptor` for `mw`. The default makes no claims.
 Override to declare what ops a middleware provides/requires.
 """
 descriptor(::AbstractMiddleware) = MiddlewareDescriptor()
+shutdown_middleware!(::AbstractMiddleware) = nothing
 
 """
     validate_stack(stack) -> Vector{String}
@@ -134,16 +135,17 @@ function default_middleware_stack()
     return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), InterruptMiddleware(), StdinMiddleware(), EvalMiddleware(), UnknownOpMiddleware()]
 end
 
-function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
-    # Build ops catalog from middleware descriptors
+function materialize_middleware_stack(middleware::Vector{<:AbstractMiddleware})
     ops_catalog = Dict{String, Any}()
     for mw in middleware
         desc = descriptor(mw)
         merge!(ops_catalog, desc.op_info)
     end
-    # Inject catalog into DescribeMiddleware (if present in stack)
-    stack = AbstractMiddleware[mw isa DescribeMiddleware ? DescribeMiddleware(ops_catalog) : mw for mw in middleware]
+    return AbstractMiddleware[mw isa DescribeMiddleware ? DescribeMiddleware(ops_catalog) : mw for mw in middleware]
+end
 
+function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
+    stack = materialize_middleware_stack(middleware)
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict)
         validation_error = validate_request(msg)

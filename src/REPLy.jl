@@ -12,8 +12,9 @@ export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_respo
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_REPR_BYTES, OUTPUT_TRUNCATION_MARKER,
     truncate_output
 export build_handler, serve, server_port, server_socket_path, ServerState
+export register_active_eval!, unregister_active_eval!, active_eval_tasks
 export get_or_create_named_session!
-export RequestContext, HandlerContext, dispatch_middleware
+export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!
 export validate_session_name, MAX_SESSION_NAME_BYTES
 export SessionState, SessionIdle, SessionRunning, SessionClosed
 export session_state, session_eval_task, session_last_active_at

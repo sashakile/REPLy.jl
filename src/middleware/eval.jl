@@ -195,14 +195,16 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     store_history = get(request, "store-history", true) !== false
 
     # Concurrent eval limit enforcement
-    if !isnothing(ctx.server_state)
-        limit = ctx.server_state.limits.max_concurrent_evals
-        current = Threads.atomic_add!(ctx.server_state.active_evals, 1)
+    state = ctx.server_state
+    if !isnothing(state)
+        limit = state.limits.max_concurrent_evals
+        current = Threads.atomic_add!(state.active_evals, 1)
         if current >= limit
-            Threads.atomic_sub!(ctx.server_state.active_evals, 1)
+            Threads.atomic_sub!(state.active_evals, 1)
             return [error_response(request_id, "Too many concurrent evals";
                         status_flags=String["error", "concurrency-limit-reached"])]
         end
+        register_active_eval!(state, current_task())
     end
 
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
@@ -328,7 +330,10 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             isready(cancel_ch) || put!(cancel_ch, nothing)
         end
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
-        !isnothing(ctx.server_state) && Threads.atomic_sub!(ctx.server_state.active_evals, 1)
+        if !isnothing(state)
+            unregister_active_eval!(state, current_task())
+            Threads.atomic_sub!(state.active_evals, 1)
+        end
     end
 end
 
