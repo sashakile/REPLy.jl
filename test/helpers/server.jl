@@ -21,3 +21,15 @@ function with_unix_server(f; path=tempname())
         close(server)
     end
 end
+
+function with_multi_server(f; tcp_port=0, unix_path=tempname(), kwargs...)
+    server = REPLy.serve_multi((; port=tcp_port), (; socket_path=unix_path); kwargs...)
+    tcp_port_assigned = REPLy.server_port(server.listeners[1])
+    unix_path_assigned = REPLy.server_socket_path(server.listeners[2])
+    handle = (; server, tcp_port=tcp_port_assigned, unix_path=unix_path_assigned)
+    try
+        return f(handle)
+    finally
+        close(server)
+    end
+end
