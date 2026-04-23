@@ -1,9 +1,9 @@
 """
     SessionOpsMiddleware
 
-Handle session management operations: `ls-sessions`, `close-session`, and
-`clone-session`. These ops manipulate the named-session registry directly
-and never delegate to downstream middleware.
+Handle session management operations: `new-session`, `ls-sessions`,
+`close-session`, and `clone-session`. These ops manipulate the named-session
+registry directly and never delegate to downstream middleware.
 
 This middleware must appear *after* `SessionMiddleware` in the stack so that
 requests carrying a `"session"` key for named-session routing are resolved
@@ -12,10 +12,16 @@ first, and *before* `UnknownOpMiddleware` so these ops are not rejected.
 struct SessionOpsMiddleware <: AbstractMiddleware end
 
 descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
-    provides = Set(["ls-sessions", "close-session", "clone-session"]),
+    provides = Set(["new-session", "ls-sessions", "close-session", "clone-session"]),
     requires = Set(["session"]),
     expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
     op_info  = Dict{String, Dict{String, Any}}(
+        "new-session" => Dict{String, Any}(
+            "doc"      => "Create a new named session. Returns a UUID and optional name alias.",
+            "requires" => String[],
+            "optional" => ["name"],
+            "returns"  => ["session", "name"],
+        ),
         "ls-sessions" => Dict{String, Any}(
             "doc"      => "List all active named sessions.",
             "requires" => String[],
@@ -23,7 +29,7 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
             "returns"  => ["sessions"],
         ),
         "close-session" => Dict{String, Any}(
-            "doc"      => "Close a named session by name.",
+            "doc"      => "Close a named session by UUID or name alias.",
             "requires" => ["name"],
             "optional" => String[],
             "returns"  => String[],
@@ -39,11 +45,13 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
 
 function handle_message(::SessionOpsMiddleware, msg, next, ctx::RequestContext)
     op = get(msg, "op", nothing)
-    op in ("ls-sessions", "close-session", "clone-session") || return next(msg)
+    op in ("new-session", "ls-sessions", "close-session", "clone-session") || return next(msg)
 
     request_id = String(get(msg, "id", ""))
 
-    if op == "ls-sessions"
+    if op == "new-session"
+        return handle_new_session(ctx, msg, request_id)
+    elseif op == "ls-sessions"
         return handle_ls_sessions(ctx, request_id)
     elseif op == "close-session"
         return handle_close_session(ctx, msg, request_id)
@@ -52,11 +60,42 @@ function handle_message(::SessionOpsMiddleware, msg, next, ctx::RequestContext)
     end
 end
 
+function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString)
+    name = get(msg, "name", nothing)
+
+    # Validate the alias name if provided.
+    if !isnothing(name)
+        err = validate_session_name(name)
+        if !isnothing(err)
+            return [error_response(request_id, "new-session \"name\": $(err)")]
+        end
+    end
+
+    # Enforce server-wide session limit before creating a new named session.
+    if !isnothing(ctx.server_state) &&
+            total_session_count(ctx.manager) >= ctx.server_state.limits.max_sessions
+        return [error_response(request_id, "Session limit reached";
+                    status_flags=String["error", "session-limit-reached"])]
+    end
+
+    alias = isnothing(name) ? "" : String(name)
+    session = create_named_session!(ctx.manager, alias)
+
+    return [
+        response_message(request_id,
+            "session" => session_id(session),
+            "name"    => isempty(alias) ? nothing : alias,
+        ),
+        done_response(request_id),
+    ]
+end
+
 function handle_ls_sessions(ctx::RequestContext, request_id::AbstractString)
     sessions = list_named_sessions(ctx.manager)
     session_list = [
         Dict{String, Any}(
-            "name" => session_name(s),
+            "session"    => session_id(s),
+            "name"       => isempty(session_name(s)) ? nothing : session_name(s),
             "created-at" => session_created_at(s),
         )
         for s in sessions
@@ -79,7 +118,8 @@ function handle_close_session(ctx::RequestContext, msg, request_id::AbstractStri
         return [session_not_found_response(request_id, name)]
     end
 
-    destroy_named_session!(ctx.manager, name)
+    # Destroy by UUID to ensure correct removal regardless of input form.
+    destroy_named_session!(ctx.manager, session_id(session))
     return [done_response(request_id)]
 end
 
@@ -112,13 +152,26 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         )]
     end
 
-    cloned = clone_named_session!(ctx.manager, source, name)
+    local cloned
+    try
+        cloned = clone_named_session!(ctx.manager, source, name)
+    catch e
+        e isa ArgumentError || rethrow(e)
+        return [error_response(
+            request_id,
+            "Session already exists: $(name)";
+            status_flags=String["error", "session-already-exists"],
+        )]
+    end
     if isnothing(cloned)
         return [session_not_found_response(request_id, source)]
     end
 
     return [
-        response_message(request_id, "name" => session_name(cloned)),
+        response_message(request_id,
+            "session" => session_id(cloned),
+            "name"    => isempty(session_name(cloned)) ? nothing : session_name(cloned),
+        ),
         done_response(request_id),
     ]
 end

@@ -16,6 +16,7 @@ export register_active_eval!, unregister_active_eval!, active_eval_tasks
 export get_or_create_named_session!
 export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!
 export validate_session_name, MAX_SESSION_NAME_BYTES
+export session_id
 export SessionState, SessionIdle, SessionRunning, SessionClosed
 export session_state, session_eval_task, session_last_active_at
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
