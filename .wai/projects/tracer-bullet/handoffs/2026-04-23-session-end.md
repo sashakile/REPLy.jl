@@ -35,27 +35,17 @@ phase: implement
 ### git_status
 
 ```
- M .wai/projects/tracer-bullet/.pending-resume
- M .wai/projects/tracer-bullet/handoffs/2026-04-22-session-end.md
-?? .wai/projects/tracer-bullet/.reflect-meta
+M  .beads/issues.jsonl
 ```
 
 ### open_issues
 
 ```
-○ REPLy_jl-8l2 ● P3 [epic] Phase 8 — Middleware descriptors and stack validation
-└── ○ REPLy_jl-8l2.3 ● P3 Drive describe output from descriptor metadata where appropriate
-○ REPLy_jl-v3f ● P3 [epic] Phase 7C — Timeout, disconnect cleanup, and closed-channel resilience
-├── ○ REPLy_jl-43y ● P3 [epic] Phase 7D — Audit logging and graceful shutdown
-│   ├── ○ REPLy_jl-43y.1 ● P3 Implement bounded audit logging and file rotation
-│   ├── ○ REPLy_jl-43y.2 ● P3 Implement graceful shutdown ordering
-│   └── ○ REPLy_jl-499 ● P3 [epic] Phase 9 — Transport completeness and multi-listener support
-│       ├── ○ REPLy_jl-499.1 ● P3 Add multi-listener server orchestration
-│       └── ○ REPLy_jl-499.2 ● P3 Add e2e coverage for listener-global sessions and limits
-└── ○ REPLy_jl-v3f.2 ● P3 Implement disconnect cleanup and closed-channel response resilience
+○ REPLy_jl-499 ● P3 [epic] Phase 9 — Transport completeness and multi-listener support
+└── ○ REPLy_jl-499.2 ● P3 Add e2e coverage for listener-global sessions and limits
 
 --------------------------------------------------------------------------------
-Total: 10 issues (10 open, 0 in progress)
+Total: 2 issues (2 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
 ```
