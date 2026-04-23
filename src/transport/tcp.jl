@@ -22,6 +22,13 @@ mutable struct UnixServerHandle
     state::ServerState
 end
 
+mutable struct MultiListenerServer
+    listeners::Vector{Union{TCPServerHandle, UnixServerHandle}}
+    closing::Base.RefValue{Bool}
+    state::ServerState
+    middleware::Vector{AbstractMiddleware}
+end
+
 is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
 safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "id", "")) : ""

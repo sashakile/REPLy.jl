@@ -136,3 +136,90 @@ function Base.close(server::UnixServerHandle; kwargs...)
     end
     return nothing
 end
+
+"""
+    serve_multi(specs...; manager, middleware, limits, max_message_bytes)
+
+Start multiple listeners (TCP and/or Unix domain socket) that share one session
+namespace and one resource-limit domain.
+
+Each `spec` is a named tuple with either:
+- `(; port=N)` or `(; host=..., port=N)` for a TCP listener
+- `(; socket_path="...")` for a Unix domain socket listener
+
+Returns a `MultiListenerServer` which can be closed with `close(server)`.
+"""
+function serve_multi(specs...; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
+    max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
+    isempty(specs) && throw(ArgumentError("serve_multi requires at least one listener spec"))
+
+    closing = Ref(false)
+    state = ServerState(limits, max_message_bytes)
+    stack = materialize_middleware_stack(middleware)
+    handler = build_handler(; manager=manager, middleware=stack, state=state)
+
+    listeners = Union{TCPServerHandle, UnixServerHandle}[]
+    for spec in specs
+        if hasproperty(spec, :socket_path)
+            listener = listen_unix(spec.socket_path)
+            handle = UnixServerHandle(listener, String(spec.socket_path), Task(() -> nothing), Task[], IO[], handler, stack, closing, state)
+            handle.accept_task = @async accept_loop!(listener, handle)
+            push!(listeners, handle)
+        else
+            h = hasproperty(spec, :host) ? spec.host : ip"127.0.0.1"
+            p = hasproperty(spec, :port) ? spec.port : 0
+            listener = listen(h, Int(p))
+            assigned_port = Int(getsockname(listener)[2])
+            handle = TCPServerHandle(listener, assigned_port, Task(() -> nothing), Task[], IO[], handler, stack, closing, state)
+            handle.accept_task = @async accept_loop!(listener, handle)
+            push!(listeners, handle)
+        end
+    end
+
+    return MultiListenerServer(listeners, closing, state, stack)
+end
+
+function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
+    grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
+    server.closing[] && return nothing
+    server.closing[] = true
+
+    deadline = time() + Float64(grace_seconds)
+
+    for handle in server.listeners
+        isopen(handle.listener) && close(handle.listener)
+    end
+    for handle in server.listeners
+        wait_for_server_task(handle.accept_task)
+    end
+
+    interrupt_active_evals!(server.state)
+
+    for task in active_eval_tasks(server.state)
+        remaining = deadline - time()
+        remaining > 0 && timedwait(() -> istaskdone(task), remaining)
+    end
+
+    for handle in server.listeners
+        for client in copy(handle.clients)
+            isopen(client) && close(client)
+        end
+    end
+
+    for handle in server.listeners
+        for task in copy(handle.client_tasks)
+            remaining = deadline - time()
+            remaining > 0 && timedwait(() -> istaskdone(task), remaining)
+        end
+    end
+
+    shutdown_middleware_stack!(server.middleware)
+
+    for handle in server.listeners
+        if handle isa UnixServerHandle
+            ispath(handle.path) && rm(handle.path; force=true)
+        end
+    end
+
+    return nothing
+end
