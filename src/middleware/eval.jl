@@ -252,6 +252,10 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         end
     end
 
+    # For named sessions, eval_id is captured after try_begin_eval! increments it.
+    # Nothing for ephemeral sessions (they have no persistent identity).
+    this_eval_id = Ref{Union{Int, Nothing}}(nothing)
+
     try
         msgs = try
             if session isa NamedSession
@@ -261,6 +265,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                 lock(session.eval_lock) do
                     try_begin_eval!(session, current_task()) ||
                         return [error_response(request_id, "session was closed")]
+                    this_eval_id[] = session_eval_id(session)
                     inner_msgs, captured = if allow_stdin
                         # Pipe + feeder task: bridges session.stdin_channel to the eval's
                         # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
@@ -320,6 +325,14 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                 else
                     m
                 end
+            end
+        end
+
+        # Annotate the terminal message with eval-id for named sessions.
+        if !isnothing(this_eval_id[])
+            eid = this_eval_id[]
+            msgs = map(msgs) do m
+                haskey(m, "status") ? merge(m, Dict{String,Any}("eval-id" => eid)) : m
             end
         end
 

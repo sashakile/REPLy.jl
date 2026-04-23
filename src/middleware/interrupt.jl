@@ -27,7 +27,7 @@ descriptor(::InterruptMiddleware) = MiddlewareDescriptor(
             "doc"      => "Interrupt an in-flight evaluation.",
             "requires" => ["session"],
             "optional" => ["interrupt-id"],
-            "returns"  => ["interrupted"],
+            "returns"  => ["interrupted", "interrupted-id"],
         ),
     ),
 )
@@ -50,27 +50,49 @@ function interrupt_responses(ctx::RequestContext, request::AbstractDict)
         return [session_not_found_response(request_id, String(session_name))]
     end
 
-    interrupted = _interrupt_session_eval(session)
+    interrupt_id = get(request, "interrupt-id", nothing)
+    interrupted, interrupted_id = _interrupt_session_eval(session; interrupt_id=interrupt_id)
 
     return [
-        response_message(request_id, "interrupted" => interrupted),
+        response_message(request_id, "interrupted" => interrupted, "interrupted-id" => interrupted_id),
         done_response(request_id),
     ]
 end
 
-function _interrupt_session_eval(session::NamedSession)
-    task = lock(session.lock) do
-        session.state === SessionRunning ? session.eval_task : nothing
+"""
+    _interrupt_session_eval(session; interrupt_id=nothing) -> (interrupted, interrupted_id)
+
+Attempt to interrupt the running eval in `session`.
+
+- `interrupt_id`: if provided (non-nothing), only interrupt when the running eval's
+  ID matches. If there is a mismatch (the targeted eval already finished), returns
+  no-op success `([], nothing)`.
+- Returns `(interrupted::Vector{String}, interrupted_id::Union{Int,Nothing})` where
+  `interrupted` contains `session.name` on a real interrupt and `interrupted_id` holds
+  the eval ID that was interrupted (or `nothing` when no interrupt was sent).
+"""
+function _interrupt_session_eval(session::NamedSession; interrupt_id::Union{Integer,Nothing}=nothing)
+    task, current_eval_id = lock(session.lock) do
+        if session.state === SessionRunning
+            (session.eval_task, session.eval_id)
+        else
+            (nothing, session.eval_id)
+        end
     end
 
-    isnothing(task) && return String[]
+    isnothing(task) && return (String[], nothing)
+
+    # If a specific interrupt-id was requested, check it matches the running eval.
+    if !isnothing(interrupt_id) && current_eval_id != interrupt_id
+        return (String[], nothing)
+    end
 
     try
         schedule(task, InterruptException(); error=true)
     catch
         # schedule can fail if the task has already completed; treat as idempotent.
-        return String[]
+        return (String[], nothing)
     end
 
-    return [session.name]
+    return ([session.name], current_eval_id)
 end

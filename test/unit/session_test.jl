@@ -68,3 +68,49 @@
         @test REPLy.session_count(manager) == 0
     end
 end
+
+@testset "NamedSession eval_id" begin
+    @testset "new session starts with eval_id == 0" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-init")
+        @test REPLy.session_eval_id(session) == 0
+    end
+
+    @testset "begin_eval! increments eval_id" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-incr")
+
+        @test REPLy.session_eval_id(session) == 0
+        REPLy.begin_eval!(session, current_task())
+        @test REPLy.session_eval_id(session) == 1
+        REPLy.end_eval!(session)
+
+        REPLy.begin_eval!(session, current_task())
+        @test REPLy.session_eval_id(session) == 2
+        REPLy.end_eval!(session)
+    end
+
+    @testset "eval_id is independent across sessions" begin
+        manager = REPLy.SessionManager()
+        s1 = REPLy.create_named_session!(manager, "eval-id-ind-1")
+        s2 = REPLy.create_named_session!(manager, "eval-id-ind-2")
+
+        REPLy.begin_eval!(s1, current_task())
+        REPLy.end_eval!(s1)
+        REPLy.begin_eval!(s1, current_task())
+        REPLy.end_eval!(s1)
+
+        @test REPLy.session_eval_id(s1) == 2
+        @test REPLy.session_eval_id(s2) == 0
+    end
+
+    @testset "try_begin_eval! also increments eval_id" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-id-try-begin")
+
+        result = REPLy.try_begin_eval!(session, current_task())
+        @test result == true
+        @test REPLy.session_eval_id(session) == 1
+        REPLy.end_eval!(session)
+    end
+end
