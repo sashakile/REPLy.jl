@@ -27,11 +27,19 @@ All error responses SHALL include: `id`, `status` containing `"done"` and `"erro
 - **THEN** `ex.message` is populated via `sprint(showerror, ex)` rather than raising a `FieldError`
 
 ### Requirement: Error Status Flags
-The server SHALL use distinct status flags for each error category so clients can programmatically distinguish failure modes. Canonical flags include `session-not-found`, `timeout`, `rate-limited`, `session-limit-reached`, `concurrency-limit-reached`, and `unknown-op`. (REQ-RPL-063)
+The server SHALL use distinct status flags for each error category so clients can programmatically distinguish failure modes. Canonical flags include `session-not-found`, `session-already-exists`, `timeout`, `rate-limited`, `session-limit-reached`, `concurrency-limit-reached`, `path-not-allowed`, and `unknown-op`. (REQ-RPL-063)
 
 #### Scenario: Session not found
 - **WHEN** a request references a non-existent session
 - **THEN** response has `"status":["done","error","session-not-found"]`
+
+#### Scenario: Session already exists
+- **WHEN** attempting to create or clone a session with a name alias that is already in use
+- **THEN** response has `"status":["done","error","session-already-exists"]`
+
+#### Scenario: Path not allowed
+- **WHEN** attempting to load a file from a path blocked by the server's allowlist
+- **THEN** response has `"status":["done","error","path-not-allowed"]`
 
 #### Scenario: Eval timeout
 - **WHEN** eval exceeds the time limit

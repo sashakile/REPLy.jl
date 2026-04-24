@@ -81,7 +81,7 @@ The server SHALL implement `load-file`, equivalent to reading a file and evaluat
 
 #### Scenario: Path allowlist enforced
 - **WHEN** the server has a `load_file_allowlist` and the path is outside it
-- **THEN** returns `{"status":["done","error"],"err":"Path not allowed: ..."}` without leaking file contents (REQ-RPL-013b)
+- **THEN** returns `{"status":["done","error","path-not-allowed"],"err":"Path not allowed: ..."}` without leaking file contents (REQ-RPL-013b)
 
 #### Scenario: Unreadable file returns error
 - **WHEN** the file does not exist or cannot be read
@@ -168,6 +168,10 @@ The server SHALL implement `clone` to create a new session, optionally copying s
 #### Scenario: Light to heavy clone creates new heavy session
 - **WHEN** `clone` is called with a `light` session as parent and `"type":"heavy"`
 - **THEN** a new heavy session is created (bindings are NOT copied across isolation boundaries); returns `{"new-session":"<uuid>","status":["done"]}`
+
+#### Scenario: Clone to existing session rejected
+- **WHEN** `clone` specifies a `name` that already exists
+- **THEN** returns `{"status":["done","error","session-already-exists"],"err":"Session already exists: <name>"}`
 
 #### Scenario: Clone during in-flight eval waits for eval mutex
 - **WHEN** `clone` targets a session that has an active eval
