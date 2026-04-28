@@ -51,6 +51,9 @@ You will receive a stream of JSON responses. REPLy forwards standard output, the
 {"id":"demo-1","status":["done"]}
 ```
 
+!!! note "Ephemeral by default"
+    Every `eval` request runs in a fresh, isolated session — variables do not persist between requests. For persistent state across evals (editor integration, REPL workflows), see [How-to: Manage Sessions](howto-sessions.md).
+
 ## Error Handling
 
 If a runtime error occurs during evaluation, REPLy catches it and returns a structured error response, including the stacktrace:
@@ -58,6 +61,8 @@ If a runtime error occurs during evaluation, REPLy catches it and returns a stru
 ```bash
 printf '%s\n' '{"op":"eval","id":"demo-err","code":"missing_name + 1"}' | nc 127.0.0.1 5555
 ```
+
+See [Protocol Reference](reference-protocol.md) for the full error response shape and all status flags.
 
 ## Graceful Shutdown
 
@@ -101,6 +106,10 @@ server = REPLy.serve(
     middleware=[SessionMiddleware(), EvalMiddleware(; max_repr_bytes=100_000)],
 )
 ```
+
+## Next Steps
+
+The `nc` example above is useful for exploration. For persistent editor integration — where you keep a connection open and eval code on demand — copy the ready-to-use client recipe from the [Tutorial: Building a Custom Client](tutorial-custom-client.md).
 
 ## Development and Testing
 

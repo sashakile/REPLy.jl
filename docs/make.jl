@@ -16,6 +16,9 @@ makedocs(
             "How-to: Unix Sockets" => "howto-unix-sockets.md",
             "Tutorial: Custom Client" => "tutorial-custom-client.md",
         ],
+        "Reference" => [
+            "Protocol Reference" => "reference-protocol.md",
+        ],
         "Status" => "status.md",
         "API"  => "api.md",
     ],

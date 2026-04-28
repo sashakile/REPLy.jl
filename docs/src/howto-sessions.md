@@ -2,30 +2,47 @@
 
 By default, REPLy evaluates every `eval` request in a fresh, ephemeral session. If you want to maintain state across multiple requests (e.g., for an editor integration where variables persist between executions), you must use **Named Sessions**.
 
-## 1. Create the Initial Named Session (Server-Side)
+## 1. Create a Session via RPC
 
-Currently, creating a completely new named session must be done from Julia when instantiating the server.
+Clients can create a new named session at any time using the `new-session` operation:
 
-```julia
-using REPLy
-using REPLy: SessionManager, create_named_session!
-
-# 1. Create a session manager
-manager = SessionManager()
-
-# 2. Register a persistent session named "main"
-create_named_session!(manager, "main")
-
-# 3. Start the server using this manager
-server = serve(manager=manager, port=5555)
-wait(Condition())
+```bash
+printf '%s\n' '{"op":"new-session","id":"new-1","name":"main"}' | nc 127.0.0.1 5555
 ```
 
-Once the server is running with the configured manager, you can connect over the socket to begin evaluating code in that named session.
+The server returns the session's UUID and echoes the name alias:
+
+```json
+{"id":"new-1","session":"f47ac10b-58cc-4372-a567-0e02b2c3d479","name":"main"}
+{"id":"new-1","status":["done"]}
+```
+
+The `"session"` UUID is the stable identifier — use it in subsequent requests to route evals to this session. The `"name"` alias is a human-readable shorthand that also works in eval requests.
+
+Omit `"name"` to create an anonymous session (UUID-only):
+
+```json
+{"op": "new-session", "id": "new-2"}
+```
+
+!!! note "Seeding sessions at server startup"
+    If you need well-known sessions to exist before the server accepts connections (e.g., a `"main"` session your editor always connects to), use `create_named_session!` from Julia when constructing the server:
+
+    ```julia
+    using REPLy
+    using REPLy: SessionManager, create_named_session!
+
+    manager = SessionManager()
+    create_named_session!(manager, "main")
+    server = serve(manager=manager, port=5555)
+    wait(Condition())
+    ```
+
+    This is a server-side startup helper, not the primary interface. For all runtime session management, use the RPC ops below.
 
 ## 2. Target a Session via RPC
 
-Once the session exists, clients can evaluate code in it by adding the `"session"` key to their requests:
+Once a session exists, clients evaluate code in it by adding the `"session"` key to their requests (use the name alias or the UUID interchangeably):
 
 ```json
 {"op": "eval", "id": "req-1", "session": "main", "code": "x = 42"}
@@ -48,23 +65,41 @@ printf '%s\n' '{"op":"ls-sessions","id":"ls-1"}' | nc 127.0.0.1 5555
 The response will look like:
 
 ```json
-{"id":"ls-1","sessions":[{"name":"main","created-at":1713500000.0}]}
+{"id":"ls-1","sessions":[{"session":"f47ac10b-58cc-4372-a567-0e02b2c3d479","name":"main","created":"2024-04-19T00:00:00","created-at":1713484800.0,"last-activity":"2024-04-19T00:01:00","type":"light","module":"Session_main","eval-count":3,"pid":null}]}
 {"id":"ls-1","status":["done"]}
 ```
 
+Key fields in each session entry:
+
+| Field | Type | Description |
+|---|---|---|
+| `session` | string | UUID — stable session identifier |
+| `name` | string\|null | Name alias, or `null` if anonymous |
+| `created` | string | ISO 8601 creation timestamp |
+| `created-at` | number | Unix timestamp of creation |
+| `last-activity` | string | ISO 8601 timestamp of last eval |
+| `type` | string | Session type (`"light"`) |
+| `eval-count` | number | Total evals run in this session |
+
 ## 4. Clone a Session
 
-Instead of creating new sessions from the server side, clients can clone an existing session. This creates a new anonymous module that copies all bindings from the source session, ensuring mutations in the clone do not affect the original.
+Clone an existing session to create a new one that starts with a copy of the source's bindings. Mutations in the clone do not affect the original.
 
 ```json
-{"op": "clone-session", "id": "clone-1", "source": "main", "name": "experiment"}
+{"op": "clone", "id": "clone-1", "session": "main", "name": "experiment"}
 ```
 
-If successful, the new session `"experiment"` is ready for use:
+Response:
 
 ```json
-{"id": "clone-1", "name": "experiment"}
+{"id": "clone-1", "new-session": "a1b2c3d4-...", "session": "a1b2c3d4-...", "name": "experiment"}
 {"id": "clone-1", "status": ["done"]}
+```
+
+The `"new-session"` field carries the UUID of the newly created clone. `"session"` echoes the same value for compatibility. The clone is immediately ready for `eval` requests:
+
+```json
+{"op": "eval", "id": "exp-1", "session": "experiment", "code": "x"}
 ```
 
 ## 5. Close a Session
@@ -72,7 +107,19 @@ If successful, the new session `"experiment"` is ready for use:
 When a session is no longer needed, close it to free resources:
 
 ```json
-{"op": "close-session", "id": "close-1", "name": "experiment"}
+{"op": "close", "id": "close-1", "session": "experiment"}
+```
+
+On success, the server returns a bare `done`:
+
+```json
+{"id": "close-1", "status": ["done"]}
+```
+
+If the session does not exist, you receive a `session-not-found` error:
+
+```json
+{"id": "close-1", "status": ["error", "session-not-found"], "err": "Session not found: experiment"}
 ```
 
 ## 6. Session Naming Constraints
@@ -159,6 +206,7 @@ end
 
 ## See Also
 
+- [Protocol Reference](reference-protocol.md) — full request/response contract, all status flags
 - [How-to: Use the MCP Adapter](howto-mcp-adapter.md) — MCP lifecycle tools, `mcp_call_tool`, session routing
 
 !!! note "Cleanup on shutdown"
