@@ -1,6 +1,11 @@
 # Tutorial: Building a Custom Client
 
-This tutorial demonstrates how to build a basic custom client in Julia that connects to a REPLy server. REPLy's wire format is simple: requests are JSON objects, and responses are streams of JSON objects terminated by a `status: ["done"]` flag.
+This tutorial gives you a copy-paste client recipe in Julia. REPLy has no published client package — the intended workflow is to copy this file into your project and adapt it as needed.
+
+!!! tip "Getting started fast"
+    Jump to [The Client Code](#the-client-code) and copy `client.jl` into your project. The rest of the tutorial explains how it works.
+
+For the full request/response contract, see the [Protocol Reference](reference-protocol.md).
 
 ## Prerequisites
 
@@ -21,7 +26,7 @@ using JSON3
 function evaluate_code(host::IPAddr, port::Int, code::String)
     # 1. Connect to the REPLy server
     conn = connect(host, port)
-    
+
     # 2. Formulate the request
     request_id = "req-$(time_ns())"
     request = Dict(
@@ -29,12 +34,12 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
         "id" => request_id,
         "code" => code
     )
-    
+
     # 3. Send the request (must be newline-delimited)
     JSON3.write(conn, request)
     write(conn, '\n')
     flush(conn)
-    
+
     # 4. Read the streaming response
     println("Evaluating: $code\n---")
     while isopen(conn)
@@ -43,12 +48,12 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
             eof(conn) && break
             continue
         end
-        
+
         response = JSON3.read(line)
-        
+
         # Verify this response belongs to our request
         get(response, "id", "") == request_id || continue
-        
+
         # Handle different response fields
         if haskey(response, "out")
             print(response["out"])
@@ -57,7 +62,7 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
         elseif haskey(response, "value")
             println("Result: ", response["value"])
         end
-        
+
         # Check for the terminal "done" flag
         # (Note: `status` is parsed as a JSON3 array, which we can search with `in`)
         status = get(response, "status", String[])
@@ -68,7 +73,7 @@ function evaluate_code(host::IPAddr, port::Int, code::String)
             break
         end
     end
-    
+
     # 5. Cleanup
     close(conn)
 end
@@ -97,4 +102,9 @@ Result: 2
 
 Since REPLy servers can handle concurrent clients, you could start multiple asynchronous tasks running `evaluate_code` against the same server.
 
-For advanced editors, a persistent client connection is usually maintained. You would keep the `conn` open and dispatch incoming `id`s to awaiting tasks. Look at REPLy's `mcp_adapter.jl` (specifically `collect_reply_stream`) for an example of handling asynchronous request IDs over a single socket!
+For advanced editors, a persistent client connection is usually maintained. You would keep the `conn` open and dispatch incoming `id`s to awaiting tasks. Look at REPLy's `mcp_adapter.jl` (specifically `collect_reply_stream`) for an example of handling asynchronous request IDs over a single socket.
+
+## See Also
+
+- [Protocol Reference](reference-protocol.md) — full request/response contract with error examples
+- [How-to: Manage Sessions](howto-sessions.md) — create named sessions for persistent state
