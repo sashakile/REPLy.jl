@@ -140,4 +140,3 @@ Total: 50 issues (50 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
 ```
-
