@@ -239,19 +239,6 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     allow_stdin   = get(request, "allow-stdin", true) !== false
     store_history = get(request, "store-history", true) !== false
 
-    # Concurrent eval limit enforcement
-    state = ctx.server_state
-    if !isnothing(state)
-        limit = state.limits.max_concurrent_evals
-        current = Threads.atomic_add!(state.active_evals, 1)
-        if current >= limit
-            Threads.atomic_sub!(state.active_evals, 1)
-            return [error_response(request_id, "Too many concurrent evals";
-                        status_flags=String["error", "concurrency-limit-reached"])]
-        end
-        register_active_eval!(state, current_task())
-    end
-
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
     # before we reach this point.  This guard exists as a safety net for callers
     # that bypass the middleware stack (e.g., direct eval_responses calls in tests
@@ -259,17 +246,32 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
     session = something(ephemeral, ctx.session)
 
-    # module routing: resolve dotted path when the "module" field is present.
+    # module routing: resolved before concurrency registration so that an invalid
+    # module path returns early without ever touching active_evals or active_eval_tasks.
     eval_module = session_module(session)
     module_path = get(request, "module", nothing)
     if module_path isa AbstractString
         resolved = resolve_module(module_path)
         if isnothing(resolved)
             !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
-            !isnothing(ctx.server_state) && Threads.atomic_sub!(ctx.server_state.active_evals, 1)
             return [error_response(request_id, "Cannot resolve module: $(module_path)")]
         end
         eval_module = resolved
+    end
+
+    # Concurrent eval limit enforcement — after module resolution so a bad module path
+    # never increments active_evals or registers the task.
+    state = ctx.server_state
+    if !isnothing(state)
+        limit = state.limits.max_concurrent_evals
+        current = Threads.atomic_add!(state.active_evals, 1)
+        if current >= limit
+            Threads.atomic_sub!(state.active_evals, 1)
+            !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+            return [error_response(request_id, "Too many concurrent evals";
+                        status_flags=String["error", "concurrency-limit-reached"])]
+        end
+        register_active_eval!(state, current_task())
     end
 
     # Timeout state: timed_out is set by the timer before firing InterruptException.

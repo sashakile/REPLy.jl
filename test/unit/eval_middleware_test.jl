@@ -473,4 +473,28 @@ end
         @test "error" in msgs[1]["status"]
         @test occursin("Cannot resolve module", msgs[1]["err"])
     end
+
+    @testset "invalid module path leaves active_eval_tasks clean (tox)" begin
+        # Regression: early-return on bad module decremented active_evals but
+        # skipped unregister_active_eval!, leaving a stale task in the dict.
+        limits  = REPLy.ResourceLimits()
+        manager = REPLy.SessionManager()
+        state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        ctx     = REPLy.RequestContext(manager, Dict{String, Any}[],
+                      REPLy.create_ephemeral_session!(manager), state)
+        request = Dict("op" => "eval", "id" => "tox-1", "code" => "1+1", "module" => "Main")
+
+        msgs = REPLy.handle_message(
+            REPLy.EvalMiddleware(),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        @test "error" in msgs[1]["status"]
+        @test occursin("Cannot resolve module", msgs[1]["err"])
+        # After rejection, both counters must be back to zero.
+        @test state.active_evals[] == 0
+        @test isempty(REPLy.active_eval_tasks(state))
+    end
 end
