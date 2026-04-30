@@ -77,9 +77,11 @@ Create and register a persistent named session. The session is keyed by its
 UUID in `named_sessions` and will appear in `list_named_sessions` output.
 If `name` is non-empty it is also registered in `name_to_uuid` as an alias.
 
-If a session with the same `name` alias already exists, the old alias mapping
-is removed before registering the new one — the old session remains accessible
-by its UUID until explicitly destroyed.
+Throws `ArgumentError` if `name` is non-empty and an alias with that name
+already exists — callers must destroy the existing session first (via
+`destroy_named_session!`) before registering a new one under the same alias.
+This prevents detached session objects: a caller holding a reference to the
+old session would otherwise still be able to mutate it after replacement.
 
 If a session with the same `id` already exists it is silently replaced.
 
@@ -89,19 +91,11 @@ An explicit `id` may be supplied (for testing); otherwise a fresh UUID is genera
 function create_named_session!(manager::SessionManager, name::AbstractString; id::Union{Nothing,AbstractString}=nothing)
     lock(manager.lock) do
         uuid = isnothing(id) ? string(uuid4()) : String(id)
-        session = NamedSession(uuid, String(name), Module(gensym(:REPLyNamedSession)))
-        # Remove the old session if a different session held this name alias.
-        old_uuid = get(manager.name_to_uuid, String(name), nothing)
-        if !isnothing(old_uuid) && old_uuid != uuid
-            old_session = get(manager.named_sessions, old_uuid, nothing)
-            if !isnothing(old_session)
-                lock(old_session.lock) do
-                    old_session.state = SessionClosed
-                end
-            end
-            delete!(manager.named_sessions, old_uuid)
-            delete!(manager.name_to_uuid, String(name))
+        # Reject duplicate alias — callers must destroy the existing session first.
+        if !isempty(name) && haskey(manager.name_to_uuid, String(name))
+            throw(ArgumentError("session already exists: $(name)"))
         end
+        session = NamedSession(uuid, String(name), Module(gensym(:REPLyNamedSession)))
         manager.named_sessions[uuid] = session
         if !isempty(name)
             manager.name_to_uuid[String(name)] = uuid

@@ -80,18 +80,15 @@
         @test REPLy.session_name(only(named)) == "persistent"
     end
 
-    @testset "create_named_session! replaces existing session with same name" begin
+    @testset "create_named_session! rejects duplicate alias" begin
         manager = REPLy.SessionManager()
         old = REPLy.create_named_session!(manager, "dup")
-        old_mod = REPLy.session_module(old)
-        Core.eval(old_mod, :(marker = :old))
 
-        replacement = REPLy.create_named_session!(manager, "dup")
-        @test replacement !== old
-        @test REPLy.session_module(replacement) !== old_mod
+        @test_throws ArgumentError REPLy.create_named_session!(manager, "dup")
 
+        # Original session is still registered and unmodified.
         found = REPLy.lookup_named_session(manager, "dup")
-        @test found === replacement
+        @test found === old
         @test length(REPLy.list_named_sessions(manager)) == 1
     end
 

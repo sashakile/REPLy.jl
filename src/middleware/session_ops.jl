@@ -104,7 +104,13 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
     end
 
     alias = isnothing(name) ? "" : String(name)
-    session = create_named_session!(ctx.manager, alias)
+    local session
+    try
+        session = create_named_session!(ctx.manager, alias)
+    catch e
+        e isa ArgumentError || rethrow()
+        return [error_response(request_id, "new-session: $(e.msg)")]
+    end
 
     return [
         response_message(request_id,
