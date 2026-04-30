@@ -101,6 +101,36 @@
         @test occursin("42", value_msg["value"])
     end
 
+    @testset "TCPServerHandle/UnixServerHandle have a clients_lock field (qr9)" begin
+        server = REPLy.serve(; port=0)
+        try
+            @test hasproperty(server, :clients_lock)
+            @test server.clients_lock isa ReentrantLock
+        finally
+            close(server)
+        end
+    end
+
+    @testset "clients and client_tasks are empty after N concurrent disconnects (qr9)" begin
+        server = REPLy.serve(; port=0)
+        port = REPLy.server_port(server)
+        try
+            N = 5
+            sockets = [connect(ip"127.0.0.1", port) for _ in 1:N]
+            sleep(0.1)
+            @test length(server.clients) == N
+            @test length(server.client_tasks) == N
+
+            for s in sockets; close(s); end
+            sleep(0.2)
+
+            @test isempty(server.clients)
+            @test isempty(server.client_tasks)
+        finally
+            close(server)
+        end
+    end
+
     @testset "multiple rapid disconnects do not leak sessions" begin
         manager = REPLy.SessionManager()
         handler = REPLy.build_handler(; manager=manager)
