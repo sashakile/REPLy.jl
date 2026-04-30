@@ -97,16 +97,24 @@ Oversized messages produce a `MessageTooLargeError` internally; clients receive 
 
 Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `REPLy.EvalMiddleware` to `serve`:
 
-```julia
-using REPLy
+!!! warning "Passing `middleware=` replaces the full stack"
+    The `middleware` keyword replaces the *entire* default stack, which includes session,
+    session-ops, describe, interrupt, stdin, eval, and unknown-op handlers. Passing only
+    `[SessionMiddleware(), EvalMiddleware()]` silently drops all other handlers.
 
-server = REPLy.serve(
-    port=5555,
-    middleware=[REPLy.SessionMiddleware(), REPLy.EvalMiddleware(; max_repr_bytes=100_000)],
-)
-```
+    To customise a single element, build from the default stack and swap the target entry:
 
-`REPLy.SessionMiddleware` and `REPLy.EvalMiddleware` are lower-level middleware types rather than part of the minimal exported API surface.
+    ```julia
+    using REPLy
+
+    stack = REPLy.default_middleware_stack()
+    idx = findfirst(m -> m isa REPLy.EvalMiddleware, stack)
+    stack[idx] = REPLy.EvalMiddleware(; max_repr_bytes=100_000)
+    server = REPLy.serve(port=5555, middleware=stack)
+    ```
+
+`REPLy.default_middleware_stack`, `REPLy.SessionMiddleware`, and `REPLy.EvalMiddleware` are
+lower-level embedding APIs rather than part of the minimal exported API surface.
 
 ## Next Steps
 

@@ -17,7 +17,12 @@ julia --project=. -e 'using REPLy; REPLy.serve(port=5555); wait(Condition())'
 
 ## The Client Code
 
-Create a new script `client.jl`. We will use Julia's `Sockets` and `JSON3` standard libraries.
+Create a new script `client.jl`. We will use Julia's `Sockets` standard library and the
+[`JSON3`](https://github.com/quinnj/JSON3.jl) package. If you haven't installed it yet:
+
+```julia
+using Pkg; Pkg.add("JSON3")
+```
 
 ```julia
 using Sockets

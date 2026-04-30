@@ -80,17 +80,29 @@ default_session = mcp_ensure_default_session!(manager)  # "mcp-default"
 request = mcp_eval_request("req-1", Dict("code" => "1 + 1"); default_session=default_session)
 ```
 
-Then send the request over the transport and collect the response stream:
+Then create a transport, send the request, and collect the response stream:
 
 ```julia
+using Sockets
 using REPLy: collect_reply_stream, reply_stream_to_mcp_result
 
-# transport is a connected AbstractTransport (e.g., JSONTransport)
+# Connect to the running REPLy server and wrap in a JSONTransport
+conn = connect(ip"127.0.0.1", 5555)
+transport = JSONTransport(conn, ReentrantLock())
+
 send(transport, request)  # send the request first
 msgs = collect_reply_stream(transport, "req-1")
 result = reply_stream_to_mcp_result(msgs)
 # result["isError"] == false
 # result["content"] holds out/value/err blocks
+close(transport)
+```
+
+For Unix domain socket servers (started with `socket_path=`), replace the `connect` call:
+
+```julia
+conn = connect(socket_path)
+transport = JSONTransport(conn, ReentrantLock())
 ```
 
 ### Session routing
@@ -170,6 +182,59 @@ session_name = mcp_ensure_default_session!(manager; name="my-default")
 | `MCP_EPHEMERAL_SESSION` | `"ephemeral"` | Session sentinel for one-shot (stateless) evaluation |
 | `DEFAULT_COLLECT_TIMEOUT_SECONDS` | `30.0` | Default timeout for `collect_reply_stream` |
 | `DEFAULT_CLOSE_GRACE_SECONDS` | `5.0` | Grace window (s) for `Base.close(server)` |
+
+## End-to-End Example
+
+!!! note "Architectural constraint: eval requires a live transport"
+    `julia_eval` cannot be routed through `mcp_call_tool` because it needs to stream results
+    over a live transport connection. All other tools (`julia_new_session`, `julia_list_sessions`,
+    `julia_close_session`) go through `mcp_call_tool` directly.
+
+A minimal MCP dispatch loop:
+
+```julia
+using Sockets
+using REPLy: mcp_initialize_result, mcp_tools, mcp_call_tool
+using REPLy: mcp_ensure_default_session!, mcp_eval_request
+using REPLy: collect_reply_stream, reply_stream_to_mcp_result
+using REPLy
+
+manager = REPLy.SessionManager()
+default_session = mcp_ensure_default_session!(manager)
+
+# Step 1: MCP initialize handshake
+init_result = mcp_initialize_result()
+
+# Step 2: Advertise tools
+tools = mcp_tools()
+
+# Step 3: Dispatch incoming tool calls
+function dispatch(tool_name::String, arguments::Dict)
+    if tool_name == "julia_eval"
+        # eval requires a live transport — open a fresh connection per call
+        conn = connect(ip"127.0.0.1", 5555)
+        transport = JSONTransport(conn, ReentrantLock())
+        request = mcp_eval_request("req-$(time_ns())", arguments; default_session)
+        try
+            send(transport, request)
+            msgs = collect_reply_stream(transport, request["id"])
+            return reply_stream_to_mcp_result(msgs)
+        finally
+            close(transport)
+        end
+    else
+        # All other lifecycle tools go through mcp_call_tool
+        return mcp_call_tool(tool_name, arguments, manager)
+    end
+end
+
+# Example dispatch
+result = dispatch("julia_eval", Dict("code" => "1 + 1"))
+# result["content"][1]["text"] == "2"
+
+result = dispatch("julia_new_session", Dict())
+# result["content"][1]["text"] == "Session: mcp-<uuid>"
+```
 
 ## See Also
 
