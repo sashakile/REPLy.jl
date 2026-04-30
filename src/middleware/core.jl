@@ -132,7 +132,7 @@ function finalize_responses(ctx::RequestContext, result, request_id::AbstractStr
 end
 
 function default_middleware_stack()
-    return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), InterruptMiddleware(), StdinMiddleware(), EvalMiddleware(), UnknownOpMiddleware()]
+    return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), InterruptMiddleware(), StdinMiddleware(), EvalMiddleware(), LoadFileMiddleware(), CompleteMiddleware(), LookupMiddleware(), UnknownOpMiddleware()]
 end
 
 function materialize_middleware_stack(middleware::Vector{<:AbstractMiddleware})

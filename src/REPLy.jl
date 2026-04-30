@@ -24,6 +24,7 @@ export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits
 export AuditLog, AuditLogEntry, audit_entries, record_audit!
 export MiddlewareDescriptor, descriptor, validate_stack
+export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,

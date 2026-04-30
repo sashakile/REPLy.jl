@@ -22,17 +22,13 @@
         responses = handler(Dict("op" => "describe", "id" => "d2"))
         ops = only(responses)["ops"]
 
-        # Default stack provides these ops (not load-file, complete, lookup — those are optional)
+        # Default stack provides all built-in ops
         default_ops = ["eval", "interrupt", "stdin", "describe",
-                       "ls-sessions", "close-session", "clone-session"]
+                       "ls-sessions", "close-session", "clone-session",
+                       "load-file", "complete", "lookup"]
         for op in default_ops
             @test haskey(ops, op)
         end
-
-        # Optional middleware not in default stack should NOT appear
-        @test !haskey(ops, "load-file")
-        @test !haskey(ops, "complete")
-        @test !haskey(ops, "lookup")
     end
 
     @testset "each op in default stack has doc, requires, optional, and returns" begin

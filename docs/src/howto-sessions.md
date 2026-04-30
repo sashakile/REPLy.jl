@@ -118,7 +118,7 @@ On success, the server returns a bare `done`:
 If the session does not exist, you receive a `session-not-found` error:
 
 ```json
-{"id": "close-1", "status": ["error", "session-not-found"], "err": "Session not found: experiment"}
+{"id": "close-1", "status": ["done", "error", "session-not-found"], "err": "Session not found: experiment"}
 ```
 
 ## 6. Session Naming Constraints
@@ -136,7 +136,7 @@ Names that violate these rules are rejected with a structured error response bef
 ```
 
 ```json
-{"id": "req", "status": ["error"], "err": "session name may only contain letters, digits, hyphens, and underscores"}
+{"id": "req", "status": ["done", "error"], "err": "session name may only contain letters, digits, hyphens, and underscores"}
 ```
 
 You can validate a name from Julia before sending:

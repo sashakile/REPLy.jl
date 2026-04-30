@@ -52,7 +52,7 @@ manager = REPLy.SessionManager()
 # Create a new session
 result = mcp_call_tool("julia_new_session", Dict(), manager)
 # result["isError"] == false
-# result["content"][1]["text"] == "Session: mcp-<uuid>"
+# result["content"][1]["text"] == "Session: <uuid>"  # bare UUID4, no "mcp-" prefix
 
 # List sessions
 result = mcp_call_tool("julia_list_sessions", Dict(), manager)
@@ -74,7 +74,7 @@ using REPLy: mcp_eval_request, mcp_ensure_default_session!
 using REPLy
 
 manager = REPLy.SessionManager()
-default_session = mcp_ensure_default_session!(manager)  # "mcp-default"
+default_session = mcp_ensure_default_session!(manager)  # returns UUID of the session, not the name
 
 # Build the request (validates required fields, rejects unsupported options)
 request = mcp_eval_request("req-1", Dict("code" => "1 + 1"); default_session=default_session)
@@ -153,7 +153,8 @@ manager = REPLy.SessionManager()
 
 # Create
 result = mcp_new_session_result(manager)
-session_name = match(r"Session: (mcp-\S+)", result["content"][1]["text"]).captures[1]
+uuid = match(r"Session: (\S+)", result["content"][1]["text"]).captures[1]
+# uuid is a bare UUID4 string (e.g. "f47ac10b-58cc-4372-a567-0e02b2c3d479")
 
 # List
 result = mcp_list_sessions_result(manager)
@@ -169,8 +170,8 @@ The default session can be lazily created with `mcp_ensure_default_session!`, wh
 using REPLy: mcp_ensure_default_session!
 
 # Idempotent — safe to call multiple times
-session_name = mcp_ensure_default_session!(manager)  # "mcp-default"
-session_name = mcp_ensure_default_session!(manager; name="my-default")
+session_uuid = mcp_ensure_default_session!(manager)  # returns UUID (e.g. "f47ac10b-...")
+session_uuid = mcp_ensure_default_session!(manager; name="my-default")
 ```
 
 ## Constants Reference
@@ -233,7 +234,7 @@ result = dispatch("julia_eval", Dict("code" => "1 + 1"))
 # result["content"][1]["text"] == "2"
 
 result = dispatch("julia_new_session", Dict())
-# result["content"][1]["text"] == "Session: mcp-<uuid>"
+# result["content"][1]["text"] == "Session: <uuid>"  # bare UUID4, no "mcp-" prefix
 ```
 
 ## See Also
