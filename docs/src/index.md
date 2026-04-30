@@ -77,6 +77,23 @@ server = REPLy.serve(port=5555)
 Base.close(server; grace_seconds=10.0)
 ```
 
+## Security Model
+
+REPLy is a **local developer tool** — it carries no built-in authentication. Any client that can reach the server can execute arbitrary Julia code in your process.
+
+**Default TCP binding** (`host=ip"127.0.0.1"`) listens only on the loopback interface, so only processes on the same machine can connect. If you override `host` to a non-loopback address, REPLy will log a startup warning.
+
+For multi-user machines or any situation where you want OS-level access control, use a Unix domain socket instead of TCP:
+
+```julia
+server = REPLy.serve(socket_path="/tmp/reply-$(getpid()).sock")
+```
+
+Unix sockets are created with `chmod 600` (owner read/write only), so only your own processes can connect.
+
+!!! warning "No authentication over TCP"
+    Do not expose a REPLy TCP server on a network-facing interface without an external access-control layer (firewall rule, VPN, SSH tunnel). There is no password, token, or TLS support in v1.x.
+
 ## Resource Limits
 
 REPLy enforces two configurable safety limits that protect against runaway clients or evaluations.

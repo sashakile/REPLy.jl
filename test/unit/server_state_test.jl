@@ -52,3 +52,13 @@
         end
     end
 end
+
+@testset "non-loopback TCP host emits startup security warning" begin
+    server = @test_logs (:warn, r"non-loopback") REPLy.serve(; host=ip"0.0.0.0", port=0)
+    close(server)
+end
+
+@testset "loopback TCP host emits no security warning" begin
+    server = @test_logs min_level=Logging.Warn REPLy.serve(; host=ip"127.0.0.1", port=0)
+    close(server)
+end

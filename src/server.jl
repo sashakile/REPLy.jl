@@ -1,6 +1,21 @@
 server_port(server::TCPServerHandle) = server.port
 server_socket_path(server::UnixServerHandle) = server.path
 
+# 127.0.0.0/8 (RFC 5735) and ::1 (RFC 4291) are loopback-only.
+_is_loopback(host::Sockets.IPv4) = (host.host >>> 24) == 127
+_is_loopback(host::Sockets.IPv6) = host == ip"::1"
+_is_loopback(::Any) = false
+
+function _warn_if_non_loopback(host, port)
+    _is_loopback(host) && return nothing
+    @warn "REPLy TCP server bound to non-loopback address $host:$port — " *
+          "no authentication is required to connect. " *
+          "Any client that can reach this address can execute arbitrary Julia code in this process. " *
+          "Restrict access at the network level (firewall, VPN) or use " *
+          "serve(; socket_path=...) for a Unix domain socket with owner-only access."
+    return nothing
+end
+
 function wait_for_server_task(task::Task)
     istaskstarted(task) || return nothing
     try
@@ -60,6 +75,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
 
     listener = listen(host, Int(port))
     assigned_port = Int(getsockname(listener)[2])
+    _warn_if_non_loopback(host, assigned_port)
     server = TCPServerHandle(
         listener,
         assigned_port,
@@ -185,6 +201,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
             p = hasproperty(spec, :port) ? spec.port : 0
             listener = listen(h, Int(p))
             assigned_port = Int(getsockname(listener)[2])
+            _warn_if_non_loopback(h, assigned_port)
             handle = TCPServerHandle(listener, assigned_port, Task(() -> nothing), Task[], IO[], ReentrantLock(), handler, stack, closing, state)
             handle.accept_task = @async accept_loop!(listener, handle)
             push!(listeners, handle)
