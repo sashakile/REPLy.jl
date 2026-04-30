@@ -481,6 +481,18 @@ end
         terminal = filter(m -> haskey(m, "status"), msgs)[end]
         @test "error" in terminal["status"]
     end
+
+    @testset "new-session rejects duplicate alias" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+        handler(Dict("op" => "new-session", "id" => "dup-1", "name" => "taken"))
+
+        msgs = handler(Dict("op" => "new-session", "id" => "dup-2", "name" => "taken"))
+        assert_conformance(msgs, "dup-2")
+        terminal = filter(m -> haskey(m, "status"), msgs)[end]
+        @test "error" in terminal["status"]
+        @test length(REPLy.list_named_sessions(manager)) == 1
+    end
 end
 
 @testset "canonical op names: 'close' and 'clone' (OpenSpec protocol names)" begin
