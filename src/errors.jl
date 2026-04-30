@@ -74,3 +74,20 @@ function session_not_found_response(request_id::AbstractString, session_id::Abst
         status_flags=String["error", "session-not-found"],
     )
 end
+
+"""
+    SessionLimitReachedError()
+
+Thrown by `clone_named_session!` when the session limit is reached inside a lock,
+so callers can distinguish a limit hit from a missing source session without
+changing the function's return type.
+"""
+struct SessionLimitReachedError <: Exception end
+
+function session_limit_response(request_id::AbstractString)
+    return error_response(
+        request_id,
+        "Session limit reached";
+        status_flags=String["error", "session-limit-reached"],
+    )
+end
