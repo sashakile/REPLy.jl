@@ -26,19 +26,18 @@ Omit `"name"` to create an anonymous session (UUID-only):
 ```
 
 !!! note "Seeding sessions at server startup"
-    If you need well-known sessions to exist before the server accepts connections (e.g., a `"main"` session your editor always connects to), use `create_named_session!` from Julia when constructing the server:
+    If you need well-known sessions to exist before the server accepts connections (e.g., a `"main"` session your editor always connects to), you can use REPLy's lower-level embedding API when constructing the server:
 
     ```julia
     using REPLy
-    using REPLy: SessionManager, create_named_session!
 
-    manager = SessionManager()
-    create_named_session!(manager, "main")
+    manager = REPLy.SessionManager()
+    REPLy.create_named_session!(manager, "main")
     server = serve(manager=manager, port=5555)
     wait(Condition())
     ```
 
-    This is a server-side startup helper, not the primary interface. For all runtime session management, use the RPC ops below.
+    `REPLy.SessionManager` and `REPLy.create_named_session!` are not part of the minimal exported surface; prefer the RPC ops below for normal client-facing session management.
 
 ## 2. Target a Session via RPC
 
@@ -165,11 +164,12 @@ Named sessions expose a lifecycle state machine with three states:
 You can read state from Julia using the thread-safe accessors:
 
 ```julia
-using REPLy: create_named_session!, SessionManager, session_state, session_eval_task, session_last_active_at
+using REPLy: session_state, session_eval_task, session_last_active_at
 using REPLy: SessionIdle, SessionRunning, SessionClosed
+using REPLy
 
-manager = SessionManager()
-session = create_named_session!(manager, "main")
+manager = REPLy.SessionManager()
+session = REPLy.create_named_session!(manager, "main")
 
 session_state(session)           # SessionIdle
 session_eval_task(session)       # nothing (idle)
@@ -181,10 +181,11 @@ session_last_active_at(session)  # Unix timestamp of most recent activity
 In long-running servers, sessions that haven't been used recently can be automatically cleaned up using `sweep_idle_sessions!`:
 
 ```julia
-using REPLy: SessionManager, create_named_session!, sweep_idle_sessions!
+using REPLy: sweep_idle_sessions!
+using REPLy
 
-manager = SessionManager()
-create_named_session!(manager, "old-session")
+manager = REPLy.SessionManager()
+REPLy.create_named_session!(manager, "old-session")
 
 sleep(120)  # simulate inactivity
 

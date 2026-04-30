@@ -44,9 +44,10 @@ tools = mcp_tools()
 Use `mcp_call_tool` to route `tools/call` requests to the appropriate handler:
 
 ```julia
-using REPLy: mcp_call_tool, SessionManager
+using REPLy: mcp_call_tool
+using REPLy
 
-manager = SessionManager()
+manager = REPLy.SessionManager()
 
 # Create a new session
 result = mcp_call_tool("julia_new_session", Dict(), manager)
@@ -60,6 +61,8 @@ result = mcp_call_tool("julia_list_sessions", Dict(), manager)
 result = mcp_call_tool("julia_close_session", Dict("session" => "my-session"), manager)
 ```
 
+`REPLy.SessionManager` is the lower-level server embedding API used by the adapter helpers.
+
 `julia_eval` cannot be dispatched via `mcp_call_tool` because it requires a live transport to stream results. Use `mcp_eval_request` + `collect_reply_stream` instead (see below).
 
 ## Evaluating Code
@@ -67,9 +70,10 @@ result = mcp_call_tool("julia_close_session", Dict("session" => "my-session"), m
 Build a REPLy eval request from MCP arguments:
 
 ```julia
-using REPLy: mcp_eval_request, mcp_ensure_default_session!, SessionManager
+using REPLy: mcp_eval_request, mcp_ensure_default_session!
+using REPLy
 
-manager = SessionManager()
+manager = REPLy.SessionManager()
 default_session = mcp_ensure_default_session!(manager)  # "mcp-default"
 
 # Build the request (validates required fields, rejects unsupported options)
@@ -127,12 +131,13 @@ result = reply_stream_to_mcp_result(msgs)
 
 ## Session Management via MCP
 
-The lifecycle helpers operate directly on a `SessionManager`:
+The lifecycle helpers operate directly on a `REPLy.SessionManager`:
 
 ```julia
-using REPLy: mcp_new_session_result, mcp_list_sessions_result, mcp_close_session_result, SessionManager
+using REPLy: mcp_new_session_result, mcp_list_sessions_result, mcp_close_session_result
+using REPLy
 
-manager = SessionManager()
+manager = REPLy.SessionManager()
 
 # Create
 result = mcp_new_session_result(manager)
