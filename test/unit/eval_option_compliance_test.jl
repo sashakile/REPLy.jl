@@ -14,16 +14,24 @@
     # ── module routing ────────────────────────────────────────────────────────
 
     @testset "module field routes eval into specified submodule" begin
-        # Use Base.Iterators which is a real submodule of Main (via Base).
-        # This tests dotted-path resolution without global side effects.
+        # Create a user module under Main with a nested submodule, then route eval
+        # into the submodule.  This tests dotted-path resolution without touching
+        # any protected root (Main, Base, Core).
         manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "module-routing-test")
+        mod = REPLy.session_module(session)
+
+        # Define a module hierarchy inside the session's anonymous module, then
+        # expose it to Main under an unprotected name so resolve_module can walk it.
+        Core.eval(Main, :(module RouteTestHost; module Inner; is_inner() = true; end; end))
+
         ctx = make_ctx(manager)
 
         msgs = REPLy.dispatch_middleware(
             REPLy.AbstractMiddleware[REPLy.EvalMiddleware(), REPLy.UnknownOpMiddleware()],
             1,
             Dict("op" => "eval", "id" => "m1",
-                 "module" => "Base.Iterators", "code" => "zip isa Function"),
+                 "module" => "RouteTestHost.Inner", "code" => "is_inner()"),
             ctx)
 
         value_msg = only(filter(m -> haskey(m, "value"), msgs))

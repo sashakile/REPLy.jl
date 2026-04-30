@@ -112,6 +112,14 @@ function accept_loop!(listener, handle)
             rethrow()
         end
 
+        # Enforce connection limit: accept then immediately close if at capacity.
+        # Accepting before closing clears the OS backlog entry; closing before
+        # spawning a task keeps our own accounting accurate.
+        if length(handle.clients) >= handle.state.limits.max_connections
+            close(socket)
+            continue
+        end
+
         push!(handle.clients, socket)
         task = @async begin
             try

@@ -54,18 +54,41 @@ end
 
 function _resolve_lookup_module(module_name, ctx::RequestContext)
     if !isnothing(module_name)
-        try
-            return Core.eval(Main, Meta.parse(module_name))
-        catch
-            return Main
-        end
+        mod = _traverse_module_path(module_name)
+        return something(mod, session_module(ctx.session))
     end
     return session_module(ctx.session)
 end
 
+# Walk a dotted module path (e.g. "Base.Math") using getfield only — no eval.
+# Returns nothing if any segment is missing, not a module, or not a valid identifier.
+function _traverse_module_path(path::AbstractString)::Union{Module, Nothing}
+    parts = split(path, '.')
+    isempty(parts) && return nothing
+    all(p -> Base.isidentifier(String(p)), parts) || return nothing
+    sym = Symbol(parts[1])
+    isdefined(Main, sym) || return nothing
+    mod = getfield(Main, sym)
+    mod isa Module || return nothing
+    for part in parts[2:end]
+        s = Symbol(part)
+        isdefined(mod, s) || return nothing
+        child = getfield(mod, s)
+        child isa Module || return nothing
+        mod = child
+    end
+    return mod
+end
+
 function _lookup_symbol(symbol_str::AbstractString, module_::Module)
+    # Reject non-identifier strings to prevent expression injection.
+    if !Base.isidentifier(symbol_str)
+        return Dict{String, Any}("found" => false)
+    end
+    sym = Symbol(symbol_str)
     value = try
-        Core.eval(module_, Meta.parse(symbol_str))
+        isdefined(module_, sym) || return Dict{String, Any}("found" => false)
+        getfield(module_, sym)
     catch
         return Dict{String, Any}("found" => false)
     end

@@ -52,6 +52,22 @@
             @test !isnothing(REPLy.receive(transport; max_message_bytes=ncodeunits(chomp(line))))
         end
 
+        @testset "read_bounded_line returns correct string up to newline" begin
+            io = IOBuffer("hello\nworld\n")
+            @test REPLy.read_bounded_line(io, 100) == "hello"
+            @test REPLy.read_bounded_line(io, 100) == "world"
+        end
+
+        @testset "read_bounded_line throws MessageTooLargeError before reading full line" begin
+            io = IOBuffer(repeat("x", 200) * "\n")
+            @test_throws REPLy.MessageTooLargeError REPLy.read_bounded_line(io, 50)
+        end
+
+        @testset "read_bounded_line returns empty string for blank line" begin
+            io = IOBuffer("\nhello\n")
+            @test REPLy.read_bounded_line(io, 100) == ""
+        end
+
         @testset "handle_client! sends error and disconnects on oversized message" begin
             listener = listen(ip"127.0.0.1", 0)
             port = Int(getsockname(listener)[2])

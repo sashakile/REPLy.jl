@@ -121,6 +121,11 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
     end
 end
 
+# Root module names that may not be targeted via the "module" field in eval requests.
+# Routing eval into Main, Base, or Core bypasses session isolation — code executed there
+# affects all sessions and the full Julia process.
+const PROTECTED_ROOT_MODULES = Set{String}(["Main", "Base", "Core"])
+
 """
     resolve_module(module_path) -> Module or nothing
 
@@ -134,6 +139,8 @@ named session's anonymous module cannot be addressed via this function.
 function resolve_module(module_path::AbstractString)
     parts = split(module_path, '.')
     isempty(parts) && return nothing
+    # Block eval routing into protected root modules.
+    String(parts[1]) in PROTECTED_ROOT_MODULES && return nothing
     sym = Symbol(parts[1])
     isdefined(Main, sym) || return nothing
     mod = getfield(Main, sym)

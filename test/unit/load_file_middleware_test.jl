@@ -9,7 +9,8 @@
         file = tempname() * ".jl"
         try
             write(file, "x = 42\nx * 2")
-            stack = REPLy.AbstractMiddleware[REPLy.LoadFileMiddleware(), REPLy.UnknownOpMiddleware()]
+            mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true)
+            stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
             msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf1", "file" => file), ctx)
 
             assert_conformance(msgs, "lf1")
@@ -26,7 +27,8 @@
         file = tempname() * ".jl"
         try
             write(file, "println(\"hello from file\")")
-            stack = REPLy.AbstractMiddleware[REPLy.LoadFileMiddleware(), REPLy.UnknownOpMiddleware()]
+            mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true)
+            stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
             msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf2", "file" => file), ctx)
 
             assert_conformance(msgs, "lf2")
@@ -40,7 +42,8 @@
 
     @testset "unreadable file returns error response" begin
         ctx = make_ctx()
-        stack = REPLy.AbstractMiddleware[REPLy.LoadFileMiddleware(), REPLy.UnknownOpMiddleware()]
+        mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true)
+        stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
         msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf3", "file" => "/nonexistent/path/file.jl"), ctx)
 
         @test length(msgs) == 1
@@ -102,12 +105,25 @@
         @test "unknown-op" in only(msgs)["status"]
     end
 
+    @testset "LoadFileMiddleware() with no allowlist denies all file loads by default" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        stack = REPLy.AbstractMiddleware[REPLy.LoadFileMiddleware(), REPLy.UnknownOpMiddleware()]
+        # The file doesn't need to exist — denial should happen before any I/O
+        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf-deny", "file" => "/etc/passwd"), ctx)
+        @test length(msgs) == 1
+        @test "error" in only(msgs)["status"]
+        @test "path-not-allowed" in only(msgs)["status"]
+        @test occursin("requires an explicit allowlist", only(msgs)["err"])
+    end
+
     @testset "syntax error in file returns structured error response" begin
         ctx = make_ctx()
         file = tempname() * ".jl"
         try
             write(file, "function broken(")
-            stack = REPLy.AbstractMiddleware[REPLy.LoadFileMiddleware(), REPLy.UnknownOpMiddleware()]
+            mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true)
+            stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
             msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf8", "file" => file), ctx)
 
             assert_conformance(msgs, "lf8")
