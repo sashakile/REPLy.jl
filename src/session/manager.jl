@@ -142,26 +142,40 @@ end
 Remove the named session identified by UUID or name alias. Returns `true` if a
 session was removed, `false` if no such session existed. This operation is
 idempotent — calling it when no such session exists is safe.
+
+Close blocks until any in-flight eval on the session completes: `eval_lock` is
+acquired before the state transition so that `end_eval!` can never race against
+a `SessionClosed` transition. The manager lock is released between the resolve
+and the eval drain to avoid holding it during a potentially long eval.
 """
 function destroy_named_session!(manager::SessionManager, id_or_name::AbstractString)
-    lock(manager.lock) do
-        key = String(id_or_name)
-        # Resolve to UUID.
-        uuid, session = _resolve_to_uuid_and_session(manager, key)
-        isnothing(session) && return false
-        # Transition to terminal state under session.lock before removing from the dict.
-        # Lock order: manager.lock (outer) → session.lock (inner).
+    key = String(id_or_name)
+    # Phase 1: resolve the session while holding manager.lock.
+    session = lock(manager.lock) do
+        _, s = _resolve_to_uuid_and_session(manager, key)
+        s
+    end
+    isnothing(session) && return false
+    # Phase 2: drain any in-flight eval, then mark the session terminal.
+    # Acquiring eval_lock here ensures no eval is between try_begin_eval! and
+    # end_eval! when we transition to SessionClosed.
+    # Lock order: eval_lock → session.lock (consistent with eval path in eval.jl).
+    lock(session.eval_lock) do
         lock(session.lock) do
             session.state = SessionClosed
         end
+    end
+    # Phase 3: remove from registry. session.id is the canonical UUID, so removal
+    # is correct regardless of whether id_or_name was an alias or a UUID.
+    lock(manager.lock) do
+        uuid = session.id
         delete!(manager.named_sessions, uuid)
-        # Clean up the alias mapping if the name still points to this UUID.
         name = session.name
         if !isempty(name) && get(manager.name_to_uuid, name, nothing) == uuid
             delete!(manager.name_to_uuid, name)
         end
-        return true
     end
+    return true
 end
 
 # Internal: resolve id_or_name to (uuid, session) under manager.lock.

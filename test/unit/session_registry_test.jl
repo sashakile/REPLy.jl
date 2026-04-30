@@ -314,6 +314,43 @@
         @test all(x -> x isa Bool, outcomes)  # no exceptions
         @test REPLy.session_state(session) === REPLy.SessionClosed
     end
+
+    @testset "destroy_named_session! waits for in-flight eval before closing" begin
+        # Regression: destroy used to set SessionClosed without acquiring eval_lock,
+        # so a concurrent eval could call end_eval! on an already-closed session,
+        # throwing ArgumentError in the finally block.
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eval-in-flight")
+
+        eval_holding = Channel{Nothing}(1)
+        eval_release = Channel{Nothing}(1)
+
+        # Hold eval_lock to simulate an in-flight eval.
+        eval_task = @async lock(session.eval_lock) do
+            put!(eval_holding, nothing)   # signal: lock is held
+            take!(eval_release)           # wait for permission to finish
+        end
+        take!(eval_holding)  # wait until the simulated eval holds the lock
+
+        # destroy should now block — it must acquire eval_lock first.
+        destroy_task = @async REPLy.destroy_named_session!(manager, "eval-in-flight")
+
+        # Give the destroy task a chance to reach the eval_lock acquisition.
+        yield()
+
+        # Session must still be in the registry — destroy has not completed.
+        @test !isnothing(REPLy.lookup_named_session(manager, "eval-in-flight"))
+        @test REPLy.session_state(session) !== REPLy.SessionClosed
+
+        # Release the simulated eval; destroy should now proceed.
+        put!(eval_release, nothing)
+        wait(eval_task)
+
+        result = fetch(destroy_task)
+        @test result == true
+        @test isnothing(REPLy.lookup_named_session(manager, "eval-in-flight"))
+        @test REPLy.session_state(session) === REPLy.SessionClosed
+    end
 end
 
 @testset "UUID session identity" begin
