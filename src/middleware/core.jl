@@ -131,6 +131,14 @@ function finalize_responses(ctx::RequestContext, result, request_id::AbstractStr
     return vcat(ctx.emitted, terminal)
 end
 
+# Shared IO-capture lock used by EvalMiddleware and LoadFileMiddleware.
+# Both middlewares redirect stdout/stderr with Base.Pipe during eval; this lock
+# serialises those redirections to prevent interleaved capture across concurrent evals.
+# Defined here (rather than in eval.jl) so both middleware files can reference it
+# without relying on include order.
+# See also: issue cwb — the necessity of this global lock is under investigation.
+const EVAL_IO_CAPTURE_LOCK = ReentrantLock()
+
 function default_middleware_stack()
     return AbstractMiddleware[SessionMiddleware(), SessionOpsMiddleware(), DescribeMiddleware(), InterruptMiddleware(), StdinMiddleware(), EvalMiddleware(), LoadFileMiddleware(), CompleteMiddleware(), LookupMiddleware(), UnknownOpMiddleware()]
 end
