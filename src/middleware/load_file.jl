@@ -88,43 +88,52 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
 end
 
 function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString)
-    stdout_path, stdout_io = mktemp()
-    stderr_path, stderr_io = mktemp()
+    stdout_pipe = Base.Pipe()
+    stderr_pipe = Base.Pipe()
+    Base.link_pipe!(stdout_pipe; reader_supports_async=true, writer_supports_async=true)
+    Base.link_pipe!(stderr_pipe; reader_supports_async=true, writer_supports_async=true)
+
+    stdout_buf = IOBuffer()
+    stderr_buf = IOBuffer()
+    stdout_reader = @async write(stdout_buf, stdout_pipe.out)
+    stderr_reader = @async write(stderr_buf, stderr_pipe.out)
 
     try
-        result = lock(EVAL_IO_CAPTURE_LOCK) do
-            value = try
-                redirect_stdout(stdout_io) do
-                    redirect_stderr(stderr_io) do
+        eval_result = lock(EVAL_IO_CAPTURE_LOCK) do
+            try
+                value = redirect_stdout(stdout_pipe.in) do
+                    redirect_stderr(stderr_pipe.in) do
                         Base.include_string(module_, code, file)
                     end
                 end
+                (:ok, value)
             catch ex
-                output_messages = buffered_output_messages(
-                    request_id,
-                    read_captured_output(stdout_io),
-                    read_captured_output(stderr_io),
-                )
-                append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
-                return output_messages
+                (:error, ex, catch_backtrace())
             end
-
-            stdout_text = read_captured_output(stdout_io)
-            stderr_text = read_captured_output(stderr_io)
-            (value, stdout_text, stderr_text)
         end
 
-        result isa Vector && return result
-        value, stdout_text, stderr_text = result
+        close(stdout_pipe.in)
+        close(stderr_pipe.in)
+        wait(stdout_reader)
+        wait(stderr_reader)
 
+        stdout_text = String(take!(stdout_buf))
+        stderr_text = String(take!(stderr_buf))
+
+        if first(eval_result) === :error
+            _, ex, bt = eval_result
+            output_messages = buffered_output_messages(request_id, stdout_text, stderr_text)
+            append!(output_messages, [eval_error_response(request_id, ex; bt=bt)])
+            return output_messages
+        end
+
+        _, value = eval_result
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
         push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
         push!(responses, done_response(request_id))
         return responses
     finally
-        close(stdout_io)
-        close(stderr_io)
-        rm(stdout_path; force=true)
-        rm(stderr_path; force=true)
+        isopen(stdout_pipe.in) && close(stdout_pipe.in)
+        isopen(stderr_pipe.in) && close(stderr_pipe.in)
     end
 end
