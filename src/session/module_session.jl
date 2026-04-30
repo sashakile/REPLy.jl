@@ -34,6 +34,9 @@ end
 """Maximum number of entries kept in each `NamedSession`'s history vector."""
 const MAX_SESSION_HISTORY_SIZE = 1000
 
+"""Maximum number of buffered stdin strings per session before back-pressure applies."""
+const MAX_STDIN_BUFFER_SIZE = 256
+
 """
     NamedSession
 
@@ -45,7 +48,7 @@ The fields `state`, `eval_task`, and `last_active_at` are protected by `session.
 use the provided accessor and transition functions rather than reading or writing them
 directly. The `eval_lock` field is a standalone serialization primitive — it is not
 governed by `session.lock` and must not be acquired while holding it. The
-`stdin_channel` is an unbounded `Channel{String}` that buffers stdin text across
+`stdin_channel` is a bounded `Channel{String}` (capacity `MAX_STDIN_BUFFER_SIZE`) that buffers stdin text across
 evals; it is thread-safe and must not be accessed under `session.lock`.
 
 - `id` — canonical UUID string (generated at creation, never changes).
@@ -70,7 +73,7 @@ end
 
 function NamedSession(id::String, name::String, mod::Module)
     now = time()
-    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(Inf), Any[], 0, 0)
+    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(MAX_STDIN_BUFFER_SIZE), Any[], 0, 0)
     return s
 end
 

@@ -9,9 +9,11 @@ Middleware that handles `op == "load-file"` requests. Reads `file` from disk
 and evaluates its content in the active session module using `Base.include_string`
 so that stack traces reference the source file path and line numbers.
 
-If `load_file_allowlist` is provided it must be a function `(path::String) -> Bool`.
-Returning `false` causes the request to fail with a path-not-allowed error before
-any file I/O occurs, preventing path enumeration.
+`load_file_allowlist` must be a function `(path::String) -> Bool` that returns `true`
+for permitted paths. When not provided, all file load requests are denied by default —
+pass `load_file_allowlist = _ -> true` to allow all files (insecure). Returning `false`
+causes the request to fail with a path-not-allowed error before any file I/O occurs,
+preventing path enumeration.
 
 All other ops are forwarded to the next middleware.
 """
@@ -43,13 +45,19 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
     file = get(request, "file", nothing)
     file isa AbstractString || return [error_response(request_id, "load-file requires a string file field")]
 
-    if !isnothing(load_file_allowlist)
-        load_file_allowlist(file) || return [error_response(
+    if isnothing(load_file_allowlist)
+        return [error_response(
             request_id,
-            "Path not allowed: $file";
+            "load-file requires an explicit allowlist; no files are accessible by default. " *
+            "Pass load_file_allowlist = path -> true to allow all paths (insecure).";
             status_flags=String["error", "path-not-allowed"],
         )]
     end
+    load_file_allowlist(file) || return [error_response(
+        request_id,
+        "Path not allowed: $file";
+        status_flags=String["error", "path-not-allowed"],
+    )]
 
     code = try
         read(file, String)

@@ -20,25 +20,43 @@ end
 
 const DEFAULT_MAX_MESSAGE_BYTES = 1_048_576  # 1 MiB
 
-# Note: readline() buffers the full message in memory before the size check fires.
-# This protects against processing and parsing oversized payloads but does not prevent
-# the OS-level allocation of the line. True streaming enforcement would require a custom reader.
+"""
+    read_bounded_line(io, max_bytes) -> String
+
+Read bytes from `io` up to the next newline (`\\n`), returning the line content
+without the trailing newline. Throws `MessageTooLargeError(max_bytes)` if more
+than `max_bytes` bytes are read before a newline is found.
+
+Unlike `readline()`, memory use is proportional to `min(actual_bytes, max_bytes)`
+rather than the full payload size.
+"""
+function read_bounded_line(io::IO, max_bytes::Int)
+    buf = Vector{UInt8}()
+    sizehint!(buf, min(4096, max_bytes))
+    count = 0
+    while !eof(io)
+        b = read(io, UInt8)
+        b == UInt8('\n') && return String(buf)
+        count += 1
+        count > max_bytes && throw(MessageTooLargeError(max_bytes))
+        push!(buf, b)
+    end
+    return String(buf)
+end
+
 function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{Dict{String, Any}, Nothing}
     # REQ-RPL-040b: disconnects/partial reads must not escape to callers.
     # Wrap the entire loop so IOError from eof() (e.g. ECONNRESET) is also caught.
     try
         while !eof(transport.io)
             line = try
-                readline(transport.io)
-            catch
+                read_bounded_line(transport.io, max_message_bytes)
+            catch ex
+                ex isa MessageTooLargeError && rethrow()
                 return nothing
             end
 
             isempty(strip(line)) && continue
-
-            if ncodeunits(line) > max_message_bytes
-                throw(MessageTooLargeError(max_message_bytes))
-            end
 
             msg = try
                 JSON3.read(line)

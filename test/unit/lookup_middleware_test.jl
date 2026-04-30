@@ -72,4 +72,25 @@
         @test msgs[1]["found"] == true
         @test msgs[1]["name"] == "join"
     end
+
+    @testset "expression injection in symbol field returns found=false (no eval)" begin
+        ctx = make_ctx()
+        stack = REPLy.AbstractMiddleware[REPLy.LookupMiddleware(), REPLy.UnknownOpMiddleware()]
+        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "lookup", "id" => "sec1",
+            "symbol" => "run(`echo injected`)"), ctx)
+        @test length(msgs) == 2
+        @test msgs[1]["found"] == false
+    end
+
+    @testset "expression injection in module field falls back to session module (no eval)" begin
+        ctx = make_ctx()
+        stack = REPLy.AbstractMiddleware[REPLy.LookupMiddleware(), REPLy.UnknownOpMiddleware()]
+        # An attacker sends a shell injection in the module field
+        msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "lookup", "id" => "sec2",
+            "symbol" => "println",
+            "module" => "run(`echo injected`)"), ctx)
+        # Should not throw; falls back to session module and finds println
+        @test length(msgs) == 2
+        @test msgs[1]["found"] == true
+    end
 end

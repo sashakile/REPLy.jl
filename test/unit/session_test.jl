@@ -69,6 +69,17 @@
     end
 end
 
+@testset "stdin_channel is bounded (not infinite capacity)" begin
+    @test REPLy.MAX_STDIN_BUFFER_SIZE == 256
+    session = REPLy.NamedSession("id1", "bounded-test", Module())
+    # Fill the channel to capacity to verify it's bounded
+    for i in 1:REPLy.MAX_STDIN_BUFFER_SIZE
+        put!(session.stdin_channel, "line $i")
+    end
+    # Verify all items are buffered and the channel is at capacity
+    @test Base.n_avail(session.stdin_channel) == REPLy.MAX_STDIN_BUFFER_SIZE
+end
+
 @testset "NamedSession eval_id" begin
     @testset "new session starts with eval_id == 0" begin
         manager = REPLy.SessionManager()

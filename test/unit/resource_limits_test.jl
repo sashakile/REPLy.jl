@@ -31,4 +31,14 @@
         mw = REPLy.EvalMiddleware(limits)
         @test mw.max_repr_bytes == 42
     end
+
+    @testset "max_connections has default of 100" begin
+        limits = REPLy.ResourceLimits()
+        @test limits.max_connections == 100
+    end
+
+    @testset "max_connections can be configured" begin
+        limits = REPLy.ResourceLimits(max_connections=10)
+        @test limits.max_connections == 10
+    end
 end

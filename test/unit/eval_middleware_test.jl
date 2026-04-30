@@ -418,3 +418,59 @@ end
         @test !haskey(done_msg, "eval-id")
     end
 end
+
+@testset "module routing: protected root modules are blocked (session isolation)" begin
+    @testset "eval with module=Main is rejected" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
+        request = Dict("op" => "eval", "id" => "sec-main", "code" => "1+1", "module" => "Main")
+
+        msgs = REPLy.handle_message(
+            REPLy.EvalMiddleware(),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        @test length(msgs) == 1
+        @test haskey(msgs[1], "status")
+        @test "error" in msgs[1]["status"]
+        @test occursin("Cannot resolve module", msgs[1]["err"])
+    end
+
+    @testset "eval with module=Base is rejected" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
+        request = Dict("op" => "eval", "id" => "sec-base", "code" => "1+1", "module" => "Base")
+
+        msgs = REPLy.handle_message(
+            REPLy.EvalMiddleware(),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        @test length(msgs) == 1
+        @test haskey(msgs[1], "status")
+        @test "error" in msgs[1]["status"]
+        @test occursin("Cannot resolve module", msgs[1]["err"])
+    end
+
+    @testset "eval with module=Core is rejected" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], REPLy.create_ephemeral_session!(manager))
+        request = Dict("op" => "eval", "id" => "sec-core", "code" => "1+1", "module" => "Core")
+
+        msgs = REPLy.handle_message(
+            REPLy.EvalMiddleware(),
+            request,
+            _ -> nothing,
+            ctx,
+        )
+
+        @test length(msgs) == 1
+        @test haskey(msgs[1], "status")
+        @test "error" in msgs[1]["status"]
+        @test occursin("Cannot resolve module", msgs[1]["err"])
+    end
+end
