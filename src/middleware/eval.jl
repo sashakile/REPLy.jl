@@ -48,12 +48,6 @@ function buffered_output_messages(request_id::AbstractString, stdout_text::Abstr
     return messages
 end
 
-function read_captured_output(io::IO)
-    flush(io)
-    seekstart(io)
-    return read(io, String)
-end
-
 function eval_parsed(module_::Module, exprs)
     if exprs isa Expr && exprs.head == :toplevel
         value = nothing
@@ -67,14 +61,28 @@ function eval_parsed(module_::Module, exprs)
 end
 
 function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false)
-    stdout_path, stdout_io = mktemp()
-    stderr_path, stderr_io = mktemp()
+    # Pipe-based capture replaces mktemp: no filesystem I/O on the eval hot-path.
+    # dup2 is still process-global, so EVAL_IO_CAPTURE_LOCK serializes redirects.
+    # Async readers drain each pipe into an IOBuffer to prevent deadlock when
+    # eval output exceeds the OS pipe buffer (~64 KiB on Linux).
+    stdout_pipe = Base.Pipe()
+    stderr_pipe = Base.Pipe()
+    Base.link_pipe!(stdout_pipe; reader_supports_async=true, writer_supports_async=true)
+    Base.link_pipe!(stderr_pipe; reader_supports_async=true, writer_supports_async=true)
+
+    stdout_buf = IOBuffer()
+    stderr_buf = IOBuffer()
+
+    # Start readers before acquiring the lock so they drain output while the eval runs.
+    stdout_reader = @async write(stdout_buf, stdout_pipe.out)
+    stderr_reader = @async write(stderr_buf, stderr_pipe.out)
 
     try
-        result = lock(EVAL_IO_CAPTURE_LOCK) do
-            value = try
-                redirect_stdout(stdout_io) do
-                    redirect_stderr(stderr_io) do
+        # (:ok, value) on success; (:error, ex, bt) on exception.
+        eval_result = lock(EVAL_IO_CAPTURE_LOCK) do
+            try
+                value = redirect_stdout(stdout_pipe.in) do
+                    redirect_stderr(stderr_pipe.in) do
                         if isempty(strip(code))
                             nothing
                         else
@@ -82,31 +90,32 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
                         end
                     end
                 end
+                (:ok, value)
             catch ex
-                output_messages = buffered_output_messages(
-                    request_id,
-                    read_captured_output(stdout_io),
-                    read_captured_output(stderr_io),
-                )
-                if ex isa InterruptException
-                    push!(output_messages, response_message(request_id, "status" => ["done", "interrupted"]))
-                else
-                    append!(output_messages, [eval_error_response(request_id, ex; bt=catch_backtrace())])
-                end
-                return output_messages
+                (:error, ex, catch_backtrace())
             end
-
-            # Read captured output before releasing the IO lock.
-            # safe_repr does not need the lock — it is computed after.
-            stdout_text = read_captured_output(stdout_io)
-            stderr_text = read_captured_output(stderr_io)
-            (value, stdout_text, stderr_text)
         end
 
-        # `result` is either a Vector{Dict} (error path) or a 3-tuple (success path).
-        result isa Vector && return (result, nothing)
-        value, stdout_text, stderr_text = result
+        close(stdout_pipe.in)
+        close(stderr_pipe.in)
+        wait(stdout_reader)
+        wait(stderr_reader)
 
+        stdout_text = String(take!(stdout_buf))
+        stderr_text = String(take!(stderr_buf))
+
+        if first(eval_result) === :error
+            _, ex, bt = eval_result
+            output_messages = buffered_output_messages(request_id, stdout_text, stderr_text)
+            if ex isa InterruptException
+                push!(output_messages, response_message(request_id, "status" => ["done", "interrupted"]))
+            else
+                append!(output_messages, [eval_error_response(request_id, ex; bt=bt)])
+            end
+            return (output_messages, nothing)
+        end
+
+        _, value = eval_result
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
         if !silent
             push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
@@ -114,10 +123,10 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         push!(responses, done_response(request_id))
         return (responses, Some(value))
     finally
-        close(stdout_io)
-        close(stderr_io)
-        rm(stdout_path; force=true)
-        rm(stderr_path; force=true)
+        # Close write ends if not already done (e.g., InterruptException escaped the
+        # lock wait). Readers will drain buffered bytes and terminate on EOF.
+        isopen(stdout_pipe.in) && close(stdout_pipe.in)
+        isopen(stderr_pipe.in) && close(stderr_pipe.in)
     end
 end
 
@@ -358,8 +367,8 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                 m
             end
         catch ex
-            # InterruptException may escape _run_eval_core when it fires while the task
-            # is blocked waiting for EVAL_IO_CAPTURE_LOCK rather than inside eval_parsed.
+            # InterruptException may escape _run_eval_core if it fires in the narrow
+            # window during redirect setup rather than inside eval_parsed itself.
             ex isa InterruptException || rethrow()
             if timed_out[]
                 [response_message(request_id, "status" => ["done", "error", "timeout"], "err" => "eval timed out")]
