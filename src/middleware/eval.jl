@@ -295,27 +295,19 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         register_active_eval!(state, current_task())
     end
 
-    # Timeout state: timed_out is set by the timer before firing InterruptException.
-    # cancel_ch (created only when a timeout is configured) receives a value when the
-    # eval completes, causing the timer to abort before it fires.
+    # Timeout state: timed_out is set by the Timer callback before firing InterruptException.
+    # timeout_timer is closed (cancelled) in the finally block when the eval completes.
     timed_out = Ref(false)
-    cancel_ch = isnothing(effective_timeout_ms) ? nothing : Channel{Nothing}(1)
+    timeout_timer = Ref{Union{Timer, Nothing}}(nothing)
 
     if !isnothing(effective_timeout_ms)
         eval_task = current_task()
-        ch = cancel_ch  # local alias for the closure below
-        @async begin
-            result = timedwait(
-                () -> isready(ch),
-                effective_timeout_ms / 1000.0;
-                pollint=0.05,
-            )
-            if result === :timed_out && !isready(ch) && !istaskdone(eval_task)
-                timed_out[] = true
-                try
-                    schedule(eval_task, InterruptException(); error=true)
-                catch
-                end
+        timeout_timer[] = Timer(effective_timeout_ms / 1000.0) do _
+            istaskdone(eval_task) && return
+            timed_out[] = true
+            try
+                schedule(eval_task, InterruptException(); error=true)
+            catch
             end
         end
     end
@@ -411,10 +403,9 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
 
         msgs
     finally
-        # Signal the timer to abort (if one was started).
-        if !isnothing(cancel_ch)
-            isready(cancel_ch) || put!(cancel_ch, nothing)
-        end
+        # Cancel the timeout timer (no-op if already fired or never started).
+        t = timeout_timer[]
+        !isnothing(t) && close(t)
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
         if !isnothing(state)
             unregister_active_eval!(state, current_task())
