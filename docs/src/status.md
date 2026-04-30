@@ -32,7 +32,7 @@ Current tracer-bullet state:
 | Session management | ✅ | ✅ partial | ✅ partial | Ephemeral sessions exist; named sessions, lifecycle ops, pooling, idle timeout, and Revise integration do not |
 | Middleware system | ✅ | ✅ partial | ✅ partial | Basic stack exists; descriptor metadata and startup dependency validation do not |
 | TCP transport | ✅ | ✅ | ✅ | Current implementation target |
-| Unix socket and multi-listener transport | ✅ | ❌ | ❌ | Specified but not yet implemented |
+| Unix socket and multi-listener transport | ✅ | ✅ | ✅ partial | `socket_path` arg to `serve()`, `serve_multi()`, `listen_unix()`; owner-only permissions; stale-socket cleanup |
 | Error handling | ✅ | ✅ partial | ✅ | Structured errors and unknown-op exist; repeated-malformed disconnect policy and richer status taxonomy do not |
 | Security and resource limits | ✅ | ❌ | ❌ | Limits, audit logging, shutdown, and rate limiting are specified but not implemented |
 | MCP adapter | ✅ | ❌ | ❌ | Fully specified but not started |
@@ -382,7 +382,7 @@ Important areas that are specified but not yet implemented, or only partially im
 - named-session lifecycle operations (`clone`, `close`, `ls-sessions`)
 - additional core operations (`describe`, `load-file`, `interrupt`, `complete`, `lookup`, `stdin`)
 - middleware descriptors and startup dependency validation
-- Unix socket support and multi-listener support
+- multi-listener transport test coverage (Unix socket and `serve_multi` work but lack dedicated test scenarios)
 - security enforcement for limits, rate limiting, and audit logging
 - idle timeouts, session serialization, and Revise integration
 - MCP adapter and tool mapping layer
@@ -394,7 +394,7 @@ Likely next additions for the implementation and test suite:
 1. `describe` and named-session lifecycle tests
 2. timeout / interrupt race handling
 3. session FIFO serialization and idle-timeout behavior
-4. Unix socket transport and owner-only access tests
+4. Unix socket transport end-to-end tests and `serve_multi` scenario coverage
 5. resource-limit enforcement and audit-log scenarios
 6. MCP adapter conformance once the adapter exists
 <!-- vale on -->
