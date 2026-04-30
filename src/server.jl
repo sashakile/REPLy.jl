@@ -48,6 +48,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
             Task(() -> nothing),
             Task[],
             IO[],
+            ReentrantLock(),
             handler,
             stack,
             closing,
@@ -65,6 +66,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         Task(() -> nothing),
         Task[],
         IO[],
+        ReentrantLock(),
         handler,
         stack,
         closing,
@@ -111,11 +113,11 @@ function close_server!(server; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
 
-    for client in copy(server.clients)
+    for client in lock(server.clients_lock) do; copy(server.clients); end
         isopen(client) && close(client)
     end
 
-    for task in copy(server.client_tasks)
+    for task in lock(server.clients_lock) do; copy(server.client_tasks); end
         remaining = deadline - time()
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
@@ -162,7 +164,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
     for spec in specs
         if hasproperty(spec, :socket_path)
             listener = listen_unix(spec.socket_path)
-            handle = UnixServerHandle(listener, String(spec.socket_path), Task(() -> nothing), Task[], IO[], handler, stack, closing, state)
+            handle = UnixServerHandle(listener, String(spec.socket_path), Task(() -> nothing), Task[], IO[], ReentrantLock(), handler, stack, closing, state)
             handle.accept_task = @async accept_loop!(listener, handle)
             push!(listeners, handle)
         else
@@ -170,7 +172,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
             p = hasproperty(spec, :port) ? spec.port : 0
             listener = listen(h, Int(p))
             assigned_port = Int(getsockname(listener)[2])
-            handle = TCPServerHandle(listener, assigned_port, Task(() -> nothing), Task[], IO[], handler, stack, closing, state)
+            handle = TCPServerHandle(listener, assigned_port, Task(() -> nothing), Task[], IO[], ReentrantLock(), handler, stack, closing, state)
             handle.accept_task = @async accept_loop!(listener, handle)
             push!(listeners, handle)
         end
@@ -201,13 +203,13 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
     end
 
     for handle in server.listeners
-        for client in copy(handle.clients)
+        for client in lock(handle.clients_lock) do; copy(handle.clients); end
             isopen(client) && close(client)
         end
     end
 
     for handle in server.listeners
-        for task in copy(handle.client_tasks)
+        for task in lock(handle.clients_lock) do; copy(handle.client_tasks); end
             remaining = deadline - time()
             remaining > 0 && timedwait(() -> istaskdone(task), remaining)
         end

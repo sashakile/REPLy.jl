@@ -4,6 +4,7 @@ mutable struct TCPServerHandle
     accept_task::Task
     client_tasks::Vector{Task}
     clients::Vector{IO}
+    clients_lock::ReentrantLock
     handler::Function
     middleware::Vector{AbstractMiddleware}
     closing::Base.RefValue{Bool}
@@ -16,6 +17,7 @@ mutable struct UnixServerHandle
     accept_task::Task
     client_tasks::Vector{Task}
     clients::Vector{IO}
+    clients_lock::ReentrantLock
     handler::Function
     middleware::Vector{AbstractMiddleware}
     closing::Base.RefValue{Bool}
@@ -115,12 +117,18 @@ function accept_loop!(listener, handle)
         # Enforce connection limit: accept then immediately close if at capacity.
         # Accepting before closing clears the OS backlog entry; closing before
         # spawning a task keeps our own accounting accurate.
-        if length(handle.clients) >= handle.state.limits.max_connections
+        at_limit = lock(handle.clients_lock) do
+            if length(handle.clients) >= handle.state.limits.max_connections
+                return true
+            end
+            push!(handle.clients, socket)
+            return false
+        end
+        if at_limit
             close(socket)
             continue
         end
 
-        push!(handle.clients, socket)
         task = @async begin
             try
                 handle_client!(socket, handle.handler;
@@ -128,11 +136,15 @@ function accept_loop!(listener, handle)
                     rate_limit_per_min = handle.state.limits.rate_limit_per_min,
                 )
             finally
-                filter!(client -> client !== socket, handle.clients)
-                filter!(existing -> existing !== current_task(), handle.client_tasks)
+                lock(handle.clients_lock) do
+                    filter!(client -> client !== socket, handle.clients)
+                    filter!(existing -> existing !== current_task(), handle.client_tasks)
+                end
             end
         end
-        push!(handle.client_tasks, task)
+        lock(handle.clients_lock) do
+            push!(handle.client_tasks, task)
+        end
     end
 
     return nothing
