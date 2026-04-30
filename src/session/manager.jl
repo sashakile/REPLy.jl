@@ -105,6 +105,55 @@ function create_named_session!(manager::SessionManager, name::AbstractString; id
 end
 
 """
+    _total_session_count_unlocked(manager)
+
+Return total session count without acquiring the lock. Callers must hold
+`manager.lock`.
+"""
+_total_session_count_unlocked(manager::SessionManager) =
+    length(manager.ephemeral_sessions) + length(manager.named_sessions)
+
+"""
+    create_ephemeral_session_if_within_limit!(manager, max_sessions) -> Union{ModuleSession, Nothing}
+
+Atomically check the total session count against `max_sessions` and create a
+new ephemeral session if below the limit. Returns `nothing` when the limit is
+already reached. The check and creation occur under a single `manager.lock`
+acquisition, preventing the TOCTOU race that exists when they are separate.
+"""
+function create_ephemeral_session_if_within_limit!(manager::SessionManager, max_sessions::Int)
+    lock(manager.lock) do
+        _total_session_count_unlocked(manager) >= max_sessions && return nothing
+        session = ModuleSession(Module(gensym(:REPLySession)))
+        push!(manager.ephemeral_sessions, session)
+        return session
+    end
+end
+
+"""
+    create_named_session_if_within_limit!(manager, name, max_sessions; id) -> Union{NamedSession, Nothing}
+
+Atomically check the total session count against `max_sessions` and create a
+new named session if below the limit. Returns `nothing` when the limit is
+reached. Throws `ArgumentError` if a non-empty `name` alias already exists.
+"""
+function create_named_session_if_within_limit!(manager::SessionManager, name::AbstractString, max_sessions::Int; id::Union{Nothing,AbstractString}=nothing)
+    lock(manager.lock) do
+        _total_session_count_unlocked(manager) >= max_sessions && return nothing
+        uuid = isnothing(id) ? string(uuid4()) : String(id)
+        if !isempty(name) && haskey(manager.name_to_uuid, String(name))
+            throw(ArgumentError("session already exists: $(name)"))
+        end
+        session = NamedSession(uuid, String(name), Module(gensym(:REPLyNamedSession)))
+        manager.named_sessions[uuid] = session
+        if !isempty(name)
+            manager.name_to_uuid[String(name)] = uuid
+        end
+        return session
+    end
+end
+
+"""
     list_named_sessions(manager)
 
 Return all registered persistent named sessions. Ephemeral sessions are
@@ -309,10 +358,13 @@ Returns the new `NamedSession`, or `nothing` if `source_id_or_name` is not found
 Throws `ArgumentError` if `dest_name` alias already exists — callers must check
 or close the existing session first.
 """
-function clone_named_session!(manager::SessionManager, source_id_or_name::AbstractString, dest_name::AbstractString)
-    # Phase 1: resolve source and pre-flight check under lock.
+function clone_named_session!(manager::SessionManager, source_id_or_name::AbstractString, dest_name::AbstractString; max_sessions::Int=typemax(Int))
+    # Phase 1: resolve source and pre-flight checks under lock.
     # The dest session is built privately — not registered yet.
     source, dest = lock(manager.lock) do
+        # Atomically enforce session limit before committing to the clone.
+        _total_session_count_unlocked(manager) >= max_sessions && throw(SessionLimitReachedError())
+
         _, src = _resolve_to_uuid_and_session(manager, String(source_id_or_name))
         isnothing(src) && return (nothing, nothing)
 
@@ -325,6 +377,7 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
         dst = NamedSession(new_uuid, String(dest_name), Module(gensym(:REPLyNamedSession)))
         (src, dst)
     end
+
 
     (isnothing(source) || isnothing(dest)) && return nothing
 

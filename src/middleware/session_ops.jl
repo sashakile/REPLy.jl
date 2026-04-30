@@ -96,20 +96,23 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
         end
     end
 
-    # Enforce server-wide session limit before creating a new named session.
-    if !isnothing(ctx.server_state) &&
-            total_session_count(ctx.manager) >= ctx.server_state.limits.max_sessions
-        return [error_response(request_id, "Session limit reached";
-                    status_flags=String["error", "session-limit-reached"])]
-    end
-
     alias = isnothing(name) ? "" : String(name)
     local session
-    try
-        session = create_named_session!(ctx.manager, alias)
-    catch e
-        e isa ArgumentError || rethrow()
-        return [error_response(request_id, "new-session: $(e.msg)")]
+    if !isnothing(ctx.server_state)
+        try
+            session = create_named_session_if_within_limit!(ctx.manager, alias, ctx.server_state.limits.max_sessions)
+        catch e
+            e isa ArgumentError || rethrow()
+            return [error_response(request_id, "new-session: $(e.msg)")]
+        end
+        isnothing(session) && return [session_limit_response(request_id)]
+    else
+        try
+            session = create_named_session!(ctx.manager, alias)
+        catch e
+            e isa ArgumentError || rethrow()
+            return [error_response(request_id, "new-session: $(e.msg)")]
+        end
     end
 
     return [
@@ -227,13 +230,6 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         # "light" or absent is accepted — no action needed.
     end
 
-    # Enforce server-wide session limit before creating a new named session
-    if !isnothing(ctx.server_state) &&
-            total_session_count(ctx.manager) >= ctx.server_state.limits.max_sessions
-        return [error_response(request_id, "Session limit reached";
-                    status_flags=String["error", "session-limit-reached"])]
-    end
-
     # Check if destination already exists before attempting clone
     if !isnothing(lookup_named_session(ctx.manager, name))
         return [error_response(
@@ -243,10 +239,12 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         )]
     end
 
+    ms = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_sessions
     local cloned
     try
-        cloned = clone_named_session!(ctx.manager, source_str, name)
+        cloned = clone_named_session!(ctx.manager, source_str, name; max_sessions=ms)
     catch e
+        e isa SessionLimitReachedError && return [session_limit_response(request_id)]
         e isa ArgumentError || rethrow(e)
         return [error_response(
             request_id,
