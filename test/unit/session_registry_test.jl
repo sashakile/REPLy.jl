@@ -441,6 +441,27 @@ end
         @test !isnothing(clone)
         @test Core.eval(REPLy.session_module(clone), :cloned_marker) === :marker
     end
+
+    @testset "clone_named_session! does not publish partial session on copy failure (6fh)" begin
+        # If the binding-copy loop throws, the dest must NOT appear in the registry.
+        # We define a mutable type whose deepcopy always throws to trigger the failure.
+        manager = REPLy.SessionManager()
+        source = REPLy.create_named_session!(manager, "6fh-src")
+
+        src_mod = REPLy.session_module(source)
+        Core.eval(src_mod, quote
+            mutable struct _FailCopy6fh end
+            Base.deepcopy_internal(::_FailCopy6fh, ::Base.IdDict) =
+                error("intentional deepcopy failure for 6fh regression test")
+            bound_fail = _FailCopy6fh()
+        end)
+
+        # Clone should throw because deepcopy of bound_fail fails
+        @test_throws Exception REPLy.clone_named_session!(manager, "6fh-src", "6fh-dst")
+
+        # Partial session must NOT be discoverable in the registry
+        @test isnothing(REPLy.lookup_named_session(manager, "6fh-dst"))
+    end
 end
 
 @testset "idle sweep" begin

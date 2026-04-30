@@ -310,9 +310,8 @@ Throws `ArgumentError` if `dest_name` alias already exists — callers must chec
 or close the existing session first.
 """
 function clone_named_session!(manager::SessionManager, source_id_or_name::AbstractString, dest_name::AbstractString)
-    # Hold the lock only for the structural dict operations. The binding copy
-    # (deepcopy + Core.eval) runs outside the lock so it does not block other
-    # tasks for the duration of potentially slow copies.
+    # Phase 1: resolve source and pre-flight check under lock.
+    # The dest session is built privately — not registered yet.
     source, dest = lock(manager.lock) do
         _, src = _resolve_to_uuid_and_session(manager, String(source_id_or_name))
         isnothing(src) && return (nothing, nothing)
@@ -324,15 +323,14 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
 
         new_uuid = string(uuid4())
         dst = NamedSession(new_uuid, String(dest_name), Module(gensym(:REPLyNamedSession)))
-        manager.named_sessions[new_uuid] = dst
-        if !isempty(dest_name)
-            manager.name_to_uuid[String(dest_name)] = new_uuid
-        end
         (src, dst)
     end
 
     (isnothing(source) || isnothing(dest)) && return nothing
 
+    # Phase 2: copy bindings into the (not-yet-registered) dest module.
+    # Runs outside the lock so slow copies do not block other session operations.
+    # If this throws, dest is never published — no partial entry in the registry.
     source_mod = session_module(source)
     dest_mod = session_module(dest)
 
@@ -347,6 +345,20 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
             val isa Module && continue
             copied = ismutable(val) ? deepcopy(val) : val
             Core.eval(dest_mod, :($(sym) = $(QuoteNode(copied))))
+        end
+    end
+
+    # Phase 3: publish atomically — only after successful copy.
+    # Re-check for collision in case a concurrent clone raced us.
+    lock(manager.lock) do
+        dest_name_str = session_name(dest)
+        if haskey(manager.name_to_uuid, dest_name_str)
+            throw(ArgumentError("session already exists: $(dest_name_str)"))
+        end
+        uuid = session_id(dest)
+        manager.named_sessions[uuid] = dest
+        if !isempty(dest_name_str)
+            manager.name_to_uuid[dest_name_str] = uuid
         end
     end
 
