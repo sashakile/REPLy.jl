@@ -179,6 +179,10 @@ function _stdin_feeder(channel::Channel{String}, pipe_in::IO)
     end
 end
 
+# UUID of the authentic Revise.jl package (registered in the Julia General registry).
+# Used to reject shadow modules injected via eval.
+const _REVISE_PKG_ID = Base.PkgId(Base.UUID("295af30f-e4ad-537b-8983-00126c2a3abe"), "Revise")
+
 """
     _revise_if_present()
 
@@ -189,11 +193,20 @@ Inner implementation for the Revise hook: checks whether `Main.Revise` and
 This function is intended to be invoked via `Base.invokelatest` (see
 `_maybe_revise!`) so that it executes in the latest world — necessary when
 Revise (or a test mock) was loaded after the `REPLy` module was compiled.
+
+Security: only calls `revise()` when `Main.Revise` is the authentic Revise
+package (verified via `Base.loaded_modules`). A shadow module eval'd into
+`Main` under the name `Revise` will not appear in `Base.loaded_modules` with
+the correct PkgId and is silently ignored.
 """
 function _revise_if_present()
-    if isdefined(Main, :Revise) && isdefined(Main.Revise, :revise)
-        Main.Revise.revise()
-    end
+    isdefined(Main, :Revise) || return nothing
+    isdefined(Main.Revise, :revise) || return nothing
+    # Guard: Main.Revise must be the module the package manager loaded for the
+    # authentic Revise package.  An attacker-injected shadow module bypasses
+    # this because it is never registered in Base.loaded_modules.
+    get(Base.loaded_modules, _REVISE_PKG_ID, nothing) === Main.Revise || return nothing
+    Main.Revise.revise()
     return nothing
 end
 

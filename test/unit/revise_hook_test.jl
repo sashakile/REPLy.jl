@@ -27,6 +27,11 @@ function with_mock_revise(f; fail::Bool=false)
         Core.eval(mod, :(call_count = $(call_count)))
         Core.eval(mod, :(revise() = (call_count[] += 1; nothing)))
     end
+    # Register the mock in Base.loaded_modules under the authentic Revise PkgId
+    # so the security check in _revise_if_present passes.  Capture any prior
+    # entry so we can restore it on teardown.
+    prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
+    Base.loaded_modules[REPLy._REVISE_PKG_ID] = mod
     Core.eval(Main, :(const Revise = $mod))
     try
         f(call_count)
@@ -36,6 +41,12 @@ function with_mock_revise(f; fail::Bool=false)
         # (the module is still safe to garbage-collect once the test exits).
         if isdefined(Base, :delete_binding)
             Base.delete_binding(Main, :Revise)
+        end
+        # Restore Base.loaded_modules to its prior state.
+        if isnothing(prior_loaded)
+            delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
+        else
+            Base.loaded_modules[REPLy._REVISE_PKG_ID] = prior_loaded
         end
     end
 end
@@ -141,6 +152,40 @@ end
             )
 
             @test call_count[] == 0
+        end
+    end
+end
+
+@testset "Revise hook: shadow-module injection" begin
+    @testset "hook ignores a fake Revise module not in Base.loaded_modules" begin
+        # Simulate an attacker eval-ing 'module Revise; revise()=<payload>; end'.
+        # The shadow module is bound in Main but NOT registered in Base.loaded_modules.
+        call_count = Ref(0)
+        shadow = Module(:Revise)
+        Core.eval(shadow, :(call_count = $(call_count)))
+        Core.eval(shadow, :(revise() = (call_count[] += 1; nothing)))
+        Core.eval(Main, :(const Revise = $shadow))
+        # Ensure the shadow is NOT in Base.loaded_modules.
+        delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
+        try
+            manager = REPLy.SessionManager()
+            session = REPLy.create_named_session!(manager, "revise-shadow")
+            mw      = REPLy.EvalMiddleware()
+            ctx     = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+            msgs = REPLy.handle_message(
+                mw,
+                Dict("op" => "eval", "id" => "rh-shadow", "code" => "1 + 1"),
+                _ -> nothing,
+                ctx,
+            )
+
+            @test call_count[] == 0  # Shadow module MUST NOT be called
+            @test any(get(m, "value", nothing) == "2" for m in msgs)
+        finally
+            if isdefined(Base, :delete_binding)
+                Base.delete_binding(Main, :Revise)
+            end
         end
     end
 end

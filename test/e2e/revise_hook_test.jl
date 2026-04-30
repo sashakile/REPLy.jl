@@ -10,6 +10,8 @@
         mock_revise = Module(:Revise)
         Core.eval(mock_revise, :(call_count = $(call_count)))
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
+        prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
+        Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
         Core.eval(Main, :(const Revise = $mock_revise))
 
         try
@@ -41,6 +43,11 @@
             if isdefined(Base, :delete_binding)
                 Base.delete_binding(Main, :Revise)
             end
+            if isnothing(prior_loaded)
+                delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
+            else
+                Base.loaded_modules[REPLy._REVISE_PKG_ID] = prior_loaded
+            end
         end
     end
 
@@ -49,6 +56,8 @@
         mock_revise = Module(:Revise)
         Core.eval(mock_revise, :(call_count = $(call_count)))
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
+        prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
+        Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
         Core.eval(Main, :(const Revise = $mock_revise))
 
         try
@@ -73,6 +82,11 @@
             if isdefined(Base, :delete_binding)
                 Base.delete_binding(Main, :Revise)
             end
+            if isnothing(prior_loaded)
+                delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
+            else
+                Base.loaded_modules[REPLy._REVISE_PKG_ID] = prior_loaded
+            end
         end
     end
 
@@ -81,6 +95,8 @@
         mock_revise = Module(:Revise)
         Core.eval(mock_revise, :(call_count = $(call_count)))
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
+        prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
+        Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
         Core.eval(Main, :(const Revise = $mock_revise))
 
         try
@@ -112,6 +128,11 @@
         finally
             if isdefined(Base, :delete_binding)
                 Base.delete_binding(Main, :Revise)
+            end
+            if isnothing(prior_loaded)
+                delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
+            else
+                Base.loaded_modules[REPLy._REVISE_PKG_ID] = prior_loaded
             end
         end
     end
