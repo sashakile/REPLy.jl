@@ -96,16 +96,37 @@ function shutdown_middleware_stack!(middleware::Vector{AbstractMiddleware})
     return nothing
 end
 
-function close_server!(server; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
+# Close the network listener and wait for the accept loop to finish.
+function _close_listener!(handle::AbstractServerHandle)
+    isopen(handle.listener) && close(handle.listener)
+    wait_for_server_task(handle.accept_task)
+end
+
+# Close all connected clients and wait for their handler tasks to finish.
+function _drain_clients!(handle::AbstractServerHandle, deadline::Real)
+    for client in lock(handle.clients_lock) do; copy(handle.clients); end
+        isopen(client) && close(client)
+    end
+    for task in lock(handle.clients_lock) do; copy(handle.client_tasks); end
+        remaining = deadline - time()
+        remaining > 0 && timedwait(() -> istaskdone(task), remaining)
+    end
+end
+
+# Remove listener-type-specific OS resources after shutdown.
+_cleanup_socket!(::TCPServerHandle) = nothing
+function _cleanup_socket!(handle::UnixServerHandle)
+    ispath(handle.path) && rm(handle.path; force=true)
+end
+
+function close_server!(server::AbstractServerHandle; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
     grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
     server.closing[] && return nothing
     server.closing[] = true
 
     deadline = time() + Float64(grace_seconds)
 
-    isopen(server.listener) && close(server.listener)
-    wait_for_server_task(server.accept_task)
-
+    _close_listener!(server)
     interrupt_active_evals!(server.state)
 
     for task in active_eval_tasks(server.state)
@@ -113,15 +134,7 @@ function close_server!(server; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
 
-    for client in lock(server.clients_lock) do; copy(server.clients); end
-        isopen(client) && close(client)
-    end
-
-    for task in lock(server.clients_lock) do; copy(server.client_tasks); end
-        remaining = deadline - time()
-        remaining > 0 && timedwait(() -> istaskdone(task), remaining)
-    end
-
+    _drain_clients!(server, deadline)
     shutdown_middleware_stack!(server.middleware)
     return nothing
 end
@@ -134,7 +147,7 @@ function Base.close(server::UnixServerHandle; kwargs...)
     try
         close_server!(server; kwargs...)
     finally
-        ispath(server.path) && rm(server.path; force=true)
+        _cleanup_socket!(server)
     end
     return nothing
 end
@@ -160,7 +173,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
     stack = materialize_middleware_stack(middleware)
     handler = build_handler(; manager=manager, middleware=stack, state=state)
 
-    listeners = Union{TCPServerHandle, UnixServerHandle}[]
+    listeners = AbstractServerHandle[]
     for spec in specs
         if hasproperty(spec, :socket_path)
             listener = listen_unix(spec.socket_path)
@@ -188,6 +201,8 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
 
     deadline = time() + Float64(grace_seconds)
 
+    # Batch-close all listeners, then wait for accept tasks — better parallelism
+    # than sequential close+wait per listener (which close_server! does for single handles).
     for handle in server.listeners
         isopen(handle.listener) && close(handle.listener)
     end
@@ -203,24 +218,13 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
     end
 
     for handle in server.listeners
-        for client in lock(handle.clients_lock) do; copy(handle.clients); end
-            isopen(client) && close(client)
-        end
-    end
-
-    for handle in server.listeners
-        for task in lock(handle.clients_lock) do; copy(handle.client_tasks); end
-            remaining = deadline - time()
-            remaining > 0 && timedwait(() -> istaskdone(task), remaining)
-        end
+        _drain_clients!(handle, deadline)
     end
 
     shutdown_middleware_stack!(server.middleware)
 
     for handle in server.listeners
-        if handle isa UnixServerHandle
-            ispath(handle.path) && rm(handle.path; force=true)
-        end
+        _cleanup_socket!(handle)
     end
 
     return nothing

@@ -1,4 +1,13 @@
-mutable struct TCPServerHandle
+"""
+    AbstractServerHandle
+
+Abstract supertype for single-listener server handles. Subtypes (`TCPServerHandle`,
+`UnixServerHandle`) must have fields: `listener`, `accept_task`, `client_tasks`,
+`clients`, `clients_lock`, `handler`, `middleware`, `closing`, `state`.
+"""
+abstract type AbstractServerHandle end
+
+mutable struct TCPServerHandle <: AbstractServerHandle
     listener::Sockets.TCPServer
     port::Int
     accept_task::Task
@@ -11,7 +20,7 @@ mutable struct TCPServerHandle
     state::ServerState
 end
 
-mutable struct UnixServerHandle
+mutable struct UnixServerHandle <: AbstractServerHandle
     listener::Sockets.PipeServer
     path::String
     accept_task::Task
@@ -25,7 +34,7 @@ mutable struct UnixServerHandle
 end
 
 mutable struct MultiListenerServer
-    listeners::Vector{Union{TCPServerHandle, UnixServerHandle}}
+    listeners::Vector{AbstractServerHandle}
     closing::Base.RefValue{Bool}
     state::ServerState
     middleware::Vector{AbstractMiddleware}
