@@ -95,17 +95,18 @@ Oversized messages produce a `MessageTooLargeError` internally; clients receive 
 
 ### Output truncation
 
-Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `EvalMiddleware` to `serve`:
+Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `REPLy.EvalMiddleware` to `serve`:
 
 ```julia
 using REPLy
-using REPLy: EvalMiddleware, SessionMiddleware
 
 server = REPLy.serve(
     port=5555,
-    middleware=[SessionMiddleware(), EvalMiddleware(; max_repr_bytes=100_000)],
+    middleware=[REPLy.SessionMiddleware(), REPLy.EvalMiddleware(; max_repr_bytes=100_000)],
 )
 ```
+
+`REPLy.SessionMiddleware` and `REPLy.EvalMiddleware` are lower-level middleware types rather than part of the minimal exported API surface.
 
 ## Next Steps
 
