@@ -154,13 +154,15 @@ function mcp_ensure_default_session!(manager::SessionManager; name::AbstractStri
 end
 
 """
-    mcp_new_session_result(manager) -> CallToolResult
+    mcp_new_session_result(manager; max_sessions=typemax(Int)) -> CallToolResult
 
 Create a new unnamed session and return its canonical UUID in a non-error
 `CallToolResult`. The UUID is the spec-compliant identity for all subsequent ops.
+Returns an error result when the session limit is reached.
 """
-function mcp_new_session_result(manager::SessionManager)
-    session = create_named_session!(manager, "")
+function mcp_new_session_result(manager::SessionManager; max_sessions::Int=typemax(Int))
+    session = create_named_session_if_within_limit!(manager, "", max_sessions)
+    isnothing(session) && return error_result("Session limit reached")
     uuid = session_id(session)
     return CallToolResult("isError" => false, "content" => [text_block("Session: $uuid")])
 end
@@ -203,7 +205,7 @@ function mcp_close_session_result(manager::SessionManager, session_name::Abstrac
 end
 
 """
-    mcp_call_tool(tool_name, args, manager) -> CallToolResult
+    mcp_call_tool(tool_name, args, manager; max_sessions=typemax(Int)) -> CallToolResult
 
 Dispatch an MCP `tools/call` request to the appropriate adapter helper.
 
@@ -213,11 +215,14 @@ error for tools that are not yet implemented (`julia_complete`, `julia_lookup`,
 `julia_load_file`, `julia_interrupt`). Returns an error for `julia_eval` (which
 requires a live transport and is handled by the full adapter loop) and for
 unknown tool names.
+
+`max_sessions` is forwarded to `mcp_new_session_result` to enforce the server
+session limit when creating sessions from the MCP adapter.
 """
-function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::SessionManager)
+function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::SessionManager; max_sessions::Int=typemax(Int))
     # Lifecycle tools — primary dispatch targets
     if tool_name == "julia_new_session"
-        return mcp_new_session_result(manager)
+        return mcp_new_session_result(manager; max_sessions)
     elseif tool_name == "julia_list_sessions"
         return mcp_list_sessions_result(manager)
     elseif tool_name == "julia_close_session"

@@ -78,13 +78,13 @@ function NamedSession(id::String, name::String, mod::Module)
 end
 
 """
-    clamp_history!(session)
+    clamp_history!(session, max_size=MAX_SESSION_HISTORY_SIZE)
 
 Drop the oldest entries from `session.history` so it does not exceed
-`MAX_SESSION_HISTORY_SIZE`. Called after each history push.
+`max_size`. Called after each history push.
 """
-function clamp_history!(session::NamedSession)
-    excess = length(session.history) - MAX_SESSION_HISTORY_SIZE
+function clamp_history!(session::NamedSession, max_size::Int=MAX_SESSION_HISTORY_SIZE)
+    excess = length(session.history) - max_size
     excess > 0 && deleteat!(session.history, 1:excess)
     return session
 end

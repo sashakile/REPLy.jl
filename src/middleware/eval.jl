@@ -60,7 +60,7 @@ function eval_parsed(module_::Module, exprs)
     return Core.eval(module_, exprs)
 end
 
-function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false)
+function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))
     # Pipe-based capture replaces mktemp: no filesystem I/O on the eval hot-path.
     # dup2 is still process-global, so EVAL_IO_CAPTURE_LOCK serializes redirects.
     # Async readers drain each pipe into an IOBuffer to prevent deadlock when
@@ -101,8 +101,8 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         wait(stdout_reader)
         wait(stderr_reader)
 
-        stdout_text = String(take!(stdout_buf))
-        stderr_text = String(take!(stderr_buf))
+        stdout_text = truncate_output(String(take!(stdout_buf)), max_output_bytes)
+        stderr_text = truncate_output(String(take!(stderr_buf)), max_output_bytes)
 
         if first(eval_result) === :error
             _, ex, bt = eval_result
@@ -261,6 +261,9 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     allow_stdin   = get(request, "allow-stdin", true) !== false
     store_history = get(request, "store-history", true) !== false
 
+    max_output_bytes    = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
+    max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_session_history
+
     # Defensive ephemeral fallback: SessionMiddleware normally provides a session
     # before we reach this point.  This guard exists as a safety net for callers
     # that bypass the middleware stack (e.g., direct eval_responses calls in tests
@@ -348,7 +351,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                         feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
                         try
                             redirect_stdin(pipe.out) do
-                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                             end
                         finally
                             schedule(feeder, InterruptException(); error=true)
@@ -360,21 +363,21 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                         # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
                         try
                             redirect_stdin(devnull) do
-                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                             end
                         finally
                             end_eval!(session)
                         end
                     end
-                    _update_history!(session, captured, store_history)
+                    _update_history!(session, captured, store_history, max_session_history)
                     inner_msgs
                 end
             else
                 m, _ = if allow_stdin
-                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                 else
                     redirect_stdin(devnull) do
-                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent)
+                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                     end
                 end
                 m
@@ -426,7 +429,7 @@ end
 
 # Update ans binding and history for `session` when `store_history` is true
 # and `captured` is `Some(value)` (successful eval). Does nothing on error.
-function _update_history!(session::NamedSession, captured::Union{Some, Nothing}, store_history::Bool)
+function _update_history!(session::NamedSession, captured::Union{Some, Nothing}, store_history::Bool, max_session_history::Int=MAX_SESSION_HISTORY_SIZE)
     store_history && !isnothing(captured) || return
     value = something(captured)
     try
@@ -435,7 +438,7 @@ function _update_history!(session::NamedSession, captured::Union{Some, Nothing},
         # If ans update fails (e.g. type not quotable), skip silently.
     end
     push!(session.history, value)
-    clamp_history!(session)
+    clamp_history!(session, max_session_history)
     return
 end
 
