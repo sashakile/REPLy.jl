@@ -41,9 +41,16 @@ end
 function stdin_responses(ctx::RequestContext, request::AbstractDict)
     request_id = String(request["id"])
 
-    session_name = get(request, "session", nothing)
-    if !(session_name isa AbstractString) || isempty(session_name)
-        return [error_response(request_id, "stdin requires a non-empty string session field")]
+    session = ctx.session
+    if !(session isa NamedSession)
+        session_name = get(request, "session", nothing)
+        if !(session_name isa AbstractString) || isempty(session_name)
+            return [error_response(request_id, "stdin requires a non-empty string session field")]
+        end
+        session = lookup_named_session(ctx.manager, String(session_name))
+        if isnothing(session)
+            return [session_not_found_response(request_id, String(session_name))]
+        end
     end
 
     input = get(request, "input", nothing)
@@ -51,15 +58,10 @@ function stdin_responses(ctx::RequestContext, request::AbstractDict)
         return [error_response(request_id, "stdin requires a string input field")]
     end
 
-    session = lookup_named_session(ctx.manager, String(session_name))
-    if isnothing(session)
-        return [session_not_found_response(request_id, String(session_name))]
-    end
-
     # Snapshot state under lock; put! outside the lock (Channel is thread-safe).
     state = lock(session.lock) do; session.state; end
 
-    state === SessionClosed && return [error_response(request_id, "session is closed: $(session_name)")]
+    state === SessionClosed && return [error_response(request_id, "session is closed: $(session.name)")]
 
     put!(session.stdin_channel, String(input))
     field = state === SessionRunning ? "delivered" : "buffered"
