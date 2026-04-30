@@ -34,10 +34,6 @@ descriptor(::EvalMiddleware) = MiddlewareDescriptor(
     ),
 )
 
-# `redirect_stdout(IOStream)` uses dup2 (a process-global operation), so concurrent
-# calls would race on file descriptors 1 and 2.  This lock serializes IO capture
-# globally; per-session eval_lock handles FIFO ordering within each named session.
-const EVAL_IO_CAPTURE_LOCK = ReentrantLock()
 
 safe_repr(value; max_bytes::Int=DEFAULT_MAX_REPR_BYTES) = truncate_output(safe_render("repr", repr, value), max_bytes)
 

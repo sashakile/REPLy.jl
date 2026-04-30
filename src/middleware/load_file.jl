@@ -65,6 +65,8 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
         return [error_response(request_id, "Failed to read file: $(safe_showerror(ex))")]
     end
 
+    max_output_bytes = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
+
     ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
     session = something(ephemeral, ctx.session)
 
@@ -74,20 +76,20 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
                 try_begin_eval!(session, current_task()) ||
                     return [error_response(request_id, "session was closed")]
                 try
-                    _run_load_file_core(session_module(session), request_id, code, file)
+                    _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
                 finally
                     end_eval!(session)
                 end
             end
         else
-            _run_load_file_core(session_module(session), request_id, code, file)
+            _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
         end
     finally
         !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
     end
 end
 
-function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString)
+function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int))
     stdout_pipe = Base.Pipe()
     stderr_pipe = Base.Pipe()
     Base.link_pipe!(stdout_pipe; reader_supports_async=true, writer_supports_async=true)
@@ -117,8 +119,8 @@ function _run_load_file_core(module_::Module, request_id::AbstractString, code::
         wait(stdout_reader)
         wait(stderr_reader)
 
-        stdout_text = String(take!(stdout_buf))
-        stderr_text = String(take!(stderr_buf))
+        stdout_text = truncate_output(String(take!(stdout_buf)), max_output_bytes)
+        stderr_text = truncate_output(String(take!(stderr_buf)), max_output_bytes)
 
         if first(eval_result) === :error
             _, ex, bt = eval_result
