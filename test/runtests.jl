@@ -1,4 +1,5 @@
 using Test
+using Logging
 using REPLy
 using JSON3
 using Sockets

@@ -8,6 +8,17 @@ Specify the local security posture, resource limit enforcement, audit logging, r
 
 ## Requirements
 
+### Requirement: TCP Localhost-Only Default with Non-Loopback Warning
+The TCP server SHALL default to binding on `127.0.0.1` (loopback). When `serve()` or `serve_multi()` is called with a non-loopback host, the server SHALL emit a `@warn`-level log message at startup stating that no authentication is required and any reachable client can execute arbitrary Julia code. The warning SHALL recommend using a Unix domain socket or restricting access at the network level. (REQ-RPL-049)
+
+#### Scenario: Non-loopback TCP binding emits warning
+- **WHEN** `serve(; host=ip"0.0.0.0", ...)` (or any non-127.x.x.x / non-`::1` host) is called
+- **THEN** a `Logging.Warn`-level message containing "non-loopback" is emitted before the server begins accepting connections
+
+#### Scenario: Loopback TCP binding emits no warning
+- **WHEN** `serve(; host=ip"127.0.0.1", ...)` is called
+- **THEN** no security-related warning is emitted
+
 ### Requirement: Unix Socket Owner-Only Access
 The Unix domain socket SHALL be accessible only to the server's owner UID. The implementation mechanism (umask wrapping, chmod) is specified in `transport/spec.md`. (REQ-RPL-041)
 
