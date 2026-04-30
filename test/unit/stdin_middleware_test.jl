@@ -147,4 +147,26 @@
 
         @test "unknown-op" in only(msgs)["status"]
     end
+
+    @testset "uses ctx.session when already resolved — no TOCTOU re-lookup (wep)" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "wep-stdin-sess")
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        ctx.session = session  # simulate what SessionMiddleware would have set
+
+        # Destroy from the registry — simulates the TOCTOU window.
+        REPLy.destroy_named_session!(manager, "wep-stdin-sess")
+
+        stack = REPLy.AbstractMiddleware[REPLy.StdinMiddleware(), REPLy.UnknownOpMiddleware()]
+        msgs = REPLy.dispatch_middleware(stack, 1,
+            Dict("op" => "stdin", "id" => "s-wep", "session" => "wep-stdin-sess",
+                 "input" => "hello\n"), ctx)
+
+        # Session is closed (after destroy).
+        # Before fix: re-lookup returns nothing → session-not-found (wrong).
+        # After fix: uses ctx.session → session is closed error (correct — the session IS closed).
+        @test length(msgs) == 1
+        @test "error" in only(msgs)["status"]
+        @test occursin("closed", only(msgs)["err"])
+    end
 end

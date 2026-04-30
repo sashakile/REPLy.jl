@@ -248,4 +248,26 @@
             Dict("op" => "interrupt", "id" => "i-cleanup", "session" => "int-id-mismatch"), int_ctx)
         timedwait(() -> isready(eval_done), 5.0)
     end
+
+    @testset "uses ctx.session when already resolved — no TOCTOU re-lookup (wep)" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "wep-interrupt-sess")
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        ctx.session = session  # simulate what SessionMiddleware would have set
+
+        # Destroy from the registry — simulates the TOCTOU window where destroy
+        # races between SessionMiddleware resolution and the downstream lookup.
+        REPLy.destroy_named_session!(manager, "wep-interrupt-sess")
+
+        stack = REPLy.AbstractMiddleware[REPLy.InterruptMiddleware(), REPLy.UnknownOpMiddleware()]
+        msgs = REPLy.dispatch_middleware(stack, 1,
+            Dict("op" => "interrupt", "id" => "i-wep", "session" => "wep-interrupt-sess"), ctx)
+
+        # Session is closed (after destroy), so no eval running — interrupted=[] is correct.
+        # Before fix: re-lookup returns nothing → session-not-found error (wrong).
+        # After fix: uses ctx.session → idle path → interrupted=[].
+        @test length(msgs) == 2
+        @test msgs[1]["interrupted"] == []
+        @test msgs[2]["status"] == ["done"]
+    end
 end

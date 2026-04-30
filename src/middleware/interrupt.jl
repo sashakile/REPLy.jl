@@ -40,14 +40,16 @@ end
 function interrupt_responses(ctx::RequestContext, request::AbstractDict)
     request_id = String(request["id"])
 
-    session_name = get(request, "session", nothing)
-    if !(session_name isa AbstractString) || isempty(session_name)
-        return [error_response(request_id, "interrupt requires a non-empty string session field")]
-    end
-
-    session = lookup_named_session(ctx.manager, String(session_name))
-    if isnothing(session)
-        return [session_not_found_response(request_id, String(session_name))]
+    session = ctx.session
+    if !(session isa NamedSession)
+        session_name = get(request, "session", nothing)
+        if !(session_name isa AbstractString) || isempty(session_name)
+            return [error_response(request_id, "interrupt requires a non-empty string session field")]
+        end
+        session = lookup_named_session(ctx.manager, String(session_name))
+        if isnothing(session)
+            return [session_not_found_response(request_id, String(session_name))]
+        end
     end
 
     interrupt_id = get(request, "interrupt-id", nothing)
