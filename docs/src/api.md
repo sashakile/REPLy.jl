@@ -13,7 +13,7 @@ julia --project=docs docs/make.jl
 
 The exported surface includes:
 
-- **Server**: `serve`, `serve_multi`, `server_port`, `server_socket_path`, `AbstractServerHandle`, `MultiListenerServer`, `ServerState`
+- **Server**: `serve`, `serve_multi`, `serve_mcp`, `server_port`, `server_socket_path`, `AbstractServerHandle`, `MultiListenerServer`, `ServerState`
 - **Sessions**: `SessionManager`, `get_or_create_named_session!`, `sweep_idle_sessions!`, `session_id`, `SessionState`, `SessionIdle`, `SessionRunning`, `SessionClosed`
 - **Transport**: `AbstractTransport`, `JSONTransport`, `send!`, `receive`
 - **MCP adapter**: `mcp_initialize_result`, `mcp_tools`, `mcp_call_tool`, `mcp_eval_request`,

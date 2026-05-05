@@ -398,3 +398,148 @@ function format_stacktrace(frames)
 
     return join(rendered, "\n")
 end
+
+# --- MCP Server (stdio) ---
+
+"""
+    serve_mcp(; manager=SessionManager(), middleware=default_middleware_stack(), limits=ResourceLimits(), max_message_bytes=DEFAULT_MAX_MESSAGE_BYTES)
+
+Start a stdio-based MCP server. This function blocks, reading JSON-RPC 2.0
+messages from `stdin` and writing responses to `stdout`.
+
+It automatically:
+1. Starts a background REPLy TCP server on a random loopback port.
+2. Handles the MCP `initialize` and `tools/list` handshake.
+3. Dispatches `tools/call` requests.
+4. Routes `julia_eval` to the background REPLy server.
+5. Logs internal errors and diagnostic info to `stderr`.
+
+Use this as the entry point for integrating REPLy with MCP clients like
+Claude Desktop or VS Code extensions.
+"""
+function serve_mcp(;
+    manager::SessionManager=SessionManager(),
+    middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(),
+    limits::ResourceLimits=ResourceLimits(),
+    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES
+)
+    # Start internal REPLy server on loopback, random port.
+    server = serve(; host=ip"127.0.0.1", port=0, manager, middleware, limits, max_message_bytes)
+    port = server_port(server)
+    mcp_log("REPLy internal server started on 127.0.0.1:$port")
+
+    default_session = mcp_ensure_default_session!(manager)
+
+    try
+        while !eof(stdin)
+            line = readline(stdin)
+            isempty(strip(line)) && continue
+
+            req = try
+                JSON3.read(line, Dict{String, Any})
+            catch ex
+                mcp_log("MCP parse error: $ex")
+                continue
+            end
+
+            # Basic JSON-RPC 2.0 check
+            if get(req, "jsonrpc", "") != "2.0"
+                mcp_log("MCP protocol error: expected jsonrpc: 2.0")
+                continue
+            end
+
+            method = get(req, "method", "")
+            id = get(req, "id", nothing)
+            params = get(req, "params", Dict{String, Any}())
+
+            response = process_mcp_request(String(method), params, id, manager, default_session, port)
+            if !isnothing(response)
+                println(stdout, JSON3.write(response))
+                flush(stdout)
+            end
+        end
+    finally
+        mcp_log("MCP server shutting down")
+        close(server)
+    end
+end
+
+function mcp_log(msg::AbstractString)
+    println(stderr, "[REPLy-MCP] ", msg)
+    flush(stderr)
+end
+
+function process_mcp_request(method::AbstractString, params, id, manager, default_session, port)
+    if method == "initialize"
+        return mcp_rpc_result(id, mcp_initialize_result())
+    elseif method == "tools/list"
+        return mcp_rpc_result(id, Dict("tools" => mcp_tools()))
+    elseif method == "tools/call"
+        # params must be a dict for tools/call
+        args_container = params isa AbstractDict ? params : Dict{String, Any}()
+        name = get(args_container, "name", "")
+        args = get(args_container, "arguments", Dict{String, Any}())
+
+        if name == "julia_eval"
+            return mcp_rpc_result(id, mcp_dispatch_eval(args, default_session, port))
+        else
+            # Forward to static lifecycle helpers
+            result = mcp_call_tool(String(name), args, manager)
+            return mcp_rpc_result(id, result)
+        end
+    elseif method == "notifications/initialized"
+        return nothing # No-op notification
+    else
+        mcp_log("Unsupported MCP method: $method")
+        if !isnothing(id)
+            return mcp_rpc_error(id, -32601, "Method not found: $method")
+        end
+        return nothing
+    end
+end
+
+function mcp_rpc_result(id, result)
+    isnothing(id) && return nothing
+    return Dict(
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "result" => result
+    )
+end
+
+function mcp_rpc_error(id, code, message)
+    isnothing(id) && return nothing
+    return Dict(
+        "jsonrpc" => "2.0",
+        "id" => id,
+        "error" => Dict("code" => code, "message" => message)
+    )
+end
+
+function mcp_dispatch_eval(args, default_session, port)
+    request_id = "mcp-eval-$(time_ns())"
+
+    # 1. Shape the Reply request
+    request = try
+        mcp_eval_request(request_id, args; default_session)
+    catch ex
+        ex isa ArgumentError || rethrow()
+        return error_result(ex.msg)
+    end
+
+    # 2. Execute over internal transport
+    try
+        conn = connect(ip"127.0.0.1", port)
+        transport = JSONTransport(conn, ReentrantLock())
+        try
+            send!(transport, request)
+            msgs = collect_reply_stream(transport, request_id)
+            return reply_stream_to_mcp_result(msgs)
+        finally
+            close(transport)
+        end
+    catch ex
+        mcp_log("Internal evaluation error: $ex")
+        return error_result("Internal server error during evaluation")
+    end
+end
