@@ -11,6 +11,7 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "Guides" => [
+            "How-to: REPLy as a Global Dev Tool" => "howto-dev-tool.md",
             "How-to: Manage Sessions" => "howto-sessions.md",
             "How-to: MCP Adapter" => "howto-mcp-adapter.md",
             "How-to: Unix Sockets" => "howto-unix-sockets.md",
