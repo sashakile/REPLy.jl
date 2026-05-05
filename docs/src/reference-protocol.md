@@ -146,6 +146,112 @@ See [How-to: Manage Sessions](howto-sessions.md) for full examples. Quick refere
 
 ---
 
+## Core Operations
+
+Beyond `eval` and session management, REPLy provides several operations for introspection and code navigation.
+
+### `describe`
+
+Returns server capabilities, supported operations, and versions.
+
+**Request:**
+```json
+{"op": "describe", "id": "desc-1"}
+```
+
+**Response:**
+```json
+{
+  "id": "desc-1",
+  "ops": {
+    "eval": {"doc": "...", "returns": ["out", "err", "value", "ns"]},
+    "complete": {"doc": "...", "requires": ["code", "pos"], "returns": ["completions"]},
+    "..."
+  },
+  "versions": {"julia": "1.10.0", "reply": "0.1.0"},
+  "encodings-available": ["json"],
+  "encoding-current": "json",
+  "status": ["done"]
+}
+```
+
+### `load-file`
+
+Loads and evaluates a Julia source file in the target session. Requires a server-side allowlist for security.
+
+**Request:**
+```json
+{"op": "load-file", "id": "load-1", "file": "/path/to/script.jl", "session": "main"}
+```
+
+### `interrupt`
+
+Interrupts an in-flight evaluation in a named session.
+
+**Request:**
+```json
+{"op": "interrupt", "id": "int-1", "session": "main"}
+```
+
+**Response:**
+```json
+{"id": "int-1", "interrupted": ["main"], "interrupted-id": 42, "status": ["done"]}
+```
+
+### `complete`
+
+Returns tab-completion candidates for a given code string and cursor position.
+
+**Request:**
+```json
+{"op": "complete", "id": "comp-1", "code": "Base.prin", "pos": 9}
+```
+
+**Response:**
+```json
+{
+  "id": "comp-1",
+  "completions": [
+    {"text": "print", "type": "Function"},
+    {"text": "println", "type": "Function"}
+  ],
+  "status": ["done"]
+}
+```
+
+### `lookup`
+
+Returns documentation and method information for a symbol.
+
+**Request:**
+```json
+{"op": "lookup", "id": "look-1", "symbol": "println"}
+```
+
+**Response:**
+```json
+{
+  "id": "look-1",
+  "found": true,
+  "name": "println",
+  "type": "Function",
+  "doc": "println([io::IO], xs...)\n\nPrint and then a newline...",
+  "methods": ["println(xs...) in Base at coreio.jl:4", "..."],
+  "status": ["done"]
+}
+```
+
+### `stdin`
+
+Sends input to a session that is currently blocked on a `stdin` read (e.g., `readline()`).
+
+**Request:**
+```json
+{"op": "stdin", "id": "in-1", "session": "main", "stdin": "user input\n"}
+```
+
+---
+
 ## Malformed Input
 
 If the server receives a line that is not valid JSON, it closes the connection without sending any protocol response. This is intentional — there is no error message to echo an `id` from.

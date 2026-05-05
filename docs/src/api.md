@@ -13,11 +13,12 @@ julia --project=docs docs/make.jl
 
 The exported surface includes:
 
-- **Server**: `serve`, `serve_multi`, `shutdown!`, `server_host`, `server_port`, `server_socket_path`
-- **Sessions**: `SessionManager`, `new_session!`, `get_session`, `close_session!`
-- **Transport**: `AbstractTransport`, `JSONTransport`
+- **Server**: `serve`, `serve_multi`, `server_port`, `server_socket_path`, `AbstractServerHandle`, `MultiListenerServer`, `ServerState`
+- **Sessions**: `SessionManager`, `get_or_create_named_session!`, `sweep_idle_sessions!`, `session_id`, `SessionState`, `SessionIdle`, `SessionRunning`, `SessionClosed`
+- **Transport**: `AbstractTransport`, `JSONTransport`, `send!`, `receive`
 - **MCP adapter**: `mcp_initialize_result`, `mcp_tools`, `mcp_call_tool`, `mcp_eval_request`,
-  `mcp_ensure_default_session!`, `collect_reply_stream`, `reply_stream_to_mcp_result`
+  `mcp_ensure_default_session!`, `mcp_new_session_result`, `mcp_list_sessions_result`,
+  `mcp_close_session_result`, `collect_reply_stream`, `reply_stream_to_mcp_result`
 - **Constants**: `MCP_PROTOCOL_VERSION`, `MCP_DEFAULT_SESSION_NAME`, `MCP_EPHEMERAL_SESSION`,
   `DEFAULT_COLLECT_TIMEOUT_SECONDS`, `DEFAULT_CLOSE_GRACE_SECONDS`, `DEFAULT_MAX_REPR_BYTES`,
   `DEFAULT_MAX_MESSAGE_BYTES`, `OUTPUT_TRUNCATION_MARKER`
