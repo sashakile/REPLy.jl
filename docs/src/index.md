@@ -33,6 +33,9 @@ println("REPLy listening on port $(REPLy.server_port(server))")
 wait(Condition())
 ```
 
+!!! tip "Use REPLy like Revise"
+    For a much smoother workflow, you can configure REPLy to start automatically in every interactive session. See [How-to: REPLy as a Global Dev Tool](howto-dev-tool.md).
+
 ### 2. Connect and Evaluate Code
 
 Clients communicate with REPLy by sending newline-delimited JSON messages over TCP.
