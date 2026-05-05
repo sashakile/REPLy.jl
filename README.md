@@ -5,6 +5,16 @@
 
 **REPLy.jl** is a network REPL server for Julia. It exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively — similar to [nREPL](https://nrepl.org/) for Clojure.
 
+## Key Features
+
+- **Robust Execution**: Concurrent evaluation with captured `stdout`/`stderr` and structured error reporting.
+- **Persistent Sessions**: Maintain state across requests with named sessions and binding isolation.
+- **Rich Introspection**: Built-in support for tab-completion, documentation lookup, and file loading.
+- **Flexible Transports**: Supports both TCP and Unix domain sockets (with owner-only permissions).
+- **MCP Integration**: Includes a reference adapter for the [Model Context Protocol](https://modelcontextprotocol.io/), exposing Julia as a tool-calling target for LLMs.
+- **Revise Hook**: Automatic integration with [Revise.jl](https://github.com/timholy/Revise.jl) to pick up code changes between evaluations.
+- **Security & Limits**: Configurable resource limits (message size, output size, timeouts) and audit logging.
+
 ## Installation
 
 ```julia

@@ -9,3 +9,4 @@ REPLy
 OpenSpec
 netcat
 stdout
+LLMs
