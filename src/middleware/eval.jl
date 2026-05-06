@@ -221,6 +221,46 @@ function _maybe_revise!()
     return nothing
 end
 
+"""
+    with_session_eval(f, ctx, request_id)
+
+Shared lifecycle wrapper used by `eval_responses` and `load_file_responses`.
+
+Creates an ephemeral session when `ctx.session` is `nothing`, resolves the
+active session, then dispatches based on type:
+
+- `NamedSession`: acquires `eval_lock`, guards with `try_begin_eval!` (returning a
+  "session was closed" error if the session was concurrently destroyed), runs `f(session)`
+  under a `try`/`finally` that calls `end_eval!`, then releases the lock.
+- `ModuleSession` (ephemeral): calls `f(session)` directly without locking.
+
+Destroys the ephemeral session in a `finally` block so cleanup is guaranteed
+on both success and error paths.
+
+`f` receives the active session and must return a `Vector{Dict{String,Any}}`.
+"""
+function with_session_eval(f::Function, ctx::RequestContext, request_id::AbstractString)
+    ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
+    session = something(ephemeral, ctx.session)
+    try
+        if session isa NamedSession
+            lock(session.eval_lock) do
+                try_begin_eval!(session, current_task()) ||
+                    return [error_response(request_id, "session was closed")]
+                try
+                    f(session)
+                finally
+                    end_eval!(session)
+                end
+            end
+        else
+            f(session)
+        end
+    finally
+        !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+    end
+end
+
 function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = String(request["id"])
     code = get(request, "code", "")
@@ -255,35 +295,13 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     max_output_bytes    = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
     max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_session_history
 
-    # Defensive ephemeral fallback: SessionMiddleware normally provides a session
-    # before we reach this point.  This guard exists as a safety net for callers
-    # that bypass the middleware stack (e.g., direct eval_responses calls in tests
-    # or alternative pipelines).  With the default stack it is effectively dead code.
-    ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
-    session = something(ephemeral, ctx.session)
-
-    # module routing: resolved before concurrency registration so that an invalid
-    # module path returns early without ever touching active_evals or active_eval_tasks.
-    eval_module = session_module(session)
-    module_path = get(request, "module", nothing)
-    if module_path isa AbstractString
-        resolved = resolve_module(module_path)
-        if isnothing(resolved)
-            !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
-            return [error_response(request_id, "Cannot resolve module: $(module_path)")]
-        end
-        eval_module = resolved
-    end
-
-    # Concurrent eval limit enforcement — after module resolution so a bad module path
-    # never increments active_evals or registers the task.
+    # Concurrent eval limit enforcement.
     state = ctx.server_state
     if !isnothing(state)
         limit = state.limits.max_concurrent_evals
         current = Threads.atomic_add!(state.active_evals, 1)
         if current >= limit
             Threads.atomic_sub!(state.active_evals, 1)
-            !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
             return [error_response(request_id, "Too many concurrent evals";
                         status_flags=String["error", "concurrency-limit-reached"])]
         end
@@ -313,49 +331,40 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
 
     try
         msgs = try
-            if session isa NamedSession
-                # Serialize evals within this session (FIFO); independent across sessions.
-                # try_begin_eval! handles the race where destroy_named_session! runs concurrently:
-                # it returns false (no throw) when the session is already SessionClosed.
-                lock(session.eval_lock) do
-                    try_begin_eval!(session, current_task()) ||
-                        return [error_response(request_id, "session was closed")]
+            with_session_eval(ctx, request_id) do session
+                eval_module = session_module(session)
+                module_path = get(request, "module", nothing)
+                if module_path isa AbstractString
+                    resolved = resolve_module(module_path)
+                    if isnothing(resolved)
+                        return [error_response(request_id, "Cannot resolve module: $(module_path)")]
+                    end
+                    eval_module = resolved
+                end
+
+                if session isa NamedSession
                     this_eval_id[] = session_eval_id(session)
-                    # Revise hook: call Revise.revise() before each named-session eval
-                    # so long-running sessions pick up code changes automatically.
-                    # The hook is skipped when revise_hook_enabled=false in server limits.
                     revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
                     revise_enabled && _maybe_revise!()
-                    inner_msgs, captured = try
-                        if allow_stdin
-                            # Reuse a persistent Pipe + feeder Task for this session to avoid
-                            # per-eval libuv handle + Task allocation. The feeder bridges
-                            # session.stdin_channel to the pipe across all evals in this session.
-                            pipe = _ensure_stdin_feeder!(session)
-                            redirect_stdin(pipe.out) do
-                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-                            end
-                        else
-                            # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
-                            redirect_stdin(devnull) do
-                                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-                            end
-                        end
-                    finally
-                        end_eval!(session)
-                    end
-                    _update_history!(session, captured, store_history, max_session_history)
-                    inner_msgs
                 end
-            else
-                m, _ = if allow_stdin
+
+                inner_msgs, captured = if allow_stdin && session isa NamedSession
+                    # Reuse a persistent Pipe + feeder Task for this session to avoid
+                    # per-eval libuv handle + Task allocation.
+                    pipe = _ensure_stdin_feeder!(session)
+                    redirect_stdin(pipe.out) do
+                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+                    end
+                elseif allow_stdin
                     _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                 else
                     redirect_stdin(devnull) do
                         _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                     end
                 end
-                m
+
+                session isa NamedSession && _update_history!(session, captured, store_history, max_session_history)
+                inner_msgs
             end
         catch ex
             # InterruptException may escape _run_eval_core if it fires in the narrow
@@ -393,7 +402,6 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         # Cancel the timeout timer (no-op if already fired or never started).
         t = timeout_timer[]
         !isnothing(t) && close(t)
-        !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
         if !isnothing(state)
             unregister_active_eval!(state, current_task())
             Threads.atomic_sub!(state.active_evals, 1)

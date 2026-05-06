@@ -498,3 +498,33 @@ end
         @test isempty(REPLy.active_eval_tasks(state))
     end
 end
+
+@testset "with_session_eval helper" begin
+    @testset "returns session-closed error without calling f when named session is already closed" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "wse-closed")
+        REPLy.destroy_named_session!(manager, "wse-closed")
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], session)
+        called = Ref(false)
+        result = REPLy.with_session_eval(ctx, "req-1") do _s
+            called[] = true
+            []
+        end
+        @test !called[]
+        @test length(result) == 1
+        @test result[1]["err"] == "session was closed"
+        @test "error" in result[1]["status"]
+    end
+
+    @testset "calls f and destroys ephemeral session when ctx.session is nothing" begin
+        manager = REPLy.SessionManager()
+        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
+        f_session = Ref{Any}(nothing)
+        REPLy.with_session_eval(ctx, "req-2") do s
+            f_session[] = s
+            [REPLy.done_response("req-2")]
+        end
+        @test !isnothing(f_session[])
+        @test REPLy.session_count(manager) == 0
+    end
+end
