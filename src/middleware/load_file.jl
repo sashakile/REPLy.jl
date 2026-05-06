@@ -67,25 +67,8 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
 
     max_output_bytes = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
 
-    ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
-    session = something(ephemeral, ctx.session)
-
-    try
-        if session isa NamedSession
-            lock(session.eval_lock) do
-                try_begin_eval!(session, current_task()) ||
-                    return [error_response(request_id, "session was closed")]
-                try
-                    _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
-                finally
-                    end_eval!(session)
-                end
-            end
-        else
-            _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
-        end
-    finally
-        !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
+    with_session_eval(ctx, request_id) do session
+        _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
     end
 end
 
