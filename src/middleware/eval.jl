@@ -159,6 +159,17 @@ function _stdin_feeder(channel::Channel{String}, pipe_in::IO)
     end
 end
 
+# Create (or return existing) persistent stdin Pipe + feeder Task for `session`.
+# Must be called while holding session.eval_lock (serializes initialization).
+function _ensure_stdin_feeder!(session::NamedSession)
+    isnothing(session.stdin_pipe) || return session.stdin_pipe::Base.Pipe
+    pipe = Base.Pipe()
+    Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
+    session.stdin_feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
+    session.stdin_pipe = pipe
+    return pipe
+end
+
 # UUID of the authentic Revise.jl package (registered in the Julia General registry).
 # Used to reject shadow modules injected via eval.
 const _REVISE_PKG_ID = Base.PkgId(Base.UUID("295af30f-e4ad-537b-8983-00126c2a3abe"), "Revise")
@@ -315,31 +326,23 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
                     # The hook is skipped when revise_hook_enabled=false in server limits.
                     revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
                     revise_enabled && _maybe_revise!()
-                    inner_msgs, captured = if allow_stdin
-                        # Pipe + feeder task: bridges session.stdin_channel to the eval's
-                        # redirected stdin. redirect_stdin requires a Pipe, not a generic IO.
-                        pipe = Base.Pipe()
-                        Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
-                        feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
-                        try
+                    inner_msgs, captured = try
+                        if allow_stdin
+                            # Reuse a persistent Pipe + feeder Task for this session to avoid
+                            # per-eval libuv handle + Task allocation. The feeder bridges
+                            # session.stdin_channel to the pipe across all evals in this session.
+                            pipe = _ensure_stdin_feeder!(session)
                             redirect_stdin(pipe.out) do
                                 _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                             end
-                        finally
-                            schedule(feeder, InterruptException(); error=true)
-                            close(pipe.in)
-                            close(pipe.out)
-                            end_eval!(session)
-                        end
-                    else
-                        # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
-                        try
+                        else
+                            # allow-stdin false: redirect stdin to devnull so byte reads raise EOFError.
                             redirect_stdin(devnull) do
                                 _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                             end
-                        finally
-                            end_eval!(session)
                         end
+                    finally
+                        end_eval!(session)
                     end
                     _update_history!(session, captured, store_history, max_session_history)
                     inner_msgs

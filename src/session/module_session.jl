@@ -69,12 +69,32 @@ mutable struct NamedSession
     history::Vector{Any}
     eval_count::Int
     eval_id::Int
+    stdin_pipe::Union{Base.Pipe, Nothing}
+    stdin_feeder::Union{Task, Nothing}
 end
 
 function NamedSession(id::String, name::String, mod::Module)
     now = time()
-    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now, ReentrantLock(), ReentrantLock(), Channel{String}(MAX_STDIN_BUFFER_SIZE), Any[], 0, 0)
+    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now,
+                     ReentrantLock(), ReentrantLock(),
+                     Channel{String}(MAX_STDIN_BUFFER_SIZE),
+                     Any[], 0, 0, nothing, nothing)
     return s
+end
+
+function teardown_stdin_feeder!(session::NamedSession)
+    feeder = session.stdin_feeder
+    pipe = session.stdin_pipe
+    session.stdin_feeder = nothing
+    session.stdin_pipe = nothing
+    if !isnothing(feeder) && !istaskdone(feeder)
+        schedule(feeder, InterruptException(); error=true)
+    end
+    if !isnothing(pipe)
+        isopen(pipe.in) && close(pipe.in)
+        isopen(pipe.out) && close(pipe.out)
+    end
+    return nothing
 end
 
 """
