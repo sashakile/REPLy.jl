@@ -189,7 +189,7 @@ function mcp_list_sessions_result(manager::SessionManager)
 end
 
 """
-    mcp_close_session_result(manager, session_id_or_name) -> CallToolResult
+    mcp_close_session_result(manager, session_name) -> CallToolResult
 
 Close the session identified by UUID or name alias and return a non-error
 `CallToolResult`. Returns an error result if the session does not exist. The

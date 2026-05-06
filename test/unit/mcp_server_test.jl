@@ -80,4 +80,12 @@ using Sockets
         @test resp["result"]["isError"] == true
         @test occursin("Unknown tool", resp["result"]["content"][1]["text"])
     end
+
+    @testset "Stub tools return isError" begin
+        for tool in ("julia_load_file", "julia_interrupt", "julia_complete", "julia_lookup")
+            resp = test_mcp_rpc("tools/call", Dict("name" => tool, "arguments" => Dict()))
+            @test resp["result"]["isError"] == true
+            @test occursin("not yet implemented", resp["result"]["content"][1]["text"])
+        end
+    end
 end

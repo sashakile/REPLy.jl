@@ -137,7 +137,7 @@ using REPLy: collect_reply_stream, reply_stream_to_mcp_result
 conn = connect(ip"127.0.0.1", 5555)
 transport = JSONTransport(conn, ReentrantLock())
 
-send(transport, request)  # send the request first
+send!(transport, request)  # send the request first
 msgs = collect_reply_stream(transport, "req-1")
 result = reply_stream_to_mcp_result(msgs)
 # result["isError"] == false
