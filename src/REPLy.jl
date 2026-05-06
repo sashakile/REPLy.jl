@@ -22,7 +22,7 @@ export session_state, session_eval_task, session_last_active_at, session_eval_co
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits
-export AuditLog, AuditLogEntry, audit_entries, record_audit!
+export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware
 export MiddlewareDescriptor, descriptor, validate_stack
 export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
@@ -38,6 +38,7 @@ include("config/server_state.jl")
 include("security/audit.jl")
 include("session/manager.jl")
 include("middleware/core.jl")
+include("middleware/audit.jl")
 include("middleware/eval.jl")
 include("middleware/describe.jl")
 include("middleware/load_file.jl")
