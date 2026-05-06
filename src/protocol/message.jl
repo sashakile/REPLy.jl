@@ -44,7 +44,7 @@ function read_bounded_line(io::IO, max_bytes::Int)
     return String(buf)
 end
 
-function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{Dict{String, Any}, Nothing}
+function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{JSON3.Object, Nothing}
     # REQ-RPL-040b: disconnects/partial reads must not escape to callers.
     # Wrap the entire loop so IOError from eof() (e.g. ECONNRESET) is also caught.
     try
@@ -66,7 +66,7 @@ function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_ME
             end
 
             msg isa JSON3.Object || continue
-            return Dict{String, Any}(String(key) => value for (key, value) in pairs(msg))
+            return msg
         end
     catch ex
         ex isa MessageTooLargeError && rethrow()

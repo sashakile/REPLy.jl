@@ -130,7 +130,7 @@ end
             "{\"id\":\"req-b\",\"status\":[\"done\"]}\n",
         )
         transport = REPLy.JSONTransport(io, ReentrantLock())
-        pending = Dict{String, Vector{Dict{String, Any}}}()
+        pending = Dict{String, Vector{AbstractDict}}()
 
         msgs_a = REPLy.collect_reply_stream(transport, "req-a"; pending)
         msgs_b = REPLy.collect_reply_stream(transport, "req-b"; pending)

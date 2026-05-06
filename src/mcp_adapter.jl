@@ -258,17 +258,17 @@ message is returned. A positive `timeout_seconds` is required.
 function collect_reply_stream(
     transport::AbstractTransport,
     request_id::AbstractString;
-    pending::AbstractDict{String, Vector{Dict{String, Any}}}=Dict{String, Vector{Dict{String, Any}}}(),
+    pending::AbstractDict{String, Vector{AbstractDict}}=Dict{String, Vector{AbstractDict}}(),
     timeout_seconds::Real=DEFAULT_COLLECT_TIMEOUT_SECONDS,
 )
     timeout_seconds > 0 || throw(ArgumentError("timeout_seconds must be positive, got $timeout_seconds"))
 
     # `collected` is owned exclusively by the async task — no shared-state race.
     task = @async begin
-        collected = Dict{String, Any}[]
+        collected = AbstractDict[]
         while true
             buffered = get(pending, request_id, nothing)
-            if buffered isa Vector{Dict{String, Any}} && !isempty(buffered)
+            if buffered isa Vector{AbstractDict} && !isempty(buffered)
                 msg = popfirst!(buffered)
                 if isempty(buffered)
                     delete!(pending, request_id)
@@ -280,7 +280,7 @@ function collect_reply_stream(
                 msg_id isa AbstractString || continue
 
                 if msg_id != request_id
-                    push!(get!(pending, msg_id, Dict{String, Any}[]), msg)
+                    push!(get!(pending, msg_id, AbstractDict[]), msg)
                     continue
                 end
             end

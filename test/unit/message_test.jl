@@ -13,12 +13,24 @@
 
         @testset "receive returns parsed flat object" begin
             transport = REPLy.JSONTransport(IOBuffer("{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"), ReentrantLock())
-            @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
+            result = REPLy.receive(transport)
+            @test get(result, "op", nothing) == "eval"
+            @test get(result, "id", nothing) == "1"
+            @test get(result, "code", nothing) == "1+1"
+        end
+
+        @testset "receive returns JSON3.Object without Dict allocation" begin
+            transport = REPLy.JSONTransport(IOBuffer("{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"), ReentrantLock())
+            result = REPLy.receive(transport)
+            @test !(result isa Dict{String, Any})
+            @test result isa JSON3.Object
         end
 
         @testset "receive skips blank and whitespace lines" begin
             transport = REPLy.JSONTransport(IOBuffer("\n   \n{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"), ReentrantLock())
-            @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
+            result = REPLy.receive(transport)
+            @test get(result, "op", nothing) == "eval"
+            @test get(result, "id", nothing) == "1"
         end
 
         @testset "receive treats malformed JSON as a closed boundary" begin
@@ -37,7 +49,9 @@
 
         @testset "receive skips non-object JSON values" begin
             transport = REPLy.JSONTransport(IOBuffer("[]\n{\"op\":\"eval\",\"id\":\"1\",\"code\":\"1+1\"}\n"), ReentrantLock())
-            @test REPLy.receive(transport) == Dict("op" => "eval", "id" => "1", "code" => "1+1")
+            result = REPLy.receive(transport)
+            @test get(result, "op", nothing) == "eval"
+            @test get(result, "id", nothing) == "1"
         end
 
         @testset "receive throws MessageTooLargeError when line exceeds max_message_bytes" begin
