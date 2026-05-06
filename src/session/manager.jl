@@ -213,6 +213,7 @@ function destroy_named_session!(manager::SessionManager, id_or_name::AbstractStr
         lock(session.lock) do
             session.state = SessionClosed
         end
+        teardown_stdin_feeder!(session)
     end
     # Phase 3: remove from registry. session.id is the canonical UUID, so removal
     # is correct regardless of whether id_or_name was an alias or a UUID.
