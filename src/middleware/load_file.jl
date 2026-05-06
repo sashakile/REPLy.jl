@@ -90,34 +90,21 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
 end
 
 function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int))
-    stdout_pipe = Base.Pipe()
-    stderr_pipe = Base.Pipe()
-    Base.link_pipe!(stdout_pipe; reader_supports_async=true, writer_supports_async=true)
-    Base.link_pipe!(stderr_pipe; reader_supports_async=true, writer_supports_async=true)
+    ensure_io_capture_installed!()
 
+    task = current_task()
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
-    stdout_reader = @async write(stdout_buf, stdout_pipe.out)
-    stderr_reader = @async write(stderr_buf, stderr_pipe.out)
+
+    register_task_capture!(_STDOUT_CAPTURER[], task, stdout_buf)
+    register_task_capture!(_STDERR_CAPTURER[], task, stderr_buf)
 
     try
-        eval_result = lock(EVAL_IO_CAPTURE_LOCK) do
-            try
-                value = redirect_stdout(stdout_pipe.in) do
-                    redirect_stderr(stderr_pipe.in) do
-                        Base.include_string(module_, code, file)
-                    end
-                end
-                (:ok, value)
-            catch ex
-                (:error, ex, catch_backtrace())
-            end
+        eval_result = try
+            (:ok, Base.include_string(module_, code, file))
+        catch ex
+            (:error, ex, catch_backtrace())
         end
-
-        close(stdout_pipe.in)
-        close(stderr_pipe.in)
-        wait(stdout_reader)
-        wait(stderr_reader)
 
         stdout_text = truncate_output(String(take!(stdout_buf)), max_output_bytes)
         stderr_text = truncate_output(String(take!(stderr_buf)), max_output_bytes)
@@ -135,7 +122,7 @@ function _run_load_file_core(module_::Module, request_id::AbstractString, code::
         push!(responses, done_response(request_id))
         return responses
     finally
-        isopen(stdout_pipe.in) && close(stdout_pipe.in)
-        isopen(stderr_pipe.in) && close(stderr_pipe.in)
+        unregister_task_capture!(_STDOUT_CAPTURER[], task)
+        unregister_task_capture!(_STDERR_CAPTURER[], task)
     end
 end

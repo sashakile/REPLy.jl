@@ -57,45 +57,29 @@ function eval_parsed(module_::Module, exprs)
 end
 
 function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))
-    # Pipe-based capture replaces mktemp: no filesystem I/O on the eval hot-path.
-    # dup2 is still process-global, so EVAL_IO_CAPTURE_LOCK serializes redirects.
-    # Async readers drain each pipe into an IOBuffer to prevent deadlock when
-    # eval output exceeds the OS pipe buffer (~64 KiB on Linux).
-    stdout_pipe = Base.Pipe()
-    stderr_pipe = Base.Pipe()
-    Base.link_pipe!(stdout_pipe; reader_supports_async=true, writer_supports_async=true)
-    Base.link_pipe!(stderr_pipe; reader_supports_async=true, writer_supports_async=true)
+    # TaskCapturingIO routes Julia-level writes to per-task IOBuffers without
+    # dup2, so concurrent evals across sessions capture their own output
+    # independently. Install is idempotent and performed once per process.
+    ensure_io_capture_installed!()
 
+    task = current_task()
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
 
-    # Start readers before acquiring the lock so they drain output while the eval runs.
-    stdout_reader = @async write(stdout_buf, stdout_pipe.out)
-    stderr_reader = @async write(stderr_buf, stderr_pipe.out)
+    register_task_capture!(_STDOUT_CAPTURER[], task, stdout_buf)
+    register_task_capture!(_STDERR_CAPTURER[], task, stderr_buf)
 
     try
         # (:ok, value) on success; (:error, ex, bt) on exception.
-        eval_result = lock(EVAL_IO_CAPTURE_LOCK) do
-            try
-                value = redirect_stdout(stdout_pipe.in) do
-                    redirect_stderr(stderr_pipe.in) do
-                        if isempty(strip(code))
-                            nothing
-                        else
-                            eval_parsed(module_, Meta.parseall(code))
-                        end
-                    end
-                end
-                (:ok, value)
-            catch ex
-                (:error, ex, catch_backtrace())
+        eval_result = try
+            if isempty(strip(code))
+                (:ok, nothing)
+            else
+                (:ok, eval_parsed(module_, Meta.parseall(code)))
             end
+        catch ex
+            (:error, ex, catch_backtrace())
         end
-
-        close(stdout_pipe.in)
-        close(stderr_pipe.in)
-        wait(stdout_reader)
-        wait(stderr_reader)
 
         stdout_text = truncate_output(String(take!(stdout_buf)), max_output_bytes)
         stderr_text = truncate_output(String(take!(stderr_buf)), max_output_bytes)
@@ -119,10 +103,8 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         push!(responses, done_response(request_id))
         return (responses, Some(value))
     finally
-        # Close write ends if not already done (e.g., InterruptException escaped the
-        # lock wait). Readers will drain buffered bytes and terminate on EOF.
-        isopen(stdout_pipe.in) && close(stdout_pipe.in)
-        isopen(stderr_pipe.in) && close(stderr_pipe.in)
+        unregister_task_capture!(_STDOUT_CAPTURER[], task)
+        unregister_task_capture!(_STDERR_CAPTURER[], task)
     end
 end
 
