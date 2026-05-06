@@ -39,6 +39,7 @@ include("helpers/server.jl")
         include("unit/disconnect_cleanup_test.jl")
         include("unit/audit_log_test.jl")
         include("unit/audit_middleware_test.jl")
+        include("unit/concurrent_eval_test.jl")
         include("unit/revise_hook_test.jl")
     end
 
