@@ -61,13 +61,15 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
     # dup2, so concurrent evals across sessions capture their own output
     # independently. Install is idempotent and performed once per process.
     ensure_io_capture_installed!()
+    stdout_cap = _STDOUT_CAPTURER[]::TaskCapturingIO
+    stderr_cap = _STDERR_CAPTURER[]::TaskCapturingIO
 
     task = current_task()
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
 
-    register_task_capture!(_STDOUT_CAPTURER[], task, stdout_buf)
-    register_task_capture!(_STDERR_CAPTURER[], task, stderr_buf)
+    register_task_capture!(stdout_cap, task, stdout_buf)
+    register_task_capture!(stderr_cap, task, stderr_buf)
 
     try
         # (:ok, value) on success; (:error, ex, bt) on exception.
@@ -103,8 +105,8 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         push!(responses, done_response(request_id))
         return (responses, Some(value))
     finally
-        unregister_task_capture!(_STDOUT_CAPTURER[], task)
-        unregister_task_capture!(_STDERR_CAPTURER[], task)
+        unregister_task_capture!(stdout_cap, task)
+        unregister_task_capture!(stderr_cap, task)
     end
 end
 

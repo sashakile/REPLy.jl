@@ -17,27 +17,28 @@ end
 AuditMiddleware(log::AuditLog; client_id::UUID=UUID(UInt128(0)), source_ip::AbstractString="") =
     AuditMiddleware(log, client_id, String(source_ip))
 
+_session_id_or_nothing(session::NamedSession) = session_id(session)
+_session_id_or_nothing(::Any) = nothing
+
 function handle_message(mw::AuditMiddleware, msg, next, ctx::RequestContext)
     op = String(get(msg, "op", ""))
     t = now(UTC)
     try
         result = next(msg)
-        sid = ctx.session isa NamedSession ? session_id(ctx.session) : nothing
         record_audit!(mw.log, AuditLogEntry(
             timestamp=t,
             client_id=mw.client_id,
-            session_id=sid,
+            session_id=_session_id_or_nothing(ctx.session),
             operation=op,
             source_ip=mw.source_ip,
             success=true,
         ))
         return result
     catch ex
-        sid = ctx.session isa NamedSession ? session_id(ctx.session) : nothing
         record_audit!(mw.log, AuditLogEntry(
             timestamp=t,
             client_id=mw.client_id,
-            session_id=sid,
+            session_id=_session_id_or_nothing(ctx.session),
             operation=op,
             source_ip=mw.source_ip,
             success=false,

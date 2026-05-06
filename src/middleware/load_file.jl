@@ -91,13 +91,15 @@ end
 
 function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int))
     ensure_io_capture_installed!()
+    stdout_cap = _STDOUT_CAPTURER[]::TaskCapturingIO
+    stderr_cap = _STDERR_CAPTURER[]::TaskCapturingIO
 
     task = current_task()
     stdout_buf = IOBuffer()
     stderr_buf = IOBuffer()
 
-    register_task_capture!(_STDOUT_CAPTURER[], task, stdout_buf)
-    register_task_capture!(_STDERR_CAPTURER[], task, stderr_buf)
+    register_task_capture!(stdout_cap, task, stdout_buf)
+    register_task_capture!(stderr_cap, task, stderr_buf)
 
     try
         eval_result = try
@@ -122,7 +124,7 @@ function _run_load_file_core(module_::Module, request_id::AbstractString, code::
         push!(responses, done_response(request_id))
         return responses
     finally
-        unregister_task_capture!(_STDOUT_CAPTURER[], task)
-        unregister_task_capture!(_STDERR_CAPTURER[], task)
+        unregister_task_capture!(stdout_cap, task)
+        unregister_task_capture!(stderr_cap, task)
     end
 end
