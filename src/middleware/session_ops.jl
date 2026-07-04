@@ -46,7 +46,7 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
             "returns"  => String[],
         ),
         "clone" => Dict{String, Any}(
-            "doc"      => "Clone a named session to a new name. Source is identified by 'session' (spec) or 'source' (compat). Optional 'type' field: 'light' (default) or 'heavy' (post-v1.0, returns not-supported).",
+            "doc"      => "Clone a named session to a new name. Source is identified by 'session' (spec) or 'source' (compat). Optional 'type' field: 'light' (default) or 'heavy' (post-v1.0, returns not-supported). Copied bindings are const (reassignment throws ConstAssignmentError; mutable values are deep-copied so in-place mutation still works and stays isolated from the source).",
             "requires" => ["name"],
             "optional" => ["session", "source", "type"],
             "returns"  => ["new-session", "name"],

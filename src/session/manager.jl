@@ -398,7 +398,12 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
             val = getfield(source_mod, sym)
             val isa Module && continue
             copied = ismutable(val) ? deepcopy(val) : val
-            Core.eval(dest_mod, :($(sym) = $(QuoteNode(copied))))
+            # Julia >= 1.11 (#56933) rejects bare `sym = val` global assignment via
+            # Core.eval into a foreign module, silently producing an empty binding.
+            # Use a `const` binding, which is accepted. Cloned bindings are therefore
+            # const: reassignment throws ConstAssignmentError, but mutation of the
+            # (deep-copied) mutable value still works.
+            Core.eval(dest_mod, :(const $(sym) = $(QuoteNode(copied))))
         end
     end
 
