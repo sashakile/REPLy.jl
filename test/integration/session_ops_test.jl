@@ -34,13 +34,24 @@
         value_msg = filter(m -> haskey(m, "value"), msgs)
         @test value_msg[1]["value"] == ":initialized"
 
-        # Step 4: mutate clone and verify isolation
-        handler(Dict(
+        # Step 4: cloned bindings are const (Julia >= 1.11 semantics) — reassigning
+        # in the clone returns an error status, and the session recovers afterward.
+        msgs = handler(Dict(
             "op" => "eval",
             "id" => "lifecycle-mutate-clone",
             "code" => "state = :forked",
             "session" => "workspace-fork",
         ))
+        @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+        # Session recovers: a subsequent eval in the clone succeeds.
+        msgs = handler(Dict(
+            "op" => "eval",
+            "id" => "lifecycle-clone-recover",
+            "code" => "1 + 1",
+            "session" => "workspace-fork",
+        ))
+        @test filter(m -> haskey(m, "value"), msgs)[1]["value"] == "2"
+
         msgs = handler(Dict(
             "op" => "eval",
             "id" => "lifecycle-check-orig",

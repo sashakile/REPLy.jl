@@ -113,7 +113,7 @@
         @test Core.eval(REPLy.session_module(clone), :x) == 42
     end
 
-    @testset "clone-session creates an independent copy (mutations do not leak back)" begin
+    @testset "clone-session copies bindings as const (reassignment throws, source unchanged)" begin
         manager = REPLy.SessionManager()
         source = REPLy.create_named_session!(manager, "src")
         Core.eval(REPLy.session_module(source), :(counter = 10))
@@ -126,13 +126,14 @@
             "name" => "dst",
         ))
 
-        # Mutate the clone
         clone = REPLy.lookup_named_session(manager, "dst")
-        Core.eval(REPLy.session_module(clone), :(counter += 100))
+        # Cloned scalar bindings are const (Julia >= 1.11 global-assignment
+        # semantics): the binding is copied and readable, but reassignment throws.
+        @test Core.eval(REPLy.session_module(clone), :counter) == 10
+        @test_throws ErrorException Core.eval(REPLy.session_module(clone), :(counter = 999))
 
-        # Original is unchanged
+        # Original is unchanged and remains usable.
         @test Core.eval(REPLy.session_module(source), :counter) == 10
-        @test Core.eval(REPLy.session_module(clone), :counter) == 110
     end
 
     @testset "clone-session returns error for non-existent source" begin

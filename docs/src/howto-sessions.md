@@ -101,6 +101,14 @@ The `"new-session"` field carries the UUID of the newly created clone. `"session
 {"op": "eval", "id": "exp-1", "session": "experiment", "code": "x"}
 ```
 
+!!! note "Cloned bindings are const"
+    Copied bindings are installed as `const` in the clone (required by Julia's
+    strict global-assignment semantics on 1.11+). Reassigning a cloned binding
+    (for example `x = 5`) returns an error (`ConstAssignmentError`); the session
+    recovers and the next `eval` succeeds. Mutable values are deep-copied, so
+    in-place mutation (for example `push!(v, 1)`) still works and stays isolated
+    from the source.
+
 ## 5. Close a Session
 
 When a session is no longer needed, close it to free resources:
