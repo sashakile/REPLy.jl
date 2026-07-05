@@ -29,13 +29,23 @@ descriptor(::EvalMiddleware) = MiddlewareDescriptor(
             "doc"      => "Evaluate Julia code in a session module.",
             "requires" => ["code"],
             "optional" => ["session", "module", "timeout-ms", "allow-stdin", "silent", "store-history"],
-            "returns"  => ["out", "err", "value", "ns"],
+            "returns"  => ["out", "err", "value", "repr-error", "ns"],
         ),
     ),
 )
 
 
-safe_repr(value; max_bytes::Int=DEFAULT_MAX_REPR_BYTES) = truncate_output(safe_render("repr", repr, value), max_bytes)
+# Build the terminal `value` response for eval/load-file. On repr success emits
+# {value: <repr>, ns}; on repr failure emits {value: null, repr-error: <type>, ns}
+# so clients can distinguish a non-representable result from a returned string.
+function value_response(request_id::AbstractString, value, module_::Module; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
+    kind, payload = try_repr(value; max_bytes=max_repr_bytes)
+    if kind === :ok
+        return response_message(request_id, "value" => payload, "ns" => string(nameof(module_)))
+    else
+        return response_message(request_id, "value" => nothing, "repr-error" => payload, "ns" => string(nameof(module_)))
+    end
+end
 
 function buffered_output_messages(request_id::AbstractString, stdout_text::AbstractString, stderr_text::AbstractString)
     messages = Dict{String, Any}[]
@@ -100,7 +110,7 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
         _, value = eval_result
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
         if !silent
-            push!(responses, response_message(request_id, "value" => safe_repr(value; max_bytes=max_repr_bytes), "ns" => string(nameof(module_))))
+            push!(responses, value_response(request_id, value, module_; max_repr_bytes=max_repr_bytes))
         end
         push!(responses, done_response(request_id))
         return (responses, Some(value))
@@ -305,7 +315,6 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             return [error_response(request_id, "Too many concurrent evals";
                         status_flags=String["error", "concurrency-limit-reached"])]
         end
-        register_active_eval!(state, current_task())
     end
 
     # Timeout state: timed_out is set by the Timer callback before firing InterruptException.
@@ -313,8 +322,59 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     timed_out = Ref(false)
     timeout_timer = Ref{Union{Timer, Nothing}}(nothing)
 
+    # For named sessions, eval_id is captured after try_begin_eval! increments it.
+    # Nothing for ephemeral sessions (they have no persistent identity).
+    this_eval_id = Ref{Union{Int, Nothing}}(nothing)
+
+    # Run the eval body on a DEDICATED child task. Timeout, interrupt-op, and
+    # shutdown InterruptExceptions all target this child (via session.eval_task
+    # and register_active_eval!), so a late/racing interrupt can never bleed into
+    # the connection task's next request or the receive loop. A schedule against
+    # a finished child throws harmlessly into the empty catch below.
+    eval_task = @task with_session_eval(ctx, request_id) do session
+        eval_module = session_module(session)
+        module_path = get(request, "module", nothing)
+        if module_path isa AbstractString
+            resolved = resolve_module(module_path)
+            if isnothing(resolved)
+                return [error_response(request_id, "Cannot resolve module: $(module_path)")]
+            end
+            eval_module = resolved
+        end
+
+        if session isa NamedSession
+            this_eval_id[] = session_eval_id(session)
+            revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
+            revise_enabled && _maybe_revise!()
+        end
+
+        inner_msgs, captured = if allow_stdin && session isa NamedSession
+            # Reuse a persistent Pipe + feeder Task for this session to avoid
+            # per-eval libuv handle + Task allocation.
+            pipe = _ensure_stdin_feeder!(session)
+            redirect_stdin(pipe.out) do
+                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+            end
+        elseif allow_stdin
+            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+        else
+            redirect_stdin(devnull) do
+                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+            end
+        end
+
+        session isa NamedSession && _update_history!(session, captured, store_history, max_session_history)
+        inner_msgs
+    end
+    eval_task.sticky = true
+    # Register the child (not the connection task) so shutdown interrupts it and
+    # close_server! waits on the eval itself.
+    !isnothing(state) && register_active_eval!(state, eval_task)
+    # Start the child BEFORE arming the timer: a timer that fires first would
+    # enqueue the child with an exception, making our own schedule(eval_task) throw.
+    schedule(eval_task)
+
     if !isnothing(effective_timeout_ms)
-        eval_task = current_task()
         timeout_timer[] = Timer(effective_timeout_ms / 1000.0) do _
             istaskdone(eval_task) && return
             timed_out[] = true
@@ -325,51 +385,15 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         end
     end
 
-    # For named sessions, eval_id is captured after try_begin_eval! increments it.
-    # Nothing for ephemeral sessions (they have no persistent identity).
-    this_eval_id = Ref{Union{Int, Nothing}}(nothing)
-
     try
         msgs = try
-            with_session_eval(ctx, request_id) do session
-                eval_module = session_module(session)
-                module_path = get(request, "module", nothing)
-                if module_path isa AbstractString
-                    resolved = resolve_module(module_path)
-                    if isnothing(resolved)
-                        return [error_response(request_id, "Cannot resolve module: $(module_path)")]
-                    end
-                    eval_module = resolved
-                end
-
-                if session isa NamedSession
-                    this_eval_id[] = session_eval_id(session)
-                    revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
-                    revise_enabled && _maybe_revise!()
-                end
-
-                inner_msgs, captured = if allow_stdin && session isa NamedSession
-                    # Reuse a persistent Pipe + feeder Task for this session to avoid
-                    # per-eval libuv handle + Task allocation.
-                    pipe = _ensure_stdin_feeder!(session)
-                    redirect_stdin(pipe.out) do
-                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-                    end
-                elseif allow_stdin
-                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-                else
-                    redirect_stdin(devnull) do
-                        _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-                    end
-                end
-
-                session isa NamedSession && _update_history!(session, captured, store_history, max_session_history)
-                inner_msgs
-            end
+            fetch(eval_task)
         catch ex
+            # fetch wraps a failed task's exception in TaskFailedException.
             # InterruptException may escape _run_eval_core if it fires in the narrow
             # window during redirect setup rather than inside eval_parsed itself.
-            ex isa InterruptException || rethrow()
+            inner = ex isa TaskFailedException ? ex.task.exception : ex
+            inner isa InterruptException || rethrow()
             if timed_out[]
                 [response_message(request_id, "status" => ["done", "error", "timeout"], "err" => "eval timed out")]
             else
@@ -403,7 +427,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         t = timeout_timer[]
         !isnothing(t) && close(t)
         if !isnothing(state)
-            unregister_active_eval!(state, current_task())
+            unregister_active_eval!(state, eval_task)
             Threads.atomic_sub!(state.active_evals, 1)
         end
     end

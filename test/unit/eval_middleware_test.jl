@@ -80,7 +80,10 @@
 
         assert_conformance(msgs, "eval-broken-repr")
         value_msg = only(filter(msg -> haskey(msg, "value"), msgs))
-        @test value_msg["value"] == "<repr failed: BrokenShow>"
+        # A repr failure is flagged distinctly (value: null + repr-error) rather
+        # than embedded in value as "<repr failed: …>".
+        @test isnothing(value_msg["value"])
+        @test value_msg["repr-error"] == "BrokenShow"
     end
 
     @testset "broken showerror methods fall back instead of crashing" begin
@@ -270,6 +273,30 @@ end
         @test "error"   in terminal["status"]
         @test "timeout" in terminal["status"]
         @test terminal["err"] == "eval timed out"
+    end
+
+    @testset "a timed-out eval never bleeds an interrupt into the next request" begin
+        # Regression for the timer/connection-task race: the eval now runs on a
+        # dedicated child task, so a late InterruptException cannot land on the
+        # (shared) handler task and corrupt the following eval on that connection.
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "race-sess")
+        handler = REPLy.build_handler(; manager=manager)
+
+        for i in 1:40
+            # First request: times out at the ~1ms boundary while the body sleeps.
+            handler(Dict("op" => "eval", "id" => "race-a-$i", "session" => "race-sess",
+                         "code" => "sleep(0.02)", "timeout-ms" => 1))
+            # Second request on the SAME handler must complete cleanly.
+            msgs = handler(Dict("op" => "eval", "id" => "race-b-$i", "session" => "race-sess",
+                                "code" => "1 + 1"))
+            value_msg = only(filter(m -> haskey(m, "value"), msgs))
+            @test value_msg["value"] == "2"
+            terminal = last(msgs)
+            @test !("interrupted" in terminal["status"])
+            @test !("timeout" in terminal["status"])
+            @test !("error" in terminal["status"])
+        end
     end
 
     @testset "timeout-ms is capped by server max_eval_time_ms" begin
@@ -526,5 +553,34 @@ end
         end
         @test !isnothing(f_session[])
         @test REPLy.session_count(manager) == 0
+    end
+end
+
+@testset "repr failure reporting" begin
+    @testset "eval reports repr failure via repr-error, not inside value" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "repr-boom")
+        handler = REPLy.build_handler(; manager=manager)
+
+        # Define a type whose show throws in a first request, so the method is
+        # visible (world age) when the second request reprs an instance.
+        handler(Dict("op" => "eval", "id" => "rb1", "session" => "repr-boom",
+                     "code" => "struct ReprBoom end; Base.show(io::IO, ::ReprBoom) = error(\"no repr\")"))
+        msgs = handler(Dict("op" => "eval", "id" => "rb2", "session" => "repr-boom",
+                            "code" => "ReprBoom()"))
+
+        value_msg = only(filter(m -> haskey(m, "value"), msgs))
+        @test isnothing(value_msg["value"])
+        @test haskey(value_msg, "repr-error")
+        @test occursin("ReprBoom", value_msg["repr-error"])
+        # No embedded "<repr failed: ...>" sentinel in value anymore.
+        @test !haskey(value_msg, "value") || isnothing(value_msg["value"])
+    end
+
+    @testset "successful eval still returns a string value and no repr-error" begin
+        msgs = REPLy.build_handler()(Dict("op" => "eval", "id" => "ok", "code" => "1 + 1"))
+        value_msg = only(filter(m -> haskey(m, "value"), msgs))
+        @test value_msg["value"] == "2"
+        @test !haskey(value_msg, "repr-error")
     end
 end

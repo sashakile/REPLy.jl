@@ -132,4 +132,28 @@
             rm(file; force=true)
         end
     end
+
+    @testset "load-file honors max_repr_bytes (truncates large repr)" begin
+        ctx = make_ctx()
+        file = tempname() * ".jl"
+        try
+            write(file, "repeat(\"x\", 10_000)")
+            mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true, max_repr_bytes = 20)
+            stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
+            msgs = REPLy.dispatch_middleware(stack, 1, Dict("op" => "load-file", "id" => "lf9", "file" => file), ctx)
+
+            assert_conformance(msgs, "lf9")
+            value_msg = only(filter(m -> haskey(m, "value"), msgs))
+            @test endswith(value_msg["value"], REPLy.OUTPUT_TRUNCATION_MARKER)
+            @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits(REPLy.OUTPUT_TRUNCATION_MARKER)
+        finally
+            rm(file; force=true)
+        end
+    end
+
+    @testset "LoadFileMiddleware(limits) picks up max_repr_bytes from ResourceLimits" begin
+        limits = REPLy.ResourceLimits(max_repr_bytes = 33)
+        mw = REPLy.LoadFileMiddleware(limits; load_file_allowlist = _ -> true)
+        @test mw.max_repr_bytes == 33
+    end
 end

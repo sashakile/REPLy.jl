@@ -3,7 +3,8 @@
 # in stack traces. Supports an optional path-allowlist hook.
 
 """
-    LoadFileMiddleware(; load_file_allowlist=nothing)
+    LoadFileMiddleware(; load_file_allowlist=nothing, max_repr_bytes=DEFAULT_MAX_REPR_BYTES)
+    LoadFileMiddleware(limits::ResourceLimits; load_file_allowlist=nothing)
 
 Middleware that handles `op == "load-file"` requests. Reads `file` from disk
 and evaluates its content in the active session module using `Base.include_string`
@@ -15,12 +16,19 @@ pass `load_file_allowlist = _ -> true` to allow all files (insecure). Returning 
 causes the request to fail with a path-not-allowed error before any file I/O occurs,
 preventing path enumeration.
 
+`max_repr_bytes` bounds the byte length of the returned value's `repr`, mirroring
+`EvalMiddleware`. Pass a `ResourceLimits` to derive it from `limits.max_repr_bytes`.
+
 All other ops are forwarded to the next middleware.
 """
 struct LoadFileMiddleware <: AbstractMiddleware
     load_file_allowlist::Union{Nothing, Function}
+    max_repr_bytes::Int
 end
-LoadFileMiddleware(; load_file_allowlist=nothing) = LoadFileMiddleware(load_file_allowlist)
+LoadFileMiddleware(; load_file_allowlist=nothing, max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) =
+    LoadFileMiddleware(load_file_allowlist, max_repr_bytes)
+LoadFileMiddleware(limits::ResourceLimits; load_file_allowlist=nothing) =
+    LoadFileMiddleware(load_file_allowlist, limits.max_repr_bytes)
 
 descriptor(::LoadFileMiddleware) = MiddlewareDescriptor(
     provides = Set(["load-file"]),
@@ -29,17 +37,17 @@ descriptor(::LoadFileMiddleware) = MiddlewareDescriptor(
             "doc"      => "Load and evaluate a Julia source file.",
             "requires" => ["file"],
             "optional" => ["session"],
-            "returns"  => ["out", "err", "value", "ns"],
+            "returns"  => ["out", "err", "value", "repr-error", "ns"],
         ),
     ),
 )
 
 function handle_message(mw::LoadFileMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "load-file" || return next(msg)
-    return load_file_responses(ctx, msg; load_file_allowlist=mw.load_file_allowlist)
+    return load_file_responses(ctx, msg; load_file_allowlist=mw.load_file_allowlist, max_repr_bytes=mw.max_repr_bytes)
 end
 
-function load_file_responses(ctx::RequestContext, request::AbstractDict; load_file_allowlist=nothing)
+function load_file_responses(ctx::RequestContext, request::AbstractDict; load_file_allowlist=nothing, max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = String(request["id"])
 
     file = get(request, "file", nothing)
@@ -68,11 +76,11 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
     max_output_bytes = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
 
     with_session_eval(ctx, request_id) do session
-        _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes)
+        _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes, max_repr_bytes)
     end
 end
 
-function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int))
+function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int), max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     ensure_io_capture_installed!()
     stdout_cap = _STDOUT_CAPTURER[]::TaskCapturingIO
     stderr_cap = _STDERR_CAPTURER[]::TaskCapturingIO
@@ -103,7 +111,7 @@ function _run_load_file_core(module_::Module, request_id::AbstractString, code::
 
         _, value = eval_result
         responses = buffered_output_messages(request_id, stdout_text, stderr_text)
-        push!(responses, response_message(request_id, "value" => safe_repr(value), "ns" => string(nameof(module_))))
+        push!(responses, value_response(request_id, value, module_; max_repr_bytes=max_repr_bytes))
         push!(responses, done_response(request_id))
         return responses
     finally
