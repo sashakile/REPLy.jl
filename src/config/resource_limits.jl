@@ -7,7 +7,7 @@
 Immutable configuration struct for resource limits applied to eval requests and sessions.
 
 Fields:
-- `max_repr_bytes::Int` — maximum byte length for `repr` output (default: `DEFAULT_MAX_REPR_BYTES`, 10 KB). Active: used by `EvalMiddleware`.
+- `max_repr_bytes::Int` — maximum byte length for `repr` output (default: `DEFAULT_MAX_REPR_BYTES`, 10 KB). Active: used by `EvalMiddleware` and `LoadFileMiddleware`.
 - `max_eval_time_ms::Int` — maximum wall-clock eval time in milliseconds (default: 30 000). Enforced by `EvalMiddleware` (Phase 7C).
 - `max_output_bytes::Int` — maximum captured stdout/stderr bytes per eval (default: 1 000 000). Enforced by `EvalMiddleware` (truncates stdout and stderr independently).
 - `max_session_history::Int` — maximum entries in a named session's history vector (default: `MAX_SESSION_HISTORY_SIZE`, 1000). Enforced by `_update_history!` via `clamp_history!`.

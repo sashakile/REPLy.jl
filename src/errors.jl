@@ -31,6 +31,28 @@ end
 safe_show(value) = safe_render("show", value -> sprint(show, value), value)
 safe_showerror(ex) = safe_render("showerror", ex -> sprint(showerror, ex), ex)
 
+"""
+    try_repr(value; max_bytes=DEFAULT_MAX_REPR_BYTES) -> Tuple
+
+Render `repr(value)` truncated to `max_bytes`, distinguishing success from
+failure so callers can flag the two cases separately on the wire:
+
+- `(:ok, repr_string)` when `repr` succeeds.
+- `(:error, type_name)` when `repr` throws — `type_name` is the (module-stripped)
+  type name of `value`.
+
+Unlike `safe_repr`, this does not fold a failure into a `"<repr failed: …>"`
+string that is indistinguishable from a legitimately-returned string.
+"""
+function try_repr(value; max_bytes::Int=DEFAULT_MAX_REPR_BYTES)
+    rendered = try
+        repr(value)
+    catch
+        return (:error, safe_type_name(value))
+    end
+    return (:ok, truncate_output(rendered, max_bytes))
+end
+
 function exception_message(ex)
     if hasfield(typeof(ex), :msg)
         msg = getfield(ex, :msg)

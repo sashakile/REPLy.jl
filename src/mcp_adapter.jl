@@ -335,8 +335,10 @@ function reply_stream_to_mcp_result(msgs::AbstractVector{<:AbstractDict})
         if haskey(msg, "err")
             push!(content, text_block(String(msg["err"])))
         end
-        if haskey(msg, "value")
+        if haskey(msg, "value") && !isnothing(msg["value"])
             push!(content, text_block(String(msg["value"])))
+        elseif haskey(msg, "repr-error")
+            push!(content, text_block("<repr failed: $(msg["repr-error"])>"))
         end
     end
 
