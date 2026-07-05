@@ -31,7 +31,7 @@ Create and register a new ephemeral session backed by an anonymous module.
 """
 function create_ephemeral_session!(manager::SessionManager)
     lock(manager.lock) do
-        session = ModuleSession(Module(gensym(:REPLySession)))
+        session = ModuleSession(new_session_module(:REPLySession))
         push!(manager.ephemeral_sessions, session)
         return session
     end
@@ -95,7 +95,7 @@ function create_named_session!(manager::SessionManager, name::AbstractString; id
         if !isempty(name) && haskey(manager.name_to_uuid, String(name))
             throw(ArgumentError("session already exists: $(name)"))
         end
-        session = NamedSession(uuid, String(name), Module(gensym(:REPLyNamedSession)))
+        session = NamedSession(uuid, String(name), new_session_module(:REPLyNamedSession))
         manager.named_sessions[uuid] = session
         if !isempty(name)
             manager.name_to_uuid[String(name)] = uuid
@@ -124,7 +124,7 @@ acquisition, preventing the TOCTOU race that exists when they are separate.
 function create_ephemeral_session_if_within_limit!(manager::SessionManager, max_sessions::Int)
     lock(manager.lock) do
         _total_session_count_unlocked(manager) >= max_sessions && return nothing
-        session = ModuleSession(Module(gensym(:REPLySession)))
+        session = ModuleSession(new_session_module(:REPLySession))
         push!(manager.ephemeral_sessions, session)
         return session
     end
@@ -144,7 +144,7 @@ function create_named_session_if_within_limit!(manager::SessionManager, name::Ab
         if !isempty(name) && haskey(manager.name_to_uuid, String(name))
             throw(ArgumentError("session already exists: $(name)"))
         end
-        session = NamedSession(uuid, String(name), Module(gensym(:REPLyNamedSession)))
+        session = NamedSession(uuid, String(name), new_session_module(:REPLyNamedSession))
         manager.named_sessions[uuid] = session
         if !isempty(name)
             manager.name_to_uuid[String(name)] = uuid
@@ -257,7 +257,7 @@ function get_or_create_named_session!(manager::SessionManager, name::AbstractStr
             existing = get(manager.named_sessions, uuid, nothing)
             isnothing(existing) || return existing
         end
-        session = NamedSession(string(uuid4()), key, Module(gensym(:REPLyNamedSession)))
+        session = NamedSession(string(uuid4()), key, new_session_module(:REPLyNamedSession))
         manager.named_sessions[session.id] = session
         if !isempty(key)
             manager.name_to_uuid[key] = session.id
@@ -375,7 +375,7 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
         end
 
         new_uuid = string(uuid4())
-        dst = NamedSession(new_uuid, String(dest_name), Module(gensym(:REPLyNamedSession)))
+        dst = NamedSession(new_uuid, String(dest_name), new_session_module(:REPLyNamedSession))
         (src, dst)
     end
 

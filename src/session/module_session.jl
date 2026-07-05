@@ -1,4 +1,21 @@
 """
+    new_session_module(prefix::Symbol) -> Module
+
+Create a fresh anonymous session module (named `##<prefix>#N`) and install a
+1-argument `include(path)` wrapper inside it.
+
+Session modules are anonymous, so a bare `include("file.jl")` would otherwise
+resolve to `Compiler.include` (wrong signature) and throw `UndefVarError`. The
+wrapper delegates to `Base.include(@__MODULE__, path)` so the standard REPL form
+`include("file.jl")` loads into the session module as users expect.
+"""
+function new_session_module(prefix::Symbol)
+    mod = Module(gensym(prefix))
+    Core.eval(mod, :(include(path::AbstractString) = Base.include(@__MODULE__, path)))
+    return mod
+end
+
+"""
     ModuleSession
 
 Ephemeral REPL session backed by an anonymous Julia `Module`.

@@ -125,3 +125,59 @@ end
         REPLy.end_eval!(session)
     end
 end
+
+@testset "bare include() works in session modules" begin
+    @testset "ephemeral session module defines a 1-arg include wrapper" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_ephemeral_session!(manager)
+        mod = REPLy.session_module(session)
+        @test isdefined(mod, :include)
+
+        path = tempname() * ".jl"
+        write(path, "incl_marker = 123\n")
+        try
+            # Bare `include` inside the module must resolve to our wrapper and
+            # include into the session module (not Compiler.include).
+            Core.eval(mod, :(include($path)))
+            @test Core.eval(mod, :incl_marker) == 123
+        finally
+            rm(path; force=true)
+        end
+        REPLy.destroy_session!(manager, session)
+    end
+
+    @testset "named session module defines a 1-arg include wrapper" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "incl-named")
+        mod = REPLy.session_module(session)
+        @test isdefined(mod, :include)
+
+        path = tempname() * ".jl"
+        write(path, "incl_named_marker = 456\n")
+        try
+            Core.eval(mod, :(include($path)))
+            @test Core.eval(mod, :incl_named_marker) == 456
+        finally
+            rm(path; force=true)
+        end
+    end
+
+    @testset "include across eval requests through the handler pipeline" begin
+        manager = REPLy.SessionManager()
+        REPLy.create_named_session!(manager, "incl-eval")
+        handler = REPLy.build_handler(; manager=manager)
+
+        path = tempname() * ".jl"
+        write(path, "incl_via_eval = 777\n")
+        try
+            handler(Dict("op" => "eval", "id" => "i1", "session" => "incl-eval",
+                         "code" => "include(raw\"$path\")"))
+            msgs = handler(Dict("op" => "eval", "id" => "i2", "session" => "incl-eval",
+                                "code" => "incl_via_eval"))
+            value_msg = only(filter(m -> haskey(m, "value"), msgs))
+            @test value_msg["value"] == "777"
+        finally
+            rm(path; force=true)
+        end
+    end
+end
