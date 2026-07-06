@@ -25,7 +25,7 @@
         # Default stack provides all built-in ops
         default_ops = ["eval", "interrupt", "ping", "stdin", "describe",
                        "ls-sessions", "close-session", "clone-session",
-                       "load-file", "complete", "lookup"]
+                       "load-file", "reload-file", "complete", "lookup"]
         for op in default_ops
             @test haskey(ops, op)
         end
