@@ -22,9 +22,9 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
     expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
     op_info  = Dict{String, Dict{String, Any}}(
         "new-session" => Dict{String, Any}(
-            "doc"      => "Create a new named session. Returns a UUID and optional name alias.",
+            "doc"      => "Create a new named session. Returns a UUID and optional name alias. Optional 'if-exists' field: 'error' (default) fails if a session with 'name' already exists; 'reuse' returns the existing session UUID instead, making repeated calls idempotent.",
             "requires" => String[],
-            "optional" => ["name"],
+            "optional" => ["name", "if-exists"],
             "returns"  => ["session", "name"],
         ),
         "ls-sessions" => Dict{String, Any}(
@@ -96,7 +96,32 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
         end
     end
 
+    # Optional `if-exists` controls behavior when a session with `name` already
+    # exists: "error" (default) errors as before; "reuse" returns the existing
+    # session UUID, making repeated new-session calls idempotent.
+    if_exists = get(msg, "if-exists", "error")
+    if !(if_exists in ("error", "reuse"))
+        return [error_response(request_id, "new-session \"if-exists\": unknown value $(repr(if_exists)); accepted values are \"error\" or \"reuse\"")]
+    end
+
     alias = isnothing(name) ? "" : String(name)
+
+    # Reuse path: for a named session that already exists, return it instead of
+    # erroring. Anonymous (no name) sessions can never be reused, so fall through
+    # to normal creation.
+    if if_exists == "reuse" && !isempty(alias)
+        existing = lookup_named_session(ctx.manager, alias)
+        if !isnothing(existing)
+            return [
+                response_message(request_id,
+                    "session" => session_id(existing),
+                    "name"    => alias,
+                ),
+                done_response(request_id),
+            ]
+        end
+    end
+
     local session
     if !isnothing(ctx.server_state)
         try
