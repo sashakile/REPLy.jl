@@ -32,6 +32,23 @@ end
         end
     end
 
+    @testset "ping returns pong over tcp without evaluating" begin
+        with_server(port=0) do handle
+            sock = connect(handle.port)
+
+            try
+                send_request(sock, Dict("op" => "ping", "id" => "e2e-ping"))
+
+                msgs = collect_until_done(sock)
+                assert_conformance(msgs, "e2e-ping")
+                @test length(msgs) == 1
+                @test msgs[1]["status"] == ["done", "pong"]
+            finally
+                close(sock)
+            end
+        end
+    end
+
     @testset "two concurrent clients each receive a done-terminated stream" begin
         with_server(port=0) do handle
             first = connect(handle.port)

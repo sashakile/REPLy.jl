@@ -23,7 +23,7 @@
         ops = only(responses)["ops"]
 
         # Default stack provides all built-in ops
-        default_ops = ["eval", "interrupt", "stdin", "describe",
+        default_ops = ["eval", "interrupt", "ping", "stdin", "describe",
                        "ls-sessions", "close-session", "clone-session",
                        "load-file", "complete", "lookup"]
         for op in default_ops
