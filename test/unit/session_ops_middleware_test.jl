@@ -345,6 +345,70 @@ end
         @test session_by_name === session_by_uuid
     end
 
+    @testset "new-session if-exists=reuse returns existing UUID for duplicate name" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        first = handler(Dict("op" => "new-session", "id" => "reuse-1", "name" => "dupe"))
+        first_uuid = filter(m -> haskey(m, "session"), first)[1]["session"]
+
+        second = handler(Dict(
+            "op" => "new-session", "id" => "reuse-2",
+            "name" => "dupe", "if-exists" => "reuse",
+        ))
+        assert_conformance(second, "reuse-2")
+        resp = filter(m -> haskey(m, "session"), second)
+        @test length(resp) == 1
+        @test resp[1]["session"] == first_uuid
+        @test resp[1]["name"] == "dupe"
+        # No duplicate session was created.
+        @test length(REPLy.list_named_sessions(manager)) == 1
+    end
+
+    @testset "new-session if-exists=reuse creates when name is absent" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "new-session", "id" => "reuse-new",
+            "name" => "fresh", "if-exists" => "reuse",
+        ))
+        assert_conformance(msgs, "reuse-new")
+        resp = filter(m -> haskey(m, "session"), msgs)
+        @test length(resp) == 1
+        @test resp[1]["name"] == "fresh"
+        @test !isnothing(REPLy.lookup_named_session(manager, "fresh"))
+    end
+
+    @testset "new-session default (if-exists=error) still errors on duplicate name" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        handler(Dict("op" => "new-session", "id" => "err-1", "name" => "taken"))
+        msgs = handler(Dict("op" => "new-session", "id" => "err-2", "name" => "taken"))
+        assert_conformance(msgs, "err-2")
+        @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+
+        # Explicit if-exists=error behaves the same.
+        msgs = handler(Dict(
+            "op" => "new-session", "id" => "err-3",
+            "name" => "taken", "if-exists" => "error",
+        ))
+        @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+    end
+
+    @testset "new-session rejects unknown if-exists value" begin
+        manager = REPLy.SessionManager()
+        handler = REPLy.build_handler(; manager=manager)
+
+        msgs = handler(Dict(
+            "op" => "new-session", "id" => "bad-ifexists",
+            "name" => "whatever", "if-exists" => "bogus",
+        ))
+        assert_conformance(msgs, "bad-ifexists")
+        @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+    end
+
     @testset "eval with UUID session identifier routes correctly" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "uuid-eval-test")
