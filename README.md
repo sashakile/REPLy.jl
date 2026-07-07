@@ -56,6 +56,27 @@ A runtime error will produce a structured error response with `done` in `status`
 printf '%s\n' '{"op":"eval","id":"demo-err","code":"missing_name + 1"}' | nc 127.0.0.1 5555
 ```
 
+### 4. Use the `replyc` CLI Client
+
+The `nc` examples above corrupt any code containing `"`, `$`, or `\` — that is,
+almost all real Julia. For a batteries-included client that encodes JSON
+correctly, use the bundled [`bin/replyc`](bin/replyc) script (run it with the
+REPLy project environment so `JSON3` is available):
+
+```bash
+# Evaluate code (quotes, $, and backslashes round-trip safely)
+julia --project=. bin/replyc eval --port 5555 's = "a\"b\$c\\d"; length(s)'
+
+# Named sessions
+julia --project=. bin/replyc session new --port 5555 myapp
+julia --project=. bin/replyc eval --port 5555 --session myapp 'x = 41; x + 1'
+julia --project=. bin/replyc session ls  --port 5555
+julia --project=. bin/replyc session rm  --port 5555 myapp
+```
+
+`replyc` exits non-zero when the server reports an error, so it composes with
+shell scripts. Defaults: `--host 127.0.0.1`, `--port 5555`.
+
 ## Development and Testing
 
 The current implementation provides a solid TCP server foundation with request validation, structured responses, and concurrent client handling.

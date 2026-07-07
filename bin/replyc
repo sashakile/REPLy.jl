@@ -1,0 +1,204 @@
+#!/usr/bin/env julia
+# replyc — a minimal, batteries-included REPLy client.
+#
+# Unlike the `nc` examples in the docs, replyc JSON-encodes your code correctly,
+# so arbitrary Julia containing double quotes, `$`, and backslashes round-trips
+# without corruption.
+#
+# Usage:
+#   replyc eval    [--host H] [--port N] [--session NAME] 'CODE'
+#   replyc session new [--host H] [--port N] [NAME]
+#   replyc session ls  [--host H] [--port N]
+#   replyc session rm  [--host H] [--port N] NAME
+#
+# Run it with the REPLy project environment so JSON3 is available, e.g.:
+#   julia --project=/path/to/REPLy.jl bin/replyc eval '1 + 1'
+#
+# Defaults: --host 127.0.0.1  --port 5555
+#
+# Exit status is non-zero if the server reports an error.
+
+using Sockets
+using JSON3
+
+const DEFAULT_HOST = "127.0.0.1"
+const DEFAULT_PORT = 5555
+
+const USAGE = """
+replyc — minimal REPLy client
+
+Usage:
+  replyc eval    [--host H] [--port N] [--session NAME] 'CODE'
+  replyc session new [--host H] [--port N] [NAME]
+  replyc session ls  [--host H] [--port N]
+  replyc session rm  [--host H] [--port N] NAME
+
+Defaults: --host $(DEFAULT_HOST)  --port $(DEFAULT_PORT)
+"""
+
+# Pull recognized --flag VALUE options out of `args`, returning
+# (options::Dict, positionals::Vector{String}). Unknown flags are left as
+# positionals so callers can report a clear error.
+function extract_options(args::Vector{String}, flags::Vector{String})
+    opts = Dict{String, String}()
+    positionals = String[]
+    i = 1
+    while i <= length(args)
+        a = args[i]
+        if a in flags
+            i + 1 <= length(args) || error("option $a requires a value")
+            opts[a] = args[i + 1]
+            i += 2
+        else
+            push!(positionals, a)
+            i += 1
+        end
+    end
+    return opts, positionals
+end
+
+host_of(opts) = get(opts, "--host", DEFAULT_HOST)
+port_of(opts) = parse(Int, get(opts, "--port", string(DEFAULT_PORT)))
+
+# Send a single request and collect all response messages sharing our request id,
+# stopping at the terminal "done" status. Returns the vector of response dicts.
+function send_and_collect(host::String, port::Int, request::Dict)
+    conn = connect(host, port)
+    try
+        JSON3.write(conn, request)
+        write(conn, '\n')
+        flush(conn)
+
+        responses = Dict{String, Any}[]
+        while isopen(conn)
+            line = readline(conn)
+            if isempty(line)
+                eof(conn) && break
+                continue
+            end
+            msg = JSON3.read(line, Dict{String, Any})
+            get(msg, "id", "") == request["id"] || continue
+            push!(responses, msg)
+            status = get(msg, "status", String[])
+            "done" in status && break
+        end
+        return responses
+    finally
+        close(conn)
+    end
+end
+
+next_id() = "replyc-$(getpid())-$(time_ns())"
+
+# Returns the process exit code (0 ok, 1 on error status).
+function print_eval_responses(responses)
+    exit_code = 0
+    for msg in responses
+        if haskey(msg, "out")
+            print(msg["out"])
+        end
+        if haskey(msg, "err") && !haskey(msg, "status")
+            print(stderr, msg["err"])
+        end
+        if haskey(msg, "value") && !isnothing(msg["value"])
+            println(msg["value"])
+        elseif haskey(msg, "repr-error")
+            println("<repr failed: $(msg["repr-error"])>")
+        end
+        status = get(msg, "status", String[])
+        if "error" in status
+            exit_code = 1
+            haskey(msg, "err") && println(stderr, msg["err"])
+        end
+    end
+    return exit_code
+end
+
+function cmd_eval(args::Vector{String})
+    opts, rest = extract_options(args, ["--host", "--port", "--session"])
+    isempty(rest) && error("eval requires a CODE argument")
+    length(rest) == 1 || error("eval takes exactly one CODE argument (quote it)")
+    code = rest[1]
+
+    request = Dict{String, Any}("op" => "eval", "id" => next_id(), "code" => code)
+    haskey(opts, "--session") && (request["session"] = opts["--session"])
+
+    responses = send_and_collect(host_of(opts), port_of(opts), request)
+    return print_eval_responses(responses)
+end
+
+function terminal_status(responses)
+    isempty(responses) && return String[]
+    return String.(get(responses[end], "status", String[]))
+end
+
+function cmd_session(args::Vector{String})
+    isempty(args) && error("session requires a subcommand: new | ls | rm")
+    sub = args[1]
+    rest_args = args[2:end]
+    opts, rest = extract_options(rest_args, ["--host", "--port"])
+    host, port = host_of(opts), port_of(opts)
+
+    if sub == "new"
+        request = Dict{String, Any}("op" => "new-session", "id" => next_id())
+        isempty(rest) || (request["name"] = rest[1])
+        responses = send_and_collect(host, port, request)
+        sess = filter(m -> haskey(m, "session"), responses)
+        if !isempty(sess)
+            println(sess[1]["session"])
+        end
+        return "error" in terminal_status(responses) ? 1 : 0
+    elseif sub == "ls"
+        request = Dict{String, Any}("op" => "ls-sessions", "id" => next_id())
+        responses = send_and_collect(host, port, request)
+        for m in responses
+            haskey(m, "sessions") || continue
+            for s in m["sessions"]
+                name = get(s, "name", nothing)
+                println(get(s, "session", ""), isnothing(name) ? "" : "\t$(name)")
+            end
+        end
+        return "error" in terminal_status(responses) ? 1 : 0
+    elseif sub == "rm"
+        isempty(rest) && error("session rm requires a NAME or UUID")
+        request = Dict{String, Any}("op" => "close", "id" => next_id(), "session" => rest[1])
+        responses = send_and_collect(host, port, request)
+        st = terminal_status(responses)
+        if "error" in st
+            !isempty(responses) && haskey(responses[end], "err") && println(stderr, responses[end]["err"])
+            return 1
+        end
+        return 0
+    else
+        error("unknown session subcommand: $(sub)")
+    end
+end
+
+function main(args::Vector{String})
+    if isempty(args) || args[1] in ("-h", "--help", "help")
+        print(USAGE)
+        return 0
+    end
+    cmd = args[1]
+    rest = args[2:end]
+    try
+        if cmd == "eval"
+            return cmd_eval(rest)
+        elseif cmd == "session"
+            return cmd_session(rest)
+        else
+            println(stderr, "unknown command: $(cmd)\n")
+            print(stderr, USAGE)
+            return 2
+        end
+    catch ex
+        if ex isa Base.IOError || ex isa Sockets.DNSError
+            println(stderr, "connection failed: $(sprint(showerror, ex))")
+            return 1
+        end
+        println(stderr, "error: $(sprint(showerror, ex))")
+        return 2
+    end
+end
+
+exit(main(collect(ARGS)))
