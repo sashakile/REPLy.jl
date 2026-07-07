@@ -66,6 +66,7 @@ include("helpers/server.jl")
             include("e2e/named_session_eval_test.jl")
             include("e2e/multi_listener_test.jl")
             include("e2e/revise_hook_test.jl")
+            include("e2e/replyc_test.jl")
         else
             @test_broken isdefined(REPLy, :serve)
         end
