@@ -131,11 +131,6 @@ function mcp_eval_request(request_id::AbstractString, args::AbstractDict; defaul
     return request
 end
 
-"""Return a standard MCP 'not yet implemented' error result for stub tools."""
-function mcp_stub_result(tool_name::AbstractString)
-    # Tracking reference: DRAFT-004
-    return error_result("$tool_name is not yet implemented")
-end
 
 """
     mcp_ensure_default_session!(manager; name=MCP_DEFAULT_SESSION_NAME) -> String
@@ -210,11 +205,11 @@ end
 Dispatch an MCP `tools/call` request to the appropriate adapter helper.
 
 Routes session lifecycle tools (`julia_new_session`, `julia_list_sessions`,
-`julia_close_session`) to their respective lifecycle helpers. Returns a stub
-error for tools that are not yet implemented (`julia_complete`, `julia_lookup`,
-`julia_load_file`, `julia_interrupt`). Returns an error for `julia_eval` (which
-requires a live transport and is handled by the full adapter loop) and for
-unknown tool names.
+`julia_close_session`) to their respective lifecycle helpers. Returns an error
+for transport-backed tools (`julia_eval`, `julia_complete`, `julia_lookup`,
+`julia_load_file`, `julia_interrupt`) — these require a live transport and are
+dispatched by the full adapter loop (`process_mcp_request`) — and for unknown
+tool names.
 
 `max_sessions` is forwarded to `mcp_new_session_result` to enforce the server
 session limit when creating sessions from the MCP adapter.
@@ -234,12 +229,10 @@ function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::S
         err = validate_session_name(session)
         isnothing(err) || return error_result(err)
         return mcp_close_session_result(manager, session)
-    # Stub tools — not yet implemented
-    elseif tool_name in ("julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt")
-        return mcp_stub_result(tool_name)
-    # julia_eval requires a live transport; cannot be dispatched statically
-    elseif tool_name == "julia_eval"
-        return error_result("julia_eval requires a live transport and cannot be dispatched via mcp_call_tool")
+    # Transport-backed tools require a live transport and are dispatched by the
+    # full adapter loop (process_mcp_request), not this static helper.
+    elseif tool_name in ("julia_eval", "julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt")
+        return error_result("$tool_name requires a live transport and cannot be dispatched via mcp_call_tool")
     else
         return error_result("Unknown tool: $tool_name")
     end
@@ -484,6 +477,14 @@ function process_mcp_request(method::AbstractString, params, id, manager, defaul
 
         if name == "julia_eval"
             return mcp_rpc_result(id, mcp_dispatch_eval(args, default_session, port))
+        elseif name == "julia_complete"
+            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_complete_request, args, default_session, port, reply_stream_to_json_result))
+        elseif name == "julia_lookup"
+            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_lookup_request, args, default_session, port, reply_stream_to_json_result))
+        elseif name == "julia_load_file"
+            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_load_file_request, args, default_session, port, reply_stream_to_mcp_result))
+        elseif name == "julia_interrupt"
+            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_interrupt_request, args, default_session, port, reply_stream_to_json_result))
         else
             # Forward to static lifecycle helpers
             result = mcp_call_tool(String(name), args, manager)
@@ -518,30 +519,149 @@ function mcp_rpc_error(id, code, message)
     )
 end
 
-function mcp_dispatch_eval(args, default_session, port)
-    request_id = "mcp-eval-$(time_ns())"
-
-    # 1. Shape the Reply request
-    request = try
-        mcp_eval_request(request_id, args; default_session)
-    catch ex
-        ex isa ArgumentError || rethrow()
-        return error_result(ex.msg)
-    end
-
-    # 2. Execute over internal transport
+# Execute a Reply `request` over the internal loopback transport and convert the
+# collected reply stream to an MCP result via `to_result`. Shared by all live
+# tools (eval, complete, lookup, load-file, interrupt).
+function mcp_dispatch_over_transport(request::AbstractDict, port::Integer, to_result::Function)
     try
         conn = connect(ip"127.0.0.1", port)
         transport = JSONTransport(conn, ReentrantLock())
         try
             send!(transport, request)
-            msgs = collect_reply_stream(transport, request_id)
-            return reply_stream_to_mcp_result(msgs)
+            msgs = collect_reply_stream(transport, String(request["id"]))
+            return to_result(msgs)
         finally
             close(transport)
         end
     catch ex
-        mcp_log("Internal evaluation error: $ex")
-        return error_result("Internal server error during evaluation")
+        mcp_log("Internal request error: $ex")
+        return error_result("Internal server error during request")
     end
+end
+
+# Build a Reply request via `build_request` (an MCP-args → Reply-request mapper),
+# then dispatch it over the transport, converting the result with `to_result`.
+# ArgumentErrors from `build_request` are surfaced as MCP error results.
+function mcp_dispatch_tool(build_request::Function, args, default_session, port::Integer, to_result::Function)
+    request = try
+        build_request("mcp-tool-$(time_ns())", args; default_session)
+    catch ex
+        ex isa ArgumentError || rethrow()
+        return error_result(ex.msg)
+    end
+    return mcp_dispatch_over_transport(request, port, to_result)
+end
+
+function mcp_dispatch_eval(args, default_session, port)
+    request = try
+        mcp_eval_request("mcp-eval-$(time_ns())", args; default_session)
+    catch ex
+        ex isa ArgumentError || rethrow()
+        return error_result(ex.msg)
+    end
+    return mcp_dispatch_over_transport(request, port, reply_stream_to_mcp_result)
+end
+
+# Resolve an MCP session argument to a Reply session name that is guaranteed to
+# exist: falls back to `default_session` when omitted or when "ephemeral" is
+# requested (introspection ops like complete/lookup need a real session module).
+function mcp_resolve_session(args, default_session)
+    session = get(args, "session", default_session)
+    session isa AbstractString || throw(ArgumentError("session must be a string when provided"))
+    return session == MCP_EPHEMERAL_SESSION ? default_session : session
+end
+
+"""Build a Reply `complete` request from MCP `julia_complete` arguments."""
+function mcp_complete_request(request_id::AbstractString, args::AbstractDict; default_session::AbstractString)
+    code = get(args, "code", nothing)
+    code isa AbstractString || throw(ArgumentError("julia_complete requires a string code field"))
+    pos = get(args, "pos", nothing)
+    pos isa Integer || throw(ArgumentError("julia_complete requires an integer pos field"))
+    return Dict{String, Any}(
+        "op" => "complete", "id" => request_id,
+        "code" => code, "pos" => pos,
+        "session" => mcp_resolve_session(args, default_session),
+    )
+end
+
+"""Build a Reply `lookup` request from MCP `julia_lookup` arguments."""
+function mcp_lookup_request(request_id::AbstractString, args::AbstractDict; default_session::AbstractString)
+    symbol = get(args, "symbol", nothing)
+    symbol isa AbstractString || throw(ArgumentError("julia_lookup requires a string symbol field"))
+    request = Dict{String, Any}(
+        "op" => "lookup", "id" => request_id,
+        "symbol" => symbol,
+        "session" => mcp_resolve_session(args, default_session),
+    )
+    module_name = get(args, "module", nothing)
+    if !isnothing(module_name)
+        module_name isa AbstractString || throw(ArgumentError("module must be a string when provided"))
+        request["module"] = module_name
+    end
+    return request
+end
+
+"""Build a Reply `load-file` request from MCP `julia_load_file` arguments."""
+function mcp_load_file_request(request_id::AbstractString, args::AbstractDict; default_session::AbstractString)
+    file = get(args, "file", nothing)
+    file isa AbstractString || throw(ArgumentError("julia_load_file requires a string file field"))
+    request = Dict{String, Any}("op" => "load-file", "id" => request_id, "file" => file)
+    session = get(args, "session", default_session)
+    if session isa AbstractString
+        session != MCP_EPHEMERAL_SESSION && (request["session"] = session)
+    elseif !isnothing(session)
+        throw(ArgumentError("session must be a string when provided"))
+    end
+    return request
+end
+
+"""Build a Reply `interrupt` request from MCP `julia_interrupt` arguments."""
+function mcp_interrupt_request(request_id::AbstractString, args::AbstractDict; default_session::AbstractString)
+    session = get(args, "session", nothing)
+    session isa AbstractString || throw(ArgumentError("julia_interrupt requires a string session field"))
+    isempty(session) && throw(ArgumentError("julia_interrupt requires a non-empty session field"))
+    request = Dict{String, Any}("op" => "interrupt", "id" => request_id, "session" => session)
+    interrupt_id = get(args, "interrupt_id", nothing)
+    if !isnothing(interrupt_id)
+        parsed = interrupt_id isa Integer ? Int(interrupt_id) : tryparse(Int, string(interrupt_id))
+        isnothing(parsed) && throw(ArgumentError("interrupt_id must be an integer"))
+        request["interrupt-id"] = parsed
+    end
+    return request
+end
+
+"""
+Convert a reply stream to an MCP result whose single text block is the JSON
+encoding of all response payload fields (everything except `id`/`status`),
+merged across non-terminal messages. Used for structured ops (complete, lookup,
+interrupt) whose useful output is op-specific fields rather than free text.
+Terminal `error`/`timeout` statuses map to MCP error results.
+"""
+function reply_stream_to_json_result(msgs)
+    isempty(msgs) && throw(ArgumentError("reply stream must not be empty"))
+
+    terminal = nothing
+    payload = Dict{String, Any}()
+    for msg in msgs
+        status = get(msg, "status", nothing)
+        if status isa AbstractVector
+            terminal = msg
+            continue
+        end
+        for (k, v) in pairs(msg)
+            String(k) == "id" && continue
+            payload[String(k)] = v
+        end
+    end
+
+    isnothing(terminal) && throw(ArgumentError("reply stream is missing terminal done status"))
+
+    status = Set(String.(get(terminal, "status", Any[])))
+    if "timeout" in status
+        return error_result("Request timed out")
+    elseif "error" in status
+        return error_result(String(get(terminal, "err", "Reply request failed")))
+    end
+
+    return Dict("isError" => false, "content" => [text_block(JSON3.write(payload))])
 end

@@ -81,11 +81,55 @@ using Sockets
         @test occursin("Unknown tool", resp["result"]["content"][1]["text"])
     end
 
-    @testset "Stub tools return isError" begin
-        for tool in ("julia_load_file", "julia_interrupt", "julia_complete", "julia_lookup")
-            resp = test_mcp_rpc("tools/call", Dict("name" => tool, "arguments" => Dict()))
-            @test resp["result"]["isError"] == true
-            @test occursin("not yet implemented", resp["result"]["content"][1]["text"])
-        end
+    @testset "julia_complete returns real completions" begin
+        resp = test_mcp_rpc("tools/call", Dict(
+            "name" => "julia_complete",
+            "arguments" => Dict("code" => "prin", "pos" => 4),
+        ))
+        @test resp["result"]["isError"] == false
+        text = resp["result"]["content"][1]["text"]
+        @test occursin("completions", text)
+        @test occursin("println", text)
+    end
+
+    @testset "julia_lookup returns real documentation" begin
+        resp = test_mcp_rpc("tools/call", Dict(
+            "name" => "julia_lookup",
+            "arguments" => Dict("symbol" => "println"),
+        ))
+        @test resp["result"]["isError"] == false
+        text = resp["result"]["content"][1]["text"]
+        @test occursin("\"found\":true", text)
+        @test occursin("println", text)
+    end
+
+    @testset "julia_lookup reports not-found symbols" begin
+        resp = test_mcp_rpc("tools/call", Dict(
+            "name" => "julia_lookup",
+            "arguments" => Dict("symbol" => "no_such_symbol_xyz"),
+        ))
+        @test resp["result"]["isError"] == false
+        @test occursin("\"found\":false", resp["result"]["content"][1]["text"])
+    end
+
+    @testset "julia_interrupt on an idle session returns empty interrupted list" begin
+        resp = test_mcp_rpc("tools/call", Dict(
+            "name" => "julia_interrupt",
+            "arguments" => Dict("session" => default_session),
+        ))
+        @test resp["result"]["isError"] == false
+        @test occursin("interrupted", resp["result"]["content"][1]["text"])
+    end
+
+    @testset "julia_load_file evaluates a real file" begin
+        # The default stack denies file loads (no allowlist); verify the tool
+        # dispatches over the live transport and surfaces the real server
+        # response rather than a not-implemented stub.
+        resp = test_mcp_rpc("tools/call", Dict(
+            "name" => "julia_load_file",
+            "arguments" => Dict("file" => "/tmp/does-not-matter.jl"),
+        ))
+        @test resp["result"]["isError"] == true
+        @test !occursin("not yet implemented", resp["result"]["content"][1]["text"])
     end
 end

@@ -96,16 +96,6 @@ end
         @test_throws ArgumentError REPLy.mcp_eval_request("has-timeout", Dict("code" => "1 + 1", "timeout_ms" => 250); default_session="session-default")
     end
 
-    @testset "mcp_stub_result returns not-yet-implemented error for unimplemented tools" begin
-        for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
-            result = REPLy.mcp_stub_result(tool)
-            @test result["isError"] == true
-            text = result["content"][1]["text"]
-            @test occursin("not yet implemented", text)
-            @test occursin(tool, text)
-            @test !occursin("DRAFT", text)  # internal tracking refs must not leak to wire
-        end
-    end
 
     @testset "reply stream is collected until done" begin
         io = IOBuffer(
@@ -396,13 +386,13 @@ end
         @test occursin("letters, digits", result["content"][1]["text"])
     end
 
-    @testset "mcp_call_tool returns stub for unimplemented tools" begin
+    @testset "mcp_call_tool returns live-transport error for transport-backed tools" begin
         manager = REPLy.SessionManager()
         for tool in ["julia_complete", "julia_lookup", "julia_load_file", "julia_interrupt"]
             result = REPLy.mcp_call_tool(tool, Dict{String,Any}(), manager)
             @test result["isError"] == true
             text = result["content"][1]["text"]
-            @test occursin("not yet implemented", text)
+            @test occursin("requires a live transport", text)
             @test occursin(tool, text)
         end
     end
