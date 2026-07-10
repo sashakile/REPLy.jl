@@ -272,7 +272,10 @@ end
         @test "done"    in terminal["status"]
         @test "error"   in terminal["status"]
         @test "timeout" in terminal["status"]
-        @test terminal["err"] == "eval timed out"
+        @test occursin("eval timed out", terminal["err"])
+        # The response hints that the limit is configurable (REPLy_jl-euc).
+        @test terminal["max-eval-time-ms"] == 300
+        @test occursin("max_eval_time_ms", terminal["hint"])
     end
 
     @testset "a timed-out eval never bleeds an interrupt into the next request" begin
