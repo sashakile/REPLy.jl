@@ -385,6 +385,15 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         end
     end
 
+    # Build a timeout terminal that tells the caller the limit is configurable.
+    timeout_response() = response_message(
+        request_id,
+        "status" => ["done", "error", "timeout"],
+        "err" => isnothing(effective_timeout_ms) ? "eval timed out" : "eval timed out after $(effective_timeout_ms) ms",
+        "max-eval-time-ms" => effective_timeout_ms,
+        "hint" => "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations",
+    )
+
     try
         msgs = try
             fetch(eval_task)
@@ -395,7 +404,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             inner = ex isa TaskFailedException ? ex.task.exception : ex
             inner isa InterruptException || rethrow()
             if timed_out[]
-                [response_message(request_id, "status" => ["done", "error", "timeout"], "err" => "eval timed out")]
+                [timeout_response()]
             else
                 [response_message(request_id, "status" => ["done", "interrupted"])]
             end
@@ -405,8 +414,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         if timed_out[]
             msgs = map(msgs) do m
                 if haskey(m, "status") && "interrupted" in m["status"]
-                    response_message(request_id, "status" => ["done", "error", "timeout"],
-                        "err" => "eval timed out")
+                    timeout_response()
                 else
                     m
                 end
