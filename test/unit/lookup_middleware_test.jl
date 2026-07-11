@@ -73,6 +73,27 @@
         @test msgs[1]["name"] == "join"
     end
 
+    @testset "lookup resolves a symbol brought into the session via `using` (REPLy_jl-gk5)" begin
+        # Regression: lookup must find package exports that are live in the
+        # session scope via `using`, matching `complete`. Load Dates into a
+        # named session, then look up one of its exports with the same session.
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "lookup-using")
+
+        eval_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], session)
+        REPLy.handle_message(REPLy.EvalMiddleware(),
+            Dict("op" => "eval", "id" => "lu-using-e", "code" => "using Dates"),
+            _ -> nothing, eval_ctx)
+
+        lookup_ctx = REPLy.RequestContext(manager, Dict{String, Any}[], session)
+        msgs = REPLy.handle_message(REPLy.LookupMiddleware(),
+            Dict("op" => "lookup", "id" => "lu-using", "symbol" => "now"),
+            _ -> nothing, lookup_ctx)
+
+        @test msgs[1]["found"] == true
+        @test msgs[1]["name"] == "now"
+    end
+
     @testset "expression injection in symbol field returns found=false (no eval)" begin
         ctx = make_ctx()
         stack = REPLy.AbstractMiddleware[REPLy.LookupMiddleware(), REPLy.UnknownOpMiddleware()]
