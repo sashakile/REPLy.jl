@@ -241,6 +241,35 @@ Returns documentation and method information for a symbol.
 }
 ```
 
+### `ls-bindings`
+
+Lists the user-defined bindings (name and type) in a session module, so an agent
+resuming an existing session can discover its current state without re-running
+eval history. Requires a `session`; auto-injected names (`eval`, `include`),
+gensym names, sub-modules, and names brought into scope via `using` are excluded.
+
+**Request:**
+```json
+{"op": "ls-bindings", "id": "lb-1", "session": "main"}
+```
+
+**Response:**
+```json
+{
+  "id": "lb-1",
+  "bindings": [
+    {"name": "f", "type": "typeof(Main.var\"##REPLyNamedSession#1\".f)"},
+    {"name": "x", "type": "Int64"}
+  ],
+  "count": 2,
+  "ns": "##REPLyNamedSession#1",
+  "status": ["done"]
+}
+```
+
+Bindings are sorted by `name`. If the request has no `session`, an error response
+is returned.
+
 ### `stdin`
 
 Sends input to a session that is currently blocked on a `stdin` read (e.g., `readline()`).
