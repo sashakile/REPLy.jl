@@ -24,7 +24,7 @@ export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits
 export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware
 export MiddlewareDescriptor, descriptor, validate_stack
-export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware
+export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
@@ -46,6 +46,7 @@ include("middleware/load_file.jl")
 include("middleware/reload_file.jl")
 include("middleware/complete.jl")
 include("middleware/lookup.jl")
+include("middleware/ls_bindings.jl")
 include("middleware/interrupt.jl")
 include("middleware/ping.jl")
 include("middleware/stdin.jl")
