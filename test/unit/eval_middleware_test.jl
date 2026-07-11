@@ -67,6 +67,30 @@
         @test value_msg["value"] == "2"
     end
 
+    @testset "top-level soft-scope loop produces no warning and runs once" begin
+        # A top-level loop that mutates a global triggers Julia's soft-scope
+        # ambiguity warning (and an error) in a non-Main module. REPL-style
+        # soft-scope lowering must both suppress the warning and evaluate the
+        # body exactly once.
+        msgs = REPLy.build_handler()(Dict(
+            "op" => "eval",
+            "id" => "eval-softscope",
+            "code" => "total = 0\nfor i in 1:3\n    total += i\nend\nprintln(\"ran\")\ntotal",
+        ))
+
+        assert_conformance(msgs, "eval-softscope")
+
+        err_text = join(getindex.(filter(msg -> haskey(msg, "err"), msgs), "err"))
+        @test !occursin("soft scope", err_text)
+        @test !occursin("ambiguous", err_text)
+
+        # Block executes exactly once (single "ran" line on stdout).
+        out_text = join(getindex.(filter(msg -> haskey(msg, "out"), msgs), "out"))
+        @test count("ran\n", out_text) == 1
+
+        @test only(filter(msg -> haskey(msg, "value"), msgs))["value"] == "6"
+    end
+
     @testset "broken result show methods fall back instead of crashing" begin
         struct BrokenShow end
         Base.show(io::IO, ::BrokenShow) = error("broken show")

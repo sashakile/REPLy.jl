@@ -55,6 +55,12 @@ function buffered_output_messages(request_id::AbstractString, stdout_text::Abstr
 end
 
 function eval_parsed(module_::Module, exprs)
+    # Apply REPL soft-scope lowering so top-level loops/blocks that assign to an
+    # existing global don't emit the "assignment in soft scope is ambiguous"
+    # warning (and error). This matches interactive REPL semantics: assignments
+    # still persist to the session module's globals. See REPLy_jl-eka.
+    exprs = REPL.softscope(exprs)
+
     if exprs isa Expr && exprs.head == :toplevel
         value = nothing
         for expr in exprs.args
