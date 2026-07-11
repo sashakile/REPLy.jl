@@ -473,6 +473,38 @@ end
     end
 end
 
+@testset "ephemeral advisory flag" begin
+    @testset "session-less eval marks terminal frame ephemeral:true" begin
+        handler = REPLy.build_handler()
+        msgs = handler(Dict("op" => "eval", "id" => "eph1", "code" => "1+1"))
+
+        terminal = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs))
+        @test terminal["ephemeral"] === true
+    end
+
+    @testset "named-session eval does not include ephemeral flag" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "eph-named")
+        mw = REPLy.EvalMiddleware()
+        ctx = REPLy.RequestContext(manager, Dict{String,Any}[], session)
+
+        msgs = REPLy.handle_message(mw,
+            Dict("op" => "eval", "id" => "eph2", "code" => "1+1"),
+            _ -> nothing, ctx)
+
+        terminal = only(filter(m -> haskey(m, "status") && "done" in m["status"], msgs))
+        @test !haskey(terminal, "ephemeral")
+    end
+
+    @testset "ephemeral flag present on error terminal too" begin
+        handler = REPLy.build_handler()
+        msgs = handler(Dict("op" => "eval", "id" => "eph3", "code" => "error(\"boom\")"))
+
+        terminal = only(filter(m -> haskey(m, "status"), msgs))
+        @test terminal["ephemeral"] === true
+    end
+end
+
 @testset "module routing: protected root modules are blocked (session isolation)" begin
     @testset "eval with module=Main is rejected" begin
         manager = REPLy.SessionManager()

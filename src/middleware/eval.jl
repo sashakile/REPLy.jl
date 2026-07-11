@@ -29,7 +29,7 @@ descriptor(::EvalMiddleware) = MiddlewareDescriptor(
             "doc"      => "Evaluate Julia code in a session module.",
             "requires" => ["code"],
             "optional" => ["session", "module", "timeout-ms", "allow-stdin", "silent", "store-history"],
-            "returns"  => ["out", "err", "value", "repr-error", "ns"],
+            "returns"  => ["out", "err", "value", "repr-error", "ns", "ephemeral"],
         ),
     ),
 )
@@ -432,6 +432,18 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             eid = this_eval_id[]
             msgs = map(msgs) do m
                 haskey(m, "status") ? merge(m, Dict{String,Any}("eval-id" => eid)) : m
+            end
+        end
+
+        # Advisory flag: an eval without a `session` field runs in a throwaway
+        # anonymous module whose state does not persist across requests. The
+        # SessionMiddleware materializes this as an ephemeral `ModuleSession`
+        # (or `ctx.session` is `nothing` when eval runs standalone). Mark the
+        # terminal frame with `ephemeral: true` so callers know they need a named
+        # session for persistence (a common trip-hazard). See REPLy_jl-34m.
+        if !(ctx.session isa NamedSession)
+            msgs = map(msgs) do m
+                haskey(m, "status") ? merge(m, Dict{String,Any}("ephemeral" => true)) : m
             end
         end
 
