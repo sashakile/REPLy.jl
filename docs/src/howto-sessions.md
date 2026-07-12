@@ -88,6 +88,8 @@ Clone an existing session to create a new one that starts with a copy of the sou
 {"op": "clone", "id": "clone-1", "session": "main", "name": "experiment"}
 ```
 
+The optional `"type"` field selects the clone strategy. Only `"light"` is supported (and it is the default when the field is absent); `"heavy"` is reserved for a future release and currently returns a `not-supported` error. A light clone **deep-copies mutable bindings** from the source, so the clone is fully independent — mutating a copied array or dict in the clone never affects the source, and vice versa.
+
 Response:
 
 ```json
