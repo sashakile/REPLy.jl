@@ -72,7 +72,17 @@ function eval_parsed(module_::Module, exprs)
     return Core.eval(module_, exprs)
 end
 
-function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))
+# Concrete result of `_run_eval_core`, giving it a single stable return type.
+# `messages` is the response frames to emit; `captured` is `Some{Any}(value)` on
+# a successful eval (used to update `ans`/history) or `nothing` on error,
+# interrupt, or `silent` eval. Boxing the value as `Some{Any}` keeps the field —
+# and therefore the struct — concretely typed regardless of the value's type.
+struct EvalCoreResult
+    messages::Vector{Dict{String, Any}}
+    captured::Union{Some{Any}, Nothing}
+end
+
+function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))::EvalCoreResult
     # TaskCapturingIO routes Julia-level writes to per-task IOBuffers without
     # dup2, so concurrent evals across sessions capture their own output
     # independently. Install is idempotent and performed once per process.
@@ -110,7 +120,7 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
             else
                 append!(output_messages, [eval_error_response(request_id, ex; bt=bt)])
             end
-            return (output_messages, nothing)
+            return EvalCoreResult(output_messages, nothing)
         end
 
         _, value = eval_result
@@ -119,7 +129,7 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
             push!(responses, value_response(request_id, value, module_; max_repr_bytes=max_repr_bytes))
         end
         push!(responses, done_response(request_id))
-        return (responses, Some(value))
+        return EvalCoreResult(responses, Some{Any}(value))
     finally
         unregister_task_capture!(stdout_cap, task)
         unregister_task_capture!(stderr_cap, task)
@@ -354,7 +364,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             revise_enabled && _maybe_revise!()
         end
 
-        inner_msgs, captured = if allow_stdin && session isa NamedSession
+        core_result = if allow_stdin && session isa NamedSession
             # Reuse a persistent Pipe + feeder Task for this session to avoid
             # per-eval libuv handle + Task allocation.
             pipe = _ensure_stdin_feeder!(session)
@@ -369,8 +379,8 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
             end
         end
 
-        session isa NamedSession && _update_history!(session, captured, store_history, max_session_history)
-        inner_msgs
+        session isa NamedSession && _update_history!(session, core_result.captured, store_history, max_session_history)
+        core_result.messages
     end
     eval_task.sticky = true
     # Register the child (not the connection task) so shutdown interrupts it and
