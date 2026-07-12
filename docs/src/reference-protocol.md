@@ -125,11 +125,15 @@ The `"status"` field is an array that may contain multiple flags. A message is t
 | `"done"` | Terminal — stream is complete |
 | `"error"` | Eval or protocol error occurred |
 | `"unknown-op"` | The requested `op` is not supported |
+| `"interrupted"` | Eval was cancelled by an `interrupt` op or server shutdown |
+| `"timeout"` | Eval exceeded `max_eval_time_ms` and was cancelled (see [Evaluation timeout](index.md#Evaluation-timeout)) |
+| `"concurrency-limit-reached"` | Eval rejected because `max_concurrent_evals` was reached — retry with backoff |
 | `"session-not-found"` | Named session does not exist |
 | `"session-already-exists"` | Named session already exists (for `clone`) |
 | `"session-limit-reached"` | Server-wide session cap reached |
 | `"not-supported"` | Feature exists in spec but not yet implemented |
 | `"path-not-allowed"` | File path rejected by server allowlist (`load-file`) |
+| `"pong"` | Response to a `ping` liveness probe |
 
 ---
 

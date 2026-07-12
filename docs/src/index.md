@@ -99,7 +99,7 @@ Unix sockets are created with `chmod 600` (owner read/write only), so only your 
 
 ## Resource Limits
 
-REPLy enforces two configurable safety limits that protect against runaway clients or evaluations.
+REPLy enforces several configurable safety limits that protect against runaway clients or evaluations. Message size and output truncation are set on `serve`; the remaining limits live on a [`ResourceLimits`](api.md) value passed as `serve(...; limits=ResourceLimits(...))`.
 
 ### Inbound message size
 
@@ -135,6 +135,50 @@ Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated be
 
 `REPLy.default_middleware_stack`, `REPLy.SessionMiddleware`, and `REPLy.EvalMiddleware` are
 lower-level embedding APIs rather than part of the minimal exported API surface.
+
+### Evaluation timeout
+
+Every `eval` is capped at `max_eval_time_ms` (default **30 000 ms**, i.e. 30 s) of wall-clock time. When an eval exceeds the cap, REPLy interrupts it and returns a terminal error whose `status` contains `"timeout"`. The response also carries the effective limit and a hint so the cap is discoverable:
+
+```json
+{
+  "id": "slow-1",
+  "status": ["done", "error", "timeout"],
+  "err": "eval timed out after 30000 ms",
+  "max-eval-time-ms": 30000,
+  "hint": "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations"
+}
+```
+
+Raise (or lower) the server-wide cap via `ResourceLimits`:
+
+```julia
+using REPLy
+
+server = REPLy.serve(port=5555, limits=REPLy.ResourceLimits(max_eval_time_ms=120_000))  # 2 min
+```
+
+A client may also request a shorter deadline per request with the `timeout-ms` field, but a per-request value is **capped** at the server's `max_eval_time_ms` — clients cannot extend the server limit, only tighten it.
+
+### Concurrency backpressure
+
+At most `max_concurrent_evals` evals (default **10**) run at once server-wide. REPLy does **not** queue excess work: when the limit is reached, additional `eval` requests are rejected immediately with a terminal error whose `status` contains `"concurrency-limit-reached"`:
+
+```json
+{
+  "id": "burst-42",
+  "status": ["done", "error", "concurrency-limit-reached"],
+  "err": "Too many concurrent evals"
+}
+```
+
+Because rejected requests are shed rather than buffered, clients that issue bursts of concurrent evals should **retry with backoff** on this flag. Tune the ceiling to match your workload:
+
+```julia
+using REPLy
+
+server = REPLy.serve(port=5555, limits=REPLy.ResourceLimits(max_concurrent_evals=32))
+```
 
 ## Next Steps
 
