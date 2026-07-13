@@ -11,7 +11,10 @@ end
 
 function send!(transport::JSONTransport, msg::Dict)
     lock(transport.lock) do
-        write(transport.io, JSON3.write(msg))
+        # Serialize straight to the transport stream. JSON3 still encodes into an
+        # internal byte buffer, but this avoids materializing (and holding) the
+        # intermediate `String` object for the whole message before writing.
+        JSON3.write(transport.io, msg)
         write(transport.io, UInt8('\n'))
         flush(transport.io)
     end
