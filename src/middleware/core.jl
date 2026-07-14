@@ -114,6 +114,25 @@ function dispatch_middleware(stack::Vector{<:AbstractMiddleware}, index::Int, ms
     return handle_message(stack[index], msg, next, ctx)
 end
 
+# Tuple-based dispatch used by `build_handler`. Because the stack is a
+# heterogeneous `Tuple` of concrete middleware types, `first(stack)` and
+# `Base.tail(stack)` have concrete types at each step, so `handle_message`
+# resolves statically (no method-table lookup per middleware) and the chain can
+# be inlined/unrolled. The `next` continuation captures the concrete tuple tail
+# and `ctx`, so it stays type-stable. Behavior matches the Vector form; the
+# exported `dispatch_middleware(::Vector, ::Int, ...)` above is retained for
+# direct callers and tests.
+dispatch_middleware(::Tuple{}, msg, ctx::RequestContext) = nothing
+
+@inline function dispatch_middleware(stack::Tuple{M, Vararg{AbstractMiddleware}}, msg, ctx::RequestContext) where {M <: AbstractMiddleware}
+    mw = first(stack)
+    rest = Base.tail(stack)
+    next = let rest = rest, ctx = ctx
+        next_msg -> dispatch_middleware(rest, next_msg, ctx)
+    end
+    return handle_message(mw, msg, next, ctx)
+end
+
 function finalize_responses(ctx::RequestContext, result, request_id::AbstractString)
     terminal = Dict{String, Any}[]
     if result isa Dict{String, Any}
@@ -145,7 +164,10 @@ function materialize_middleware_stack(middleware::Vector{<:AbstractMiddleware})
 end
 
 function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
-    stack = materialize_middleware_stack(middleware)
+    # Snapshot the materialized stack as a concrete heterogeneous Tuple so the
+    # per-message dispatch is statically resolved (see tuple `dispatch_middleware`).
+    # The public `middleware=` Vector API is unchanged; this is an internal copy.
+    stack = Tuple(materialize_middleware_stack(middleware))
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict)
         validation_error = validate_request(msg)
@@ -153,7 +175,7 @@ function build_handler(; manager::SessionManager=SessionManager(), middleware::V
 
         request_id = String(get(msg, "id", ""))
         ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing, state)
-        result = dispatch_middleware(stack, 1, msg, ctx)
+        result = dispatch_middleware(stack, msg, ctx)
         return finalize_responses(ctx, result, request_id)
     end
 end

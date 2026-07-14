@@ -1,4 +1,42 @@
+# Custom middleware used to exercise the tuple-based dispatch path in
+# build_handler: it delegates via next(msg) and then does work *after* next
+# returns (tags terminal frames), proving post-next wrappers still compose.
+struct TagTerminalMiddleware <: REPLy.AbstractMiddleware end
+function REPLy.handle_message(::TagTerminalMiddleware, msg, next, ctx::REPLy.RequestContext)
+    result = next(msg)
+    if result isa Vector
+        for m in result
+            haskey(m, "status") && (m["tagged"] = true)
+        end
+    end
+    return result
+end
+
 @testset "middleware" begin
+    @testset "build_handler tuple dispatch composes a custom post-next middleware" begin
+        stack = REPLy.default_middleware_stack()
+        pushfirst!(stack, TagTerminalMiddleware())
+        handler = REPLy.build_handler(; middleware=stack)
+
+        # ping goes through the custom wrapper, which tags the terminal frame.
+        responses = handler(Dict("op" => "ping", "id" => "mw-tuple-ping"))
+        @test any(get(m, "tagged", false) === true for m in responses)
+        @test any("pong" in get(m, "status", String[]) for m in responses)
+
+        # eval still works and is tagged too.
+        eval_responses = handler(Dict("op" => "eval", "id" => "mw-tuple-eval", "code" => "1 + 1"))
+        @test any(get(m, "value", nothing) == "2" for m in eval_responses)
+        @test any(get(m, "tagged", false) === true for m in eval_responses)
+    end
+
+    @testset "build_handler with an empty stack returns a bare done" begin
+        handler = REPLy.build_handler(; middleware=REPLy.AbstractMiddleware[])
+        responses = handler(Dict("op" => "anything", "id" => "mw-empty"))
+        @test length(responses) == 1
+        @test responses[1]["id"] == "mw-empty"
+        @test responses[1]["status"] == ["done"]
+    end
+
     @testset "eval middleware passes through unhandled ops" begin
         ctx = REPLy.RequestContext(REPLy.SessionManager(), Dict{String, Any}[], nothing)
         called = Ref(false)
