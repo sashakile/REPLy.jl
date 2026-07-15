@@ -25,11 +25,10 @@ When you add or develop REPLy, `deps/build.jl` runs automatically via
 `Pkg.build`. It:
 
 1. Creates a private scratch-space environment that freezes REPLy's
-   dependency snapshot at build time.
+   dependency snapshot at build time (for reference and troubleshooting).
 2. Writes a `replyc` launcher script to `<depot>/bin/replyc` (where
-   `<depot>` is `DEPOT_PATH[1]`, typically `~/.julia`).
-3. Pins the launcher to the scratch-space environment so it resolves REPLy
-   deterministically, independent of changes to your global environment.
+   `<depot>` is `DEPOT_PATH[1]`, typically `~/.julia`), pinned to REPLy's
+   project directory via `--project`.
 
 To install:
 
@@ -56,14 +55,14 @@ The generated `replyc` launcher is a small bash script:
 ```bash
 #!/usr/bin/env bash
 # REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51
-exec env JULIA_PROJECT="/path/to/scratch/env" julia --startup-file=no \
+exec julia --startup-file=no --project="/path/to/reply/project" \
     -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- "$@"
 ```
 
-It sets `JULIA_PROJECT` to the frozen scratch environment and overrides any
-`JULIA_PROJECT` that may be set in your outer shell. This guarantees that
-`replyc` always resolves the same REPLy version and dependencies it was built
-with.
+It uses `--project` to point to REPLy's project directory, which means it
+always resolves the same REPLy version and dependencies it was built with.
+Because `--project` overrides any `JULIA_PROJECT` set in your outer shell,
+the launcher is immune to environment drift.
 
 ### Overwrite guard
 
