@@ -133,6 +133,22 @@ dispatch_middleware(::Tuple{}, msg, ctx::RequestContext) = nothing
     return handle_message(mw, msg, next, ctx)
 end
 
+"""
+    mutable_copy(msg) -> Dict{String, Any}
+
+Return a mutable `Dict{String, Any}` copy of a request `msg`, coercing keys to
+`String`. Request messages arrive as a `JSON3.Object` whose keys are `Symbol`-like
+and which is itself immutable, so a middleware that needs to modify a request
+before forwarding cannot mutate `msg` directly. Use this helper to build the new
+request:
+
+```julia
+new_msg = merge(mutable_copy(msg), Dict{String, Any}("code" => fixed))
+return next(new_msg)
+```
+"""
+mutable_copy(msg::AbstractDict) = Dict{String, Any}(string(k) => v for (k, v) in pairs(msg))
+
 function finalize_responses(ctx::RequestContext, result, request_id::AbstractString)
     terminal = Dict{String, Any}[]
     if result isa Dict{String, Any}
