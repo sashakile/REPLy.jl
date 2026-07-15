@@ -60,19 +60,21 @@ printf '%s\n' '{"op":"eval","id":"demo-err","code":"missing_name + 1"}' | nc 127
 
 The `nc` examples above corrupt any code containing `"`, `$`, or `\` — that is,
 almost all real Julia. For a batteries-included client that encodes JSON
-correctly, use the bundled [`bin/replyc`](bin/replyc) script (run it with the
-REPLy project environment so `JSON3` is available):
+correctly, invoke `REPLy.replyc` from any environment where REPLy is installed:
 
 ```bash
 # Evaluate code (quotes, $, and backslashes round-trip safely)
-julia --project=. bin/replyc eval --port 5555 's = "a\"b\$c\\d"; length(s)'
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- eval --port 5555 's = "a\"b\$c\\d"; length(s)'
 
 # Named sessions
-julia --project=. bin/replyc session new --port 5555 myapp
-julia --project=. bin/replyc eval --port 5555 --session myapp 'x = 41; x + 1'
-julia --project=. bin/replyc session ls  --port 5555
-julia --project=. bin/replyc session rm  --port 5555 myapp
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- session new --port 5555 myapp
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- eval --port 5555 --session myapp 'x = 41; x + 1'
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- session ls --port 5555
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- session rm --port 5555 myapp
 ```
+
+From a source checkout, `julia --project=. bin/replyc ...` is an equivalent
+convenience wrapper.
 
 `replyc` exits non-zero when the server reports an error, so it composes with
 shell scripts. Defaults: `--host 127.0.0.1`, `--port 5555`.

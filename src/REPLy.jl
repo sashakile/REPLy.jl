@@ -6,7 +6,7 @@ using REPL
 using Sockets
 using UUIDs
 
-export protocol_name, version_string
+export protocol_name, version_string, replyc
 export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_response,
     error_response, receive, response_message, send!, validate_request,
     DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_REPR_BYTES, OUTPUT_TRUNCATION_MARKER,
@@ -56,6 +56,7 @@ include("middleware/unknown_op.jl")
 include("transport/tcp.jl")
 include("server.jl")
 include("mcp_adapter.jl")
+include("replyc.jl")
 
 """Return the canonical protocol name for this package."""
 protocol_name() = "REPLy"
