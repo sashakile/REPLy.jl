@@ -2,6 +2,25 @@
     replyc = joinpath(pkgdir(REPLy), "bin", "replyc")
     project = Base.active_project()
 
+    @testset "exported API works from a consumer without direct JSON3 dependency" begin
+        mktempdir() do consumer
+            setup = `$(Base.julia_cmd()) --project=$(consumer) -e $("using Pkg; Pkg.develop(path=$(repr(pkgdir(REPLy))))")`
+            run(setenv(setup, "JULIA_LOAD_PATH" => "@:@stdlib"))
+            project_toml = read(joinpath(consumer, "Project.toml"), String)
+            @test occursin("REPLy", project_toml)
+            @test !occursin("JSON3", project_toml)
+
+            with_server(port=0) do handle
+                code = "using REPLy; exit(REPLy.replyc(ARGS))"
+                cmd = `$(Base.julia_cmd()) --project=$(consumer) -e $code -- eval --port $(handle.port) 1+1`
+                output = IOBuffer()
+                proc = run(pipeline(ignorestatus(setenv(cmd, "JULIA_LOAD_PATH" => "@:@stdlib")); stdout=output, stderr=devnull))
+                @test proc.exitcode == 0
+                @test occursin("2", String(take!(output)))
+            end
+        end
+    end
+
     run_replyc(args...) = begin
         cmd = `$(Base.julia_cmd()) --project=$(project) $(replyc) $args`
         of = tempname()
