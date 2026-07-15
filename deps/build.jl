@@ -16,7 +16,10 @@ scratch_env = get_scratch!(reply_uuid, "env")
 mkpath(scratch_env)
 
 # Step 2: Copy the full Project.toml and Manifest.toml into the scratch env
-# to freeze the dependency snapshot at build time.
+# to preserve the dependency snapshot at build time for reference/troubleshooting.
+# The launcher itself pins via --project to the package directory (step 5),
+# not to the scratch env — REPLy is not registered so it cannot be resolved
+# as a named dependency from a separate project.
 pkg_dir = dirname(@__DIR__)
 cp(joinpath(pkg_dir, "Manifest.toml"), joinpath(scratch_env, "Manifest.toml"); force=true)
 cp(joinpath(pkg_dir, "Project.toml"), joinpath(scratch_env, "Project.toml"); force=true)
@@ -29,8 +32,12 @@ launcher_path = joinpath(bin_dir, "replyc")
 # Step 4: Overwrite guard — refuse to clobber a non-REPLy file
 should_write = true
 if isfile(launcher_path)
-    first_line = readline(launcher_path)
-    if !occursin("uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51", first_line)
+    # The marker lives on the second line (first is shebang); check that
+    # at least the first two lines match expectations to confirm ownership.
+    lines = readlines(launcher_path)
+    is_reply_launcher = length(lines) >= 2 &&
+        startswith(lines[2], "# REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51")
+    if !is_reply_launcher
         @warn "Refusing to overwrite $(launcher_path) — it does not appear to be a REPLy-managed file. " *
               "If you are sure it is safe to replace, remove it manually and re-run Pkg.build(\"REPLy\")."
         should_write = false
@@ -38,9 +45,10 @@ if isfile(launcher_path)
 end
 
 if should_write
-    # Step 5: Write the launcher script. REPLy is not registered, so we pin
-    # to the project directory directly. The scratch env preserves the
-    # dependency snapshot for reference.
+    # Step 5: Write the launcher script pinned to the project directory.
+    # REPLy is not registered, so it cannot be resolved from a separate
+    # scratch-space project. The scratch env preserves the dependency
+    # snapshot for reference only.
     launcher_src = """
 #!/usr/bin/env bash
 # REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51

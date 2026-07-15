@@ -1,8 +1,13 @@
 # cli-distribution Specification
 
 ## Purpose
-TBD - created by archiving change add-cli-installer. Update Purpose after archive.
+REPLy SHALL provide a mechanism for users to install the `replyc` CLI client
+as a bare command, with automatic launcher installation via `deps/build.jl`,
+a manual symlink fallback, and an overwrite guard to prevent silent clobbering
+of unrelated files at the target path.
+
 ## Requirements
+
 ### Requirement: Auto-install `replyc` command via `deps/build.jl`
 
 REPLy SHALL provide a `deps/build.jl` that installs a `replyc` launcher script
@@ -14,24 +19,24 @@ no explicit user opt-in.
 #### Scenario: Launcher installed after `Pkg.add` (URL form)
 - **WHEN** a user runs `julia -e 'using Pkg; Pkg.add(url="https://github.com/sashakile/REPLy.jl")'`
 - **THEN** `deps/build.jl` runs automatically
-- **AND** `~/.julia/bin/replyc` exists and is executable
+- **AND** `<depot>/bin/replyc` exists and is executable
 - **AND** `replyc --help` prints usage help and exits with code 0
 
 #### Scenario: Launcher installed after `Pkg.develop`
 - **WHEN** a user runs `julia -e 'using Pkg; Pkg.develop(path="/local/path/REPLy.jl")'`
 - **THEN** `deps/build.jl` runs automatically
-- **AND** `~/.julia/bin/replyc` exists and is executable
+- **AND** `<depot>/bin/replyc` exists and is executable
 
-### Requirement: Launcher dependency pinning via scratch-space environment
+### Requirement: Launcher pinning via `--project` to the package directory
 
 The `deps/build.jl` script SHALL create a private, UUID-namespaced scratch
-environment (via `Scratch.jl`) that freezes the REPLy dependency snapshot at
-build time. The generated launcher script SHALL hardcode `JULIA_PROJECT` to
-this scratch environment (via `exec env JULIA_PROJECT=<scratch_dir> julia ...`
-in bash) so that the pinned environment always takes precedence over any
-`JULIA_PROJECT` set in the invoking shell. This ensures `replyc` resolves
-REPLy and its dependencies deterministically, independent of changes to the
-user's global environment.
+environment (via `Scratch.jl`) that preserves the REPLy dependency snapshot at
+build time for reference. The generated launcher script SHALL use
+`--project=<pkg_dir>` (where `<pkg_dir>` is REPLy's project directory at build
+time) so that the launcher always resolves the same REPLy version. Because
+`--project` takes precedence over any `JULIA_PROJECT` set in the invoking
+shell, the launcher is immune to environment drift from changes to the active
+Julia project.
 
 #### Scenario: Launcher works after global env changes
 - **WHEN** a user installs REPLy and builds the launcher
@@ -41,8 +46,8 @@ user's global environment.
 #### Scenario: Launcher ignores outer `JULIA_PROJECT`
 - **WHEN** a user sets `JULIA_PROJECT=/some/other/project` in their shell
 - **WHEN** they invoke `replyc eval "1+1"`
-- **THEN** the launcher's `exec env JULIA_PROJECT=<scratch_dir>` overrides the
-  outer env and resolves REPLy from the pinned scratch environment
+- **THEN** the launcher's `--project=<pkg_dir>` overrides the outer env and
+  resolves REPLy from the build-time project directory
 
 ### Requirement: Overwrite guard for existing `replyc` file
 
