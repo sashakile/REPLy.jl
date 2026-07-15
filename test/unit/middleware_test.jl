@@ -29,6 +29,28 @@ end
         @test any(get(m, "tagged", false) === true for m in eval_responses)
     end
 
+    @testset "mutable_copy returns a Dict{String,Any} with string keys" begin
+        # From a JSON3.Object (how requests actually arrive on the wire).
+        obj = JSON3.read("{\"op\":\"eval\",\"id\":\"mc1\",\"n\":5,\"arr\":[1,2]}")
+        copy = REPLy.mutable_copy(obj)
+        @test copy isa Dict{String, Any}
+        @test all(k isa String for k in keys(copy))
+        @test copy["op"] == "eval"
+        @test copy["id"] == "mc1"
+        @test copy["n"] == 5
+
+        # Mutating the copy does not touch the source, and merge composes.
+        copy["code"] = "1+1"
+        @test !haskey(obj, "code")
+        merged = merge(REPLy.mutable_copy(obj), Dict{String, Any}("code" => "2+2"))
+        @test merged["code"] == "2+2"
+        @test merged["op"] == "eval"
+
+        # Also works on a plain Dict.
+        from_dict = REPLy.mutable_copy(Dict("a" => 1, "b" => 2))
+        @test from_dict == Dict{String, Any}("a" => 1, "b" => 2)
+    end
+
     @testset "build_handler with an empty stack returns a bare done" begin
         handler = REPLy.build_handler(; middleware=REPLy.AbstractMiddleware[])
         responses = handler(Dict("op" => "anything", "id" => "mw-empty"))

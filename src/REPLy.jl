@@ -14,7 +14,7 @@ export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_respo
 export build_handler, serve, serve_multi, serve_mcp, AbstractServerHandle, MultiListenerServer, server_port, server_socket_path, ServerState
 export register_active_eval!, unregister_active_eval!, active_eval_tasks
 export get_or_create_named_session!
-export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!
+export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!, mutable_copy
 export validate_session_name, MAX_SESSION_NAME_BYTES
 export session_id
 export SessionState, SessionIdle, SessionRunning, SessionClosed

@@ -217,15 +217,17 @@ function REPLy.handle_message(::IncludeFixMiddleware, msg, next,
 
     # Build a mutable copy with the modified field
     new_msg = merge(
-        Dict{String,Any}(string(k) => v for (k,v) in pairs(msg)),
+        REPLy.mutable_copy(msg),
         Dict{String,Any}("code" => fixed, "_include-fixed" => true),
     )
     return next(new_msg)
 end
 ```
 
-Note: The comprehension `string(k) => v for (k,v) in pairs(msg)` is necessary
-because `JSON3.Object` keys are Symbol-like, not `String`.
+`REPLy.mutable_copy(msg)` returns a `Dict{String,Any}` with `String` keys from any
+incoming request. It exists because `msg` is an immutable `JSON3.Object` whose
+keys are `Symbol`-like, so you cannot mutate it in place or rely on `String` keys.
+Merge your changes onto the copy and forward it with `next`.
 
 ## Pattern Catalogue
 
@@ -452,6 +454,7 @@ qualified as `REPLy.<name>`):
 | `done_response(id)` | Function | Build `{"id":id,"status":["done"]}` |
 | `error_response(id, msg)` | Function | Build an error terminal response |
 | `response_message(id, pairs...)` | Function | Build a non-terminal response frame |
+| `mutable_copy(msg)` | Function | Copy a request to a `Dict{String,Any}` (string keys) before modifying/forwarding |
 | `AuditLog` / `AuditMiddleware` | Struct | Built-in audit logging (not in default stack) |
 
 Internal (not part of the supported surface — do not depend on):
