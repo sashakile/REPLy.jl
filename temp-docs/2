@@ -1,0 +1,256 @@
+REPLy.jl Usage Report
+Date: 2026-06-25
+Version: 0.1.0 (main branch)
+Evaluated against: two real projects — transducers-dev (library development) and image-analysis (MNIST + DifferentialEquations + Plots)
+Protocol: TCP, newline-delimited JSON
+Julia version: 1.12.6
+
+Reproducing These Findings
+All observations below were produced using the tooling in this repository:
+
+Servers: julia --project=transducers-dev transducers-dev/server.jl (port 5556) and julia --project=image-analysis image-analysis/server.jl (port 5557)
+Eval client: bin/repl-send.sh <port> [-s <session>] <code> — Python-backed, handles all JSON encoding
+Session management: python3 bin/repl-session.py new|ls|rm <port> [name]
+Raw protocol: printf '%s\n' '<json>' | nc -G 5 127.0.0.1 <port>
+Executive Summary
+REPLy delivers on its core promise: a reliable, language-agnostic TCP interface to a live Julia process. The wire protocol is clean, sessions work correctly, and the Revise integration is genuinely useful for iterative development. It is a sound foundation for agent-assisted Julia workflows.
+
+The rough edges are concentrated in session module isolation — the single most confusing aspect of day-to-day use — and in client ergonomics (no batteries-included client, shell quoting traps). Client ergonomics can be fully addressed with a thin wrapper; session module isolation requires a protocol-level change to resolve fully — a wrapper reduces friction but cannot eliminate the Base.include(@__MODULE__, ...) requirement. The MCP adapter has a meaningful stub gap that limits LLM agent workflows to eval-only today.
+
+Verdict: production-ready for TCP eval and session management; use with a Python or Julia wrapper client, not raw nc.
+
+1. What Works Well
+1.1 Core eval loop
+The fundamental op: "eval" request is solid. Structured output, captured stdout, rich stacktraces on error, and the eval-id counter in every response make it easy to correlate requests and results programmatically.
+
+// Request
+{"op":"eval","id":"r1","session":"<uuid>","code":"1+1"}
+
+// Response sequence
+{"id":"r1","value":"2","ns":"##REPLyNamedSession#280","eval-id":3}
+{"id":"r1","status":["done"]}
+Error responses are particularly well-designed: they include ex.type, ex.message, and a full stacktrace array of {func, file, line} objects — enough for an agent to locate the failure without further round-trips.
+
+1.2 Session management
+All four session lifecycle operations work correctly over TCP:
+
+Op	Works	Notes
+new-session	✅	Returns UUID + optional name alias
+ls-sessions	✅	Returns per-session: UUID, name, eval-count, last-activity, state
+close	✅	Destructive once; errors if session not found
+clone	⚠️ Broken	Creates the session but the binding copy is a no-op on Julia ≥ 1.11 — the clone is empty. See REPLY_PUBLIC_READINESS_REPORT.md §1.3 (discovered after this report via the QA suites).
+State genuinely persists across evals within a session — bindings defined in eval 1 are available in eval 2. Name aliases work at eval-routing time too: once a session is created with new-session, you can pass "session": "my-name" directly in eval requests without tracking the UUID. This is the feature that makes iterative data analysis and library-exploration workflows viable.
+
+1.3 Complete and lookup ops
+Both work over the raw TCP channel (not just MCP) and are immediately useful:
+
+# Tab completion — returns typed completions with kind field
+{"op":"complete","id":"c1","session":"<uuid>","code":"Base.si","pos":7}
+# → {"completions":[{"text":"sign","type":"ModuleCompletion"},...],...}
+
+# Doc lookup
+{"op":"lookup","id":"l1","session":"<uuid>","symbol":"map"}
+# → {"doc":"map(f, A::AbstractArray...) -> N-array\n\n..."}
+The completion response includes a type field (ModuleCompletion, MethodCompletion, etc.) which is richer than a bare string list. During the Transducers.jl investigation, julia_lookup on Transducers.Partition or BangBang.push!! would have replaced two manual source reads directly from the agent.
+
+1.4 Revise hook
+The Revise hook is wired correctly: before each named-session eval, REPLy calls Revise.revise() if Revise is loaded in the server's Main module. The hook is security-conscious — it verifies the UUID of the loaded Revise package against the registered General registry UUID to prevent spoofing.
+
+⚠️ The Revise hook only fires for named sessions (those created with new-session). Ephemeral evals — those without a session field — never trigger a Revise pass. Always use named sessions for iterative development, otherwise source edits will be silently ignored.
+
+In practice: start the server with using Revise in the entry script, create a named session, edit source files, and the next eval sees the changes automatically with no explicit reload step.
+
+Verified, with one important nuance (qa/revise.py, 3/3 on a fresh server): The hook auto-applies edits — confirmed by editing a tracked file on disk and seeing the new value on the very next eval with no manual revise() call. But revise() only re-applies files Revise is tracking: dev-package source (auto-tracked on using) and Revise.includet'd files. Files loaded via Base.include(@__MODULE__, ...) are not tracked — editing them does nothing until re-include. Two further gotchas: (1) editing a file in the brief window before Revise's async watcher registers it causes the change to be missed; (2) on a long-running server, includet'ing temp files that are later deleted pollutes Revise's tracking and can break revise() for subsequent files.
+
+1.5 Resource limits
+ResourceLimits is comprehensive and all defaults are sane for interactive use:
+
+max_eval_time_ms = 30_000 — evals timeout after 30 s
+max_output_bytes = 1_000_000 — stdout/stderr capped at 1 MB per eval
+max_repr_bytes = 10_240 — return value repr capped at 10 KB
+max_sessions = 100, max_connections = 100
+rate_limit_per_min = 600 — per-connection sliding window
+revise_hook_enabled = true — disable with REPLy.serve(limits=ResourceLimits(revise_hook_enabled=false))
+All configurable at serve() call time. Safe by default, tunable without recompile. For compute-heavy workloads (large ODE solves, ML training), raise max_eval_time_ms — the 30 s default will silently terminate long evals.
+
+1.6 load-file security posture
+load-file requires an explicit allowlist function:
+
+REPLy.serve(load_file_allowlist = path -> true)  # allow all (dev)
+REPLy.serve(load_file_allowlist = path -> startswith(path, "/project/src"))
+Locked down by default — the right call for a network REPL. First-time users will be surprised by the path-not-allowed error, but the error message is clear and actionable.
+
+1.7 Unix domain socket support
+The server optionally binds to a Unix socket instead of TCP:
+
+REPLy.serve(socket_path="/tmp/my-repl.sock")
+Owner-only file permissions are set automatically. Useful for single-machine dev where you want filesystem-level access control instead of port management. socket_path is mutually exclusive with host/port.
+
+2. Friction Points
+2.1 Session module isolation — the #1 pain point
+Severity: High
+Affects: Every interactive workflow
+
+Each session runs code in an anonymous module (##REPLyNamedSession#N), not in Main. This has one important consequence: include resolves to Compiler.include, not Base.include, and throws:
+
+UndefVarError: `include` not defined in `Main.var"##REPLySession#N"`
+Hint: a global variable of this name also exists in Compiler.
+The hint is technically correct but unhelpful — Compiler.include has a different signature and is not what the user wants. A first-time user will spend time on this.
+
+# Fails in a session eval:
+include("src/pipeline.jl")
+
+# Correct:
+Base.include(@__MODULE__, "src/pipeline.jl")   # includes into current session module
+Workaround: always use Base.include(@__MODULE__, path).
+Recommended fix: define a 1-arity include(path) wrapper in the session module at creation time that delegates to Base.include(@__MODULE__, path), so the standard form works without qualification.
+
+2.2 Module re-include ambiguity
+Severity: Medium
+Affects: Iterative edit → reload workflows
+
+Each call to Base.include(@__MODULE__, "src/foo.jl") in a session creates a new anonymous version of the module Foo defined in that file. If include is called twice — which happens naturally when you edit a file and want to reload it — the session now has two Foo modules. Any subsequent using .Foo becomes ambiguous:
+
+ERROR: It looks like two or more modules export different bindings with this name,
+resulting in ambiguity.
+The correct workaround is explicit name import after each reload:
+
+using .Foo: fn_a, fn_b   # always picks the most recently defined Foo
+Julia resolves .Foo to the most recently defined binding named Foo in the current module, so re-including after an edit and immediately calling using .Foo: ... picks the latest version. But this requires knowing all the names you need upfront and defeats the ergonomics of bare using .Foo.
+
+Recommended fix: a reload-file op that re-includes the file and removes the shadowed module name from the session before doing so (equivalent to calling Base.include(@__MODULE__, path) after clearing the old binding), combined with a clear-bindings op that resets named bindings without destroying the session. Note: this won't solve world-age issues with already-compiled methods, but covers the common case of redefining top-level functions and constants.
+
+2.3 Shell client quoting trap
+Severity: Medium
+Affects: Anyone using nc or bash to interact with REPLy
+
+Sending Julia code with $ interpolation, double quotes, or backslashes via shell string embedding fails silently:
+
+# Silently corrupts the code — shell consumes $(labels[1])
+printf '{"op":"eval","code":"println($(labels[1]))"}' | nc 127.0.0.1 5557
+There is no official client beyond the MCP adapter. The README shows nc for smoke tests, which works for trivial one-liners but fails for anything real.
+
+Platform note: macOS nc requires -G <sec> for connection timeout; GNU netcat (Linux) uses -q 1. This is a second, independent reason not to use nc directly.
+
+Workaround: use a client that JSON-encodes the code string before sending. The bin/repl-send.sh in this repository delegates entirely to Python for this reason — it accepts arbitrary Julia code from the command line without any escaping.
+Recommended fix: ship a minimal CLI (replyc eval --port 5556 --session <name> "code") or a Julia client module. The current README's nc examples set a misleading expectation of what the practical client experience looks like.
+
+2.4 julia -i + background process exits
+Severity: Low
+Affects: Automated startup scripts
+
+Julia's -i flag assumes an interactive terminal on stdin. When launched in the background (julia -i startup.jl &), stdin closes immediately and Julia exits before server code runs.
+
+julia --project=. -i startup.jl &   # exits immediately — stdin is /dev/null
+Workaround: maintain two separate entry scripts: - startup.jl (ends with banner print) — for human REPL: julia --project=. -i startup.jl in a terminal panel - server.jl (ends with wait(Condition())) — for background/agent use: julia --project=. server.jl &
+
+Recommended fix: document both modes explicitly in the README with a concrete runnable example of each.
+
+2.5 repr failure on complex return values
+Severity: Low
+Affects: Any eval returning a non-printable Julia object
+
+REPLy attempts to repr() every eval result and sends it as the value field. For objects whose repr throws (e.g., Plots figures with GR backend, some GPU arrays), the response shows:
+
+{"value": "<repr failed: Plots.GRBackend>"}
+This is not an error — the eval succeeded and any side effect (writing a PNG) happened correctly — but it is easy to confuse with a real failure, especially in agent workflows that inspect the value field.
+
+Workaround: end calls that return non-representable objects with ; nothing to suppress the return value.
+Recommended fix: emit {"value": null, "repr-error": "Plots.GRBackend"} as two separate fields. This lets clients cleanly distinguish "eval succeeded, result not representable" from "eval returned a string that happens to contain the word failed."
+
+2.6 new-session with duplicate name fails
+Severity: Low
+Affects: Re-runnable scripts and notebooks
+
+If a script calls new-session with a fixed name and the session already exists from a previous run, the server errors:
+
+{"err": "new-session: session already exists: mnist-work"}
+There is no get-or-create semantic.
+
+Workaround: call ls-sessions first and reuse the UUID if the name exists, or always use unnamed sessions and track UUIDs externally.
+Recommended fix: add "if-exists": "reuse" as an optional field to new-session. When set, the server returns the existing session's UUID rather than erroring. This makes scripts fully idempotent without preflight queries.
+
+3. MCP Adapter Gap
+The MCP adapter (serve_mcp()) exposes eight tools to LLM agents. Four are fully functional; four are stubs:
+
+MCP Tool	Status	Notes
+julia_eval	✅ Full	Spawns internal TCP server, routes eval
+julia_new_session	✅ Full	Creates and tracks named sessions
+julia_list_sessions	✅ Full	Returns UUIDs + names
+julia_close_session	✅ Full	Destroys by UUID or name
+julia_complete	❌ Stub	Returns "not yet implemented"
+julia_lookup	❌ Stub	Returns "not yet implemented"
+julia_load_file	❌ Stub	Returns "not yet implemented"
+julia_interrupt	❌ Stub	Returns "not yet implemented"
+Important: complete, lookup, load-file, and interrupt all work correctly over the raw TCP channel — the stubs are only in the MCP adapter layer, not in the server itself. An LLM agent using the MCP interface cannot use completion or doc lookup; one connecting via TCP can.
+
+This gap is significant for agent-assisted library development. During the Transducers.jl investigation, calling julia_lookup on BangBang.push!! or julia_complete on a partial Transducers. expression would have replaced several manual source-reading round-trips. An agent that cannot introspect documentation must fall back to training-data guesses about API signatures.
+
+4. Observations on Design
+What the design gets right:
+
+Protocol discipline. Kebab-case keys, flat JSON envelope, no nested objects in requests — enforced by validate_request. Makes the protocol easy to implement in any language and impossible to misuse accidentally.
+Composable middleware. Transport and eval are cleanly separated. Adding a new op means implementing one handle_message method in a new middleware struct.
+Session isolation. Each named session gets an independent anonymous Module. State from one agent session cannot corrupt another. This is the correct default for a multi-client server.
+Security defaults. load-file locked, loopback-only by default, rate limiting on, Unix socket with owner-only permissions available. A safe configuration requires zero explicit setup.
+eval-id in responses. The monotonic per-session eval counter in every response is a small but important affordance for concurrent clients that need to correlate async responses.
+What the design trades off:
+
+Sessions isolated from Main. This is correct for multi-tenant safety but creates the friction in §2.1 and §2.2 for single-user interactive workflows. A "trusted session" option — where the session module is set to Main rather than a fresh anonymous module — would make include, bare using, and REPL-style workflows work without any workarounds, at the cost of cross-session isolation.
+No streaming output. Long evals block until completion. The 30-second default timeout will kill them silently. There is no progress callback, heartbeat, or partial-output streaming mechanism. An agent running a 5-minute ODE solve has no visibility into whether it is progressing or hung.
+No session persistence. Sessions live in memory; restarting the server loses all state. For ephemeral exploration this is fine; for longer agent workflows it means a full reinitialisation on every server restart.
+5. Precompilation Story
+First-load times for the packages used in this evaluation:
+
+Package	First using	Subsequent	Notes
+REPLy	~1 s	< 0.1 s	Minimal deps; fast
+Revise	~3 s	< 0.5 s	Warms after first session
+Transducers	~4 s	~1.5 s	Dev-mode; recompiles on change
+BenchmarkTools	~2 s	< 0.5 s	—
+Images	~12 s	~2 s	Large dep tree; fully cached after first
+OrdinaryDiffEqTsit5	~8 s	~1 s	Lightweight solver; reasonable
+Plots (GR backend)	~10 s	~2 s	Binary artifact download on first run
+The Revise hook means subsequent eval latency after a source edit is near zero — only the changed method is recompiled, not the whole package. This is the single biggest productivity win of the REPLy + Revise combination. Note that Revise does not accelerate first-load TTFX; using Images will always take ~12 s on a cold cache regardless.
+
+The only precompilation friction encountered was a UUID typo in a hand-written Project.toml. Always let Pkg.add write UUIDs rather than typing them manually.
+
+6. Dependency Isolation Observations
+The two sub-projects (transducers-dev/ and image-analysis/) have completely independent Manifest.toml files. This worked correctly throughout: installing OrdinaryDiffEqTsit5 into image-analysis/ had no effect on transducers-dev/, and vice versa.
+
+One real-world obstruction: MLDatasets ≥ 0.7.1 has a transitive dependency on ShowCases.jl, hosted on gitlab.com. In environments with SSL certificate restrictions on non-GitHub hosts, this installation fails with SecureTransport error: connection closed via error. The fix — a self-contained 80-line IDX binary loader using only CodecZlib — was straightforward once the root cause was identified, but diagnosing the SSL/gitlab path through the dep tree took approximately 30 minutes.
+
+This is not a REPLy issue, but it is representative of a real Julia dependency-management friction that any workflow built on Julia packages will encounter. Auditing for non-GitHub-hosted transitive dependencies (gitlab.com, bitbucket.org, custom registries) before committing to a package choice is worth adding to project setup checklists.
+
+7. Recommendations
+Core protocol fixes — highest impact, affect every user
+Re-export include in session modules. Define include(path) = Base.include(@__MODULE__, path) in each session module at creation time. This eliminates the single most common first-time confusion with no behaviour change for existing callers.
+
+Add "if-exists": "reuse" to new-session. Returns the existing session UUID when the name already exists, making scripts idempotent without ls-sessions preflight calls.
+
+Implement MCP stubs for julia_complete and julia_lookup (highest agent value — these already work on TCP, the MCP wiring is the gap). julia_load_file and julia_interrupt are also stubbed and should follow in a second pass.
+
+Add a reload-file op that clears the previous module binding and re-includes the file, combined with a clear-bindings op to reset named bindings in a session without destroying it. Covers the iterative edit → reload loop for the common case of redefining top-level functions.
+
+Developer experience — lower friction, specific use cases
+Ship a minimal CLI client (replyc eval, replyc session new|ls|rm). Even 100 lines of Julia handles quoting, session management, and response formatting — and prevents the nc misuse the README currently implies is normal.
+
+Fix repr failure presentation. Return {"value": null, "repr-error": "ClassName"} instead of embedding the failure in the value string. Lets clients distinguish "succeeded, non-printable result" from "eval failed."
+
+Document the two server modes (wait(Condition()) for background vs -i startup.jl for human terminal) with concrete runnable examples and a note on why -i cannot be used in the background.
+
+Add a "trusted session" mode (new-session with "trusted": true) that binds the session to Main rather than an anonymous module. Opt-in, explicit, single-user only — solves §2.1 and §2.2 entirely for the interactive developer use case.
+
+8. Summary
+Dimension	Status	Notes
+Core eval correctness	STRONG	Solid; structured errors; full stacktraces
+Session persistence	STRONG	Works; name-alias routing confirmed at eval time
+Session clone	BROKEN	Binding copy is a no-op on Julia ≥ 1.11 — see readiness report §1.3
+Revise integration	STRONG	Transparent; security-verified; named sessions only
+Complete / lookup	ADEQUATE	Full on TCP; MCP stubs pending
+Resource / security limits	STRONG	Comprehensive; safe defaults; all configurable
+Dep isolation (Pkg)	STRONG	Independent manifests; zero bleed between projects
+Precompile story	ADEQUATE	First load heavy (up to 12 s); Revise eliminates recompile cost on edits
+Session isolation DX	NEEDS WORK	include confusion; re-include ambiguity; no trusted-session mode
+Client ergonomics	ADEQUATE	No official client; shell traps real but fully solved by thin wrapper
+MCP adapter completeness	NEEDS WORK	4 of 8 tools stubbed; blocks agent doc-lookup and completion
+Documentation	ADEQUATE	README covers basics; server modes, session DX, and MCP gaps underdocumented

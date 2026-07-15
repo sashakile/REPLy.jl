@@ -51,6 +51,47 @@
             close(server)
         end
     end
+
+    @testset "production server automatically sweeps idle sessions" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "idle")
+        lock(session.lock) do; session.last_active_at = time() - 10; end
+        limits = REPLy.ResourceLimits(session_idle_timeout_s=1)
+        server = REPLy.serve(; port=0, manager=manager, limits=limits, _sweep_interval_s=0.01)
+        try
+            @test timedwait(() -> isnothing(REPLy.lookup_named_session(manager, "idle")), 1) == :ok
+        finally
+            close(server)
+        end
+    end
+
+    @testset "automatic sweep preserves a running session" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "running")
+        REPLy.begin_eval!(session, current_task())
+        lock(session.lock) do; session.last_active_at = time() - 10; end
+        limits = REPLy.ResourceLimits(session_idle_timeout_s=1)
+        server = REPLy.serve(; port=0, manager=manager, limits=limits, _sweep_interval_s=0.01)
+        try
+            sleep(0.05)
+            @test REPLy.lookup_named_session(manager, "running") === session
+        finally
+            REPLy.end_eval!(session)
+            close(server)
+        end
+    end
+
+    @testset "multi-listener owns one sweeper and shutdown cleans it promptly" begin
+        server = REPLy.serve_multi((; port=0), (; port=0); _sweep_interval_s=60)
+        sweeper = server.state.session_sweeper
+        @test sweeper !== nothing
+        @test all(listener.state.session_sweeper === sweeper for listener in server.listeners)
+        elapsed = @elapsed close(server)
+        @test elapsed < 1
+        @test istaskdone(sweeper.task)
+        @test !isopen(sweeper.timer)
+        @test server.state.session_sweeper === nothing
+    end
 end
 
 @testset "non-loopback TCP host emits startup security warning" begin

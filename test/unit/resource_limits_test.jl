@@ -5,6 +5,7 @@
         @test limits.max_eval_time_ms  == 30_000                             # 30 s
         @test limits.max_output_bytes  == 1_000_000                          # 1 MB
         @test limits.max_session_history == REPLy.MAX_SESSION_HISTORY_SIZE   # 1000
+        @test limits.session_idle_timeout_s == 3600
     end
 
     @testset "per-field override" begin
@@ -40,5 +41,10 @@
     @testset "max_connections can be configured" begin
         limits = REPLy.ResourceLimits(max_connections=10)
         @test limits.max_connections == 10
+    end
+
+    @testset "session idle timeout can be configured" begin
+        limits = REPLy.ResourceLimits(session_idle_timeout_s=30)
+        @test limits.session_idle_timeout_s == 30
     end
 end

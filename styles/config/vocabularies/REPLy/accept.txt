@@ -10,3 +10,5 @@ OpenSpec
 netcat
 stdout
 LLMs
+replyc
+scratch env

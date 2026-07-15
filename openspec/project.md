@@ -37,6 +37,7 @@ units:
 | `error-handling` | Error format, status flags, exception serialization | REQ-RPL-061, 063 |
 | `mcp-adapter` | MCP-to-REPLy bridge, tool catalog, error mapping | REQ-RPL-070..076 |
 | `resource-limits` | ResourceLimits struct definition, defaults | REQ-RPL-047 |
+| `cli-distribution` | Auto-install replyc CLI via deps/build.jl, scratch env, overwrite guard | — |
 
 ### Cross-Reference Map
 
@@ -56,6 +57,11 @@ error-handling → protocol (cross-refs done semantics)
 
 mcp-adapter → error-handling (interrupted → isError mapping rationale)
            → core-operations (maps Reply ops to MCP tools)
+
+cli-distribution → transport (replyc connects via TCP)
+               → core-operations (replyc sends eval, session ops)
+               → session-management (replyc manages sessions)
+               → error-handling (replyc prints structured errors)
 ```
 
 ## Requirement Prioritization
