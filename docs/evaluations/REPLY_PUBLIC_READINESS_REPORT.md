@@ -1,0 +1,571 @@
+# REPLy.jl — Public Readiness Report
+
+**Date:** 2026-06-25
+**Version:** 0.1.0 (`main` branch)
+**Julia version:** 1.12.6
+**Evaluation basis:** QA suites (`qa/pressure.py`, `qa/features.py`, `qa/nrepl_compat.jl`),
+hands-on session across two real projects, nREPL feature comparison
+
+---
+
+## Reproducing These Findings
+
+```bash
+# §5 — pressure tests
+python3 qa/pressure.py --port 5557
+
+# §6 — feature tests
+python3 qa/features.py --port 5557
+
+# §4 — nREPL compatibility (from a live REPLy session)
+# Base.include(@__MODULE__, "qa/nrepl_compat.jl")
+# using .NREPLCompat: run_compat_suite
+# run_compat_suite("<session-uuid>")
+```
+
+Tests require a running server: `julia --project=image-analysis image-analysis/server.jl &`
+Feature tests use timestamped session names; run against a fresh server for fully
+isolated results.
+
+---
+
+## Executive Summary
+
+REPLy is a capable, well-engineered tool. The protocol is clean, the server is
+resilient under pressure, and the core eval/session/interrupt/stdin machinery works
+correctly. It is ready for expert users who know Julia's module system and are
+comfortable building their own client layer.
+
+It is **not yet ready for general public adoption**. Three things block most users
+within their first thirty minutes: no CLI client, a broken `include`, and a `clone`
+op that silently returns empty sessions on all current Julia versions (≥ 1.11). A
+further set of friction points — undocumented server modes, undocumented clone
+semantics, four MCP stubs, no streaming for long evals — limit the audience to
+developers willing to invest significant setup time.
+
+The gap between "expert-usable" and "publicly usable" is narrower than it looks.
+Most of the blocking issues have targeted fixes. This report documents them in
+priority order.
+
+---
+
+## 1. Blocking Issues
+
+These prevent a new user from succeeding in their first session.
+
+### 1.1 No CLI client
+
+**Impact:** Every user. Severity: Critical. Effort to fix: ~100 lines.
+
+The README demonstrates the protocol with `nc`:
+
+```bash
+printf '%s\n' '{"op":"eval","id":"1","code":"1+1"}' | nc 127.0.0.1 5555
+```
+
+This works for `1+1`. It silently corrupts any code containing `$`, double quotes,
+or backslashes — which is every real Julia expression. There is no `replyc` command,
+no official Julia client module, and no official Python client.
+
+Every user who reaches the "try it yourself" step must either implement JSON encoding
+from scratch or discover that the README examples do not generalise. Most give up at
+this point.
+
+Users of nREPL connect via mature editor integrations (CIDER, Calva) that are
+installed alongside the library; REPLy has no equivalent. This is the single largest
+adoption barrier.
+
+**Fix:** A ~100-line Julia script at `bin/replyc` covering `eval`, `new-session`,
+`ls-sessions`, and `close` with correct JSON encoding would unblock this entirely.
+The `bin/repl-send.sh` and `bin/repl-session.py` built during this evaluation show
+the minimum viable surface.
+
+---
+
+### 1.2 `include` does not work in session modules
+
+**Impact:** Every user who tries to load a file. Severity: Critical. Effort to fix: 1 line.
+
+Sessions run in anonymous `Module`s (`##REPLyNamedSession#N`). In these modules,
+bare `include` resolves to `Compiler.include`, not `Base.include`, and throws:
+
+```
+UndefVarError: `include` not defined in `Main.var"##REPLySession#N"`
+Hint: a global variable of this name also exists in Compiler.
+```
+
+The hint is technically correct but actively misleading — `Compiler.include` has a
+different signature and is not what the user wants. The correct form is:
+
+```julia
+Base.include(@__MODULE__, "src/pipeline.jl")
+```
+
+This is not in the README. It is non-obvious. Every Julia developer's first action in
+a new REPL session is `include("src/MyFile.jl")`. It fails. This looks like a broken
+tool, not a documentation gap.
+
+**Fix (1 line in `module_session.jl`):** Define an `include(path)` wrapper in each
+session module at creation time that delegates to `Base.include(@__MODULE__, path)`.
+The standard form then works without any user knowledge of REPLy's internals.
+
+---
+
+### 1.3 `clone` silently produces an empty module on Julia ≥ 1.11
+
+**Impact:** Every user of `clone`. Severity: Critical (silent data loss).
+
+The `clone` operation is documented as copying source session bindings to a new
+session. Empirical testing shows it silently fails on all current Julia versions:
+the clone is created and returns success, but the binding copy is a no-op.
+
+**Root cause:** Julia ≥ 1.11 enforces stricter global assignment semantics (per
+Julia's own runtime error: *"Julia 1.9 and 1.10 inadvertently omitted this error
+check (#56933)"*). The `Core.eval(dest_mod, :(sym = QuoteNode(val)))` pattern used
+in REPLy's clone binding loop is now rejected with `UndefVarError`. REPLy was
+written and tested against Julia 1.9–1.10 where the permissive behaviour was active.
+
+Confirmed in isolation:
+
+```julia
+dst = Module(gensym(:Dst))
+Core.eval(dst, :(w = 42))
+# Julia ≥ 1.11 → UndefVarError(:w, ..., :local)   ← binding copy silently skipped
+# Julia 1.9–1.10 → succeeds
+```
+
+The `const` assignment form works in Julia 1.12:
+
+```julia
+Core.eval(dst, :(const w = $(QuoteNode(42))))  # ✓ verified on Julia 1.12.6
+```
+
+The practical consequence: `clone` on all current Julia versions always returns an
+empty module. The `describe` op and documentation advertise binding inheritance that
+does not exist.
+
+**Fix (verified on Julia 1.12.6):**
+
+```julia
+# Replace the current loop body in clone_named_session!:
+copied = ismutable(val) ? deepcopy(val) : val
+Core.eval(dest_mod, :(const $(sym) = $(QuoteNode(copied))))
+```
+
+Using `deepcopy` for mutable types before the `const` assignment means the clone
+gets independent copies — mutations in the clone do not affect the source.
+
+**Important caveat:** `const` prevents *reassignment* of cloned bindings in the
+destination session. Code that rebinds a cloned variable (e.g., `imgs = filter(...)`)
+will throw `ConstAssignmentError`. Mutation of mutable objects works (`push!(imgs,
+x)` is fine); only rebinding (`imgs = new_value`) breaks. This fix is appropriate
+for read-only forks and data-exploration branches. Workflows that require
+reassignment need a deeper architectural change — for example, a `trusted-session`
+mode that avoids `Core.eval` for binding transfer entirely.
+
+Note: `Base.setglobal!` was also tested as an alternative and fails on Julia 1.12
+with the same root cause: *"Global does not exist and cannot be assigned"*. It
+requires the global to be pre-declared, and there is no working way to pre-declare
+a global in a foreign module via `Core.eval` in Julia 1.12.
+
+---
+
+## 2. Significant Friction
+
+These do not block initial use but cause repeated pain and drop-off.
+
+### 2.1 Module re-include ambiguity
+
+**Impact:** All iterative-development workflows. Severity: High.
+
+Each `Base.include(@__MODULE__, "src/foo.jl")` call creates a new anonymous version
+of the `Foo` module defined in that file. Re-including after an edit leaves the
+session with two `Foo` bindings. Any `using .Foo` is then rejected:
+
+```
+ERROR: It looks like two or more modules export different bindings
+with this name, resulting in ambiguity.
+```
+
+The workaround — `using .Foo: fn1, fn2` after each reload — requires knowing all
+exported names in advance. Revise.jl reduces this friction for method redefinitions,
+but only for named sessions (the Revise hook does not fire for ephemeral evals); any
+file that redefines a module will still hit this on each reload cycle.
+
+**Fix:** A `reload-file` op (or a `reset-bindings` op) that clears the old module
+binding before re-including. Covers the common case without solving world-age
+issues.
+
+> **Demonstrated:** `ReloadFileMiddleware` in `middleware/custom.jl` implements
+> exactly this — it deletes the stale module binding, then re-includes via the
+> existing `load-file` machinery. See `MIDDLEWARE_GUIDE.md` (Pattern 5).
+
+---
+
+### 2.2 `new-session` with a duplicate name errors rather than returns
+
+**Impact:** All scripted and re-runnable workflows. Severity: High.
+
+Running a script twice that calls `new-session` with a fixed name fails on the
+second run:
+
+```json
+{"err": "new-session: session already exists: my-session"}
+```
+
+There is no `get-or-create` semantic. Scripts must call `ls-sessions` first, check
+for existence, and reuse the UUID if found — three round-trips instead of one.
+
+**Fix:** An `"if-exists": "reuse"` field on `new-session`. Returns the existing UUID
+rather than erroring. Makes scripts idempotent with no client-side change.
+
+---
+
+### 2.3 Two server modes, both undocumented
+
+**Impact:** All users setting up a persistent server. Severity: High.
+
+Julia's `-i` flag requires an interactive terminal. `julia -i startup.jl &` silently
+exits in under a second — stdin closes immediately when backgrounded. The correct
+pattern for a background server (`wait(Condition())` in a non-interactive script) is
+not in the README.
+
+The user's next symptom is `Connection refused` from their client — with no server
+log, no error message, and a process that has already silently exited with code 0.
+They must diagnose an absence with no evidence trail.
+
+**Fix:** One paragraph in the README showing both patterns:
+- Human REPL (foreground): `julia --project=. -i startup.jl`
+- Background server: `julia --project=. server.jl &` (requires `wait(Condition())`)
+
+---
+
+### 2.4 MCP adapter: 4 of 8 tools are stubs
+
+**Impact:** All LLM agent workflows. Severity: High.
+
+The MCP adapter is the highest-visibility differentiator for LLM-focused users —
+the feature that explicitly positions REPLy as an agent tool rather than a generic
+network REPL. Of its eight advertised tools, four return `"not yet implemented"`:
+
+| Tool | Status |
+|---|---|
+| `julia_complete` | ❌ Stub |
+| `julia_lookup` | ❌ Stub |
+| `julia_load_file` | ❌ Stub |
+| `julia_interrupt` | ❌ Stub |
+
+All four work correctly over the raw TCP channel. The gap is only in the MCP adapter
+layer — wiring existing functionality through a different interface. An LLM agent
+connecting via MCP cannot ask what a function does, cannot complete partial
+expressions, cannot load a file, and cannot cancel a runaway eval. It is eval-only.
+
+> **Verified end-to-end (not inferred):** `qa/mcp.py` spawns `serve_mcp()` and drives
+> the full stdio JSON-RPC 2.0 protocol — `initialize`, `tools/list` (8 tools confirmed),
+> `julia_eval` (works), session lifecycle tools (work), and all four stubs returning
+> `"<tool> is not yet implemented"`. Result: 5/5. This claim is observed, not read
+> from source.
+
+**Fix:** Wire `julia_complete` and `julia_lookup` through the MCP adapter (highest
+agent value). `julia_load_file` and `julia_interrupt` follow in a second pass.
+
+---
+
+### 2.5 No `ping` / liveness op
+
+**Impact:** All programmatic clients. Severity: Medium.
+
+There is no lightweight liveness check. An agent managing REPLy as a subprocess —
+waiting for it to finish loading before sending evals — must attempt a full eval and
+inspect the response:
+
+```bash
+printf '%s\n' '{"op":"ping","id":"1"}' | nc 127.0.0.1 5555
+# → {"err":"Unknown operation: ping",...}
+```
+
+This forces clients to implement retry loops with full eval round-trips, increasing
+startup latency and coupling readiness detection to eval correctness.
+
+**Fix:** Add `{"op":"ping","id":"..."}` → `{"status":["done","pong"]}`. Five lines
+in `UnknownOpMiddleware`.
+
+> **Demonstrated:** A working `PingMiddleware` is implemented in `middleware/custom.jl`
+> and documented in `MIDDLEWARE_GUIDE.md` (Pattern 1). It adds the `ping` op via the
+> existing middleware API with no fork required.
+
+---
+
+### 2.6 `repr` failure is presented as a value, not a flag
+
+**Impact:** Any eval returning a non-printable object. Severity: Medium.
+
+When `repr()` throws (e.g., Plots figures, GPU arrays), the response shows:
+
+```json
+{"value": "<repr failed: Plots.GRBackend>"}
+```
+
+This is indistinguishable from an eval that returned a string containing the word
+"failed". An agent that inspects `value` for success/failure signals will
+misclassify this as an error.
+
+**Fix:** Return `{"value": null, "repr-error": "ClassName"}` as separate fields.
+
+---
+
+## 3. Missing Capabilities
+
+These limit which use cases are viable, but do not block the core workflow.
+
+### 3.1 No streaming output
+
+Long-running evals block until completion or the 30-second timeout kills them
+silently. There is no partial output, progress callback, or heartbeat. A data
+scientist running a large ODE solve or ML training loop has no visibility into
+whether the computation is progressing or hung.
+
+For interactive data analysis — one of REPLy's primary use cases — the 30-second
+wall is too low, and the lack of streaming makes long computations opaque. The
+timeout is configurable (`max_eval_time_ms`), but this is not documented and users
+will not find it.
+
+**Fix (short term):** Document `max_eval_time_ms` prominently. Add a note in timeout
+error responses that it is configurable.
+**Fix (long term):** Streaming output via periodic `out` messages during a running
+eval.
+
+### 3.2 `clone` semantics counterintuitive even after the §1.3 fix
+
+Once §1.3 is fixed, `clone` will copy bindings — but with `const` semantics on the
+destination. This diverges from nREPL's `clone` in two ways users will not expect:
+
+1. **nREPL clone** creates a session that fully inherits and can diverge from the
+   parent (reassignment works). **REPLy clone (fixed)** creates a session where
+   inherited bindings are `const` — reassignment throws `ConstAssignmentError`.
+2. For mutable objects, REPLy's `deepcopy` gives the clone an independent copy;
+   nREPL shares session state by reference.
+
+The `describe` op and session-ops docstrings explain none of this. A user who clones
+a data-loaded session expecting to branch an analysis will hit `ConstAssignmentError`
+on the first transformation step and conclude the fix is still broken.
+
+**Fix:** Document the `const` semantics and the `deepcopy` behaviour explicitly in
+the `clone` op's `doc` field and in the README. Label clone sessions as
+`"type": "light"` (already declared in the session-ops descriptor as future work)
+and explain what "light" means concretely.
+
+### 3.3 No session introspection
+
+There is no equivalent to nREPL's `ns-vars` — no way to ask "what is defined in
+this session?" A long-lived session accumulates bindings that are invisible except
+by re-running the eval history. An agent resuming work in an existing session cannot
+discover what state it is in without re-loading everything from scratch.
+
+**Workaround:** `eval` → `string.(names(@__MODULE__; all=true))`.
+**Fix (proper):** A native `ls-bindings` op that returns the session's current
+symbol table.
+
+> **Demonstrated:** `SessionToolsMiddleware` in `middleware/custom.jl` adds both
+> `ls-bindings` (typed symbol table) and `macroexpand`. See `MIDDLEWARE_GUIDE.md`
+> (Pattern 6).
+
+### 3.4 No authentication or TLS
+
+REPLy binds to loopback only by default — safe for local use, but there is no
+supported path for multi-machine agent workflows. No bearer token, no mTLS, no IP
+allowlist. Running REPLy in a container and exposing it to an orchestration layer
+requires a separate reverse proxy with auth, which is undocumented.
+
+This limits the tool to single-machine use without significant external
+infrastructure.
+
+### 3.5 No persistent sessions
+
+Sessions live only for the server process lifetime. A server restart (crash, update,
+OOM) destroys all session state. An agent that has spent 10 minutes building up
+analysis state in a session must start over. For short-lived ephemeral evaluations
+this is fine; for longer agent workflows it is a real constraint.
+
+---
+
+## 4. Comparison with nREPL
+
+Running the nREPL compatibility suite (`qa/nrepl_compat.jl`) against a live REPLy
+server produced a **95% compatibility score (19/20 ops)** — but this figure
+overstates practical parity because `clone` binding copy is silently broken on
+Julia ≥ 1.11 (§1.3) and four MCP tools are stubs (§2.4).
+
+| Op | REPLy status | Notes |
+|---|---|---|
+| eval | ✅ Native | Full: stdout, stderr, stacktraces, eval-id |
+| interrupt | ✅ Native | InterruptException delivered; session recovers |
+| clone | ⚠️ Broken | Returns success; binding copy no-ops on Julia ≥ 1.11 — see §1.3 |
+| close | ✅ Native | Destructive once |
+| describe | ✅ Native | All ops documented; `encodings` field absent |
+| ls-sessions | ✅ Native | Rich metadata per session |
+| load-file | ✅ Native | Requires explicit allowlist (secure default) |
+| lookup | ✅ Native | Returns docstrings; TCP only — MCP stub |
+| complete | ✅ Native | Returns typed completions; TCP only — MCP stub |
+| stdin | ✅ Native | Two-connection pattern; tested end-to-end |
+| macroexpand | 🟡 Simulated | `@macroexpand` via eval |
+| ns-list | 🟡 Simulated | `Base.loaded_modules` via eval |
+| ns-vars | 🟡 Simulated | `names(Module; all=true)` via eval |
+| apropos | 🟡 Simulated | `InteractiveUtils.apropos` via eval |
+| pprint-eval | 🟡 Simulated | `sprint(show, MIME("text/plain"), val)` via eval |
+| undef | 🟡 Simulated | `Base.delete_binding` via eval (Julia ≥ 1.11) |
+| eldoc | 🟡 Partial | Docstrings via lookup; arglists via `methods()`, not structured |
+| test | 🟡 Workaround | `@testset` via eval; no structured pass/fail response |
+| refresh | ✅ Covered | Revise hook on named sessions |
+| format-code | ❌ Not available | Would need JuliaFormatter.jl |
+
+Legend: ✅ working · ⚠️ present but silently incorrect · 🟡 simulated via eval · ❌ absent
+
+---
+
+## 5. Pressure Test Results
+
+The server is robust under load. All six pressure tests passed:
+
+| Test | Result | Key metric |
+|---|---|---|
+| Concurrent 10×100 eval | PASS | 428 req/s · p99 = 214 ms · 0 errors |
+| Rate limit (700 req burst) | PASS | Exactly 600 served · 100 rejected |
+| Output truncation (1.5 MB) | PASS | 1,000,012 bytes received · connection survived |
+| Malformed protocol (7 cases) | PASS | Server survived all; no crash |
+| Session churn (50 cycles)¹ | PASS | p50 = 28 ms · p99 = 459 ms · 0 errors |
+| Connection saturation (101) | PASS | Rejected at index 100 · full recovery |
+
+¹ **Note:** The churn test verifies that clone creates a usable session and can
+eval fresh code. It does **not** test binding inheritance — the test was updated
+after discovering the §1.3 regression. A PASS here does not indicate that `clone`
+copies bindings correctly.
+
+The rate limiter is precisely calibrated: exactly 600 requests succeed and 100 are
+rejected in a 700-request burst. Output truncation applies at the first message
+boundary that exceeds the 1 MB cap (not byte-exactly) — the connection survives and
+returns normally. The server handles malformed, oversized, and structurally invalid
+messages without crashing or leaking state.
+
+### Concurrency guarantees (`qa/concurrency.py`, 2/2)
+
+Two correctness guarantees the code claims were verified end-to-end:
+
+| Test | Result | Finding |
+|---|---|---|
+| Same-session FIFO (8 concurrent increments) | PASS | Per-session `eval_lock` serialises correctly — counter reaches 8 with zero lost updates |
+| `max_concurrent_evals` cap (15 simultaneous long evals) | PASS | Cap (default 10) **rejects** excess with `"Too many concurrent evals"` — it does **not** queue |
+
+**Operationally important:** the concurrent-eval cap sheds load by *rejecting*,
+not queuing. A client firing more than `max_concurrent_evals` (10) simultaneous
+evals — across any combination of sessions — will receive `"Too many concurrent
+evals"` errors for the excess and must implement retry/backoff. This is good
+backpressure behaviour, but it is undocumented and clients will not expect it.
+
+### Robustness limitation: I/O-capture FD exhaustion under sustained load
+
+Each suite passes on a **fresh** server. But running several heavy suites
+(interrupt + stdin + high-concurrency) against a single long-lived server
+instance eventually degrades it: named-session evals begin failing with
+`SystemError: dup: Bad file descriptor`, originating in the per-eval I/O capture
+layer (which dups stdout/stderr per task). A server restart clears it.
+
+This suggests file descriptors are not always released cleanly when evals are
+interrupted or when stdin pipes are torn down. For short-lived or
+moderate-traffic use it is invisible; for a long-running production server under
+sustained mixed load it is a real leak that warrants investigation. Reproduce by
+running `qa/revise.py`, `qa/concurrency.py`, `qa/features.py`, and `qa/pressure.py`
+back-to-back against one server — the later suites degrade from full-pass to
+partial-pass without a restart.
+
+---
+
+## 6. Feature Test Results
+
+All seven feature tests passed. Tests use timestamped session names to avoid
+collisions with sessions from prior runs; for fully isolated results, run against a
+fresh server instance.
+
+| Test | Result | Key finding |
+|---|---|---|
+| interrupt | PASS | Session returns to idle; next eval succeeds |
+| stdin round-trip | PASS | Two-connection pattern required and documented |
+| timeout-ms (5 cases) | PASS | `timeout-ms: 0` and non-integer correctly rejected |
+| silent (4 cases) | PASS | Suppresses `value`; stdout and errors still emit |
+| clone behaviour | PASS | Empty module confirmed; documented as divergence from nREPL |
+| describe completeness | PASS | 13 ops, all documented; `encodings` absent |
+| store-history | PASS | `eval-count` increments; history vector controlled separately |
+
+Notable: `describe` returns `encodings: null`. nREPL advertises its encoding in
+`describe` (bencode vs. JSON) to enable client-side format negotiation. REPLy is
+JSON-only and omits this field. Clients that check `encodings` for format
+negotiation will find nothing.
+
+---
+
+## 7. Priority Fix List
+
+### P0 — Prevents first success
+
+1. **Fix `include` in sessions** *(1 line in `module_session.jl`)* — Define a
+   `include(path)` wrapper in each session module. Unblocks every user who tries
+   to load a file.
+2. **Fix `clone` binding copy for Julia ≥ 1.11** *(~10 lines)* — Replace
+   `Core.eval(dest_mod, :($(sym) = $(QuoteNode(copied))))` with
+   `Core.eval(dest_mod, :(const $(sym) = $(QuoteNode(copied))))`. Add caveat
+   documentation about const-reassignment semantics (see §1.3).
+3. **Ship a CLI client** *(~100 lines)* — `replyc eval`, `replyc session new|ls|rm`
+   with correct JSON encoding. Unblocks every user who reads the README.
+
+### P1 — Repeated friction for active users
+
+4. **`new-session` idempotency** — `"if-exists": "reuse"` option.
+5. **Document server modes** — `-i` foreground vs. `wait(Condition())` background,
+   both with runnable examples.
+6. **Implement MCP stubs** — `julia_complete` and `julia_lookup` first; `julia_load_file`
+   and `julia_interrupt` in a second pass.
+7. **`reload-file` or `reset-bindings` op** — Enables clean hot-reload cycles
+   without module ambiguity. *(Demonstrated: `ReloadFileMiddleware`, see `MIDDLEWARE_GUIDE.md`.)*
+8. **Add `ping` op** — Lightweight liveness probe. *(Demonstrated: `PingMiddleware`.)*
+
+### P2 — Expands viable use cases
+
+9. **Document `max_eval_time_ms`** prominently; add a note in timeout error
+   responses that it is configurable.
+10. **Fix `repr` failure presentation** — `{"value": null, "repr-error": "…"}`.
+11. **`ls-bindings` op** — Session introspection without writing eval boilerplate.
+    *(Demonstrated: `SessionToolsMiddleware`, see `MIDDLEWARE_GUIDE.md`.)*
+12. **Document `clone` semantics** — `const` semantics, `deepcopy` behaviour,
+    and divergence from nREPL.
+13. **Document the `max_concurrent_evals` reject-on-overflow behaviour** — clients
+    exceeding the cap (default 10) get `"Too many concurrent evals"`, not queuing.
+    Document the error and recommend retry/backoff. Also document that Revise
+    only tracks dev-package and `includet`'d files, not `Base.include`'d ones.
+
+### P3 — Structural capability gaps
+
+13. **Streaming output** — Partial `out` messages during long evals.
+14. **Authentication / TLS** — Documented path for multi-machine deployments.
+15. **`trusted-session` mode** — Session backed by `Main` rather than an anonymous
+    module; opt-in, single-user, eliminates §1.2 and §2.1 entirely.
+16. **Persistent sessions** — Survive server restart for long-lived agent workflows.
+
+---
+
+## 8. Summary
+
+| Area | Status | Blocking? |
+|---|---|---|
+| Protocol correctness | **STRONG** | No |
+| Server resilience | **STRONG** | No |
+| Core eval / sessions | **STRONG** | No |
+| Interrupt / stdin / timeout-ms | **STRONG** | No |
+| `include` in sessions | **BROKEN** | Yes — 1-line fix available |
+| `clone` binding copy (Julia ≥ 1.11) | **BROKEN** | Yes — fix verified; const caveat applies |
+| CLI client | **MISSING** | Yes |
+| MCP adapter completeness | **PARTIAL** | For agent use only |
+| Hot-reload ergonomics | **NEEDS WORK** | No |
+| Streaming / long evals | **MISSING** | No |
+| Documentation | **NEEDS WORK** | Partially |
+| nREPL parity — TCP ops | **STRONG** (95%) | No |
+| nREPL parity — MCP tools | **PARTIAL** (4 stubs) | For agent use only |

@@ -8,12 +8,18 @@ Holds the configured `ResourceLimits` and runtime counters that span all client 
 - `max_message_bytes::Int` — maximum inbound message size (bytes).
 - `active_evals::Threads.Atomic{Int}` — number of eval operations currently in flight server-wide.
 """
+mutable struct SessionSweeper
+    timer::Timer
+    task::Task
+end
+
 mutable struct ServerState
     limits::ResourceLimits
     max_message_bytes::Int
     active_evals::Threads.Atomic{Int}
     active_eval_lock::ReentrantLock
     active_eval_tasks::IdDict{Task, Nothing}
+    session_sweeper::Union{Nothing, SessionSweeper}
 end
 
 """
@@ -22,7 +28,7 @@ end
 Construct a `ServerState` with all counters initialised to zero.
 """
 ServerState(limits::ResourceLimits, max_message_bytes::Int) =
-    ServerState(limits, max_message_bytes, Threads.Atomic{Int}(0), ReentrantLock(), IdDict{Task, Nothing}())
+    ServerState(limits, max_message_bytes, Threads.Atomic{Int}(0), ReentrantLock(), IdDict{Task, Nothing}(), nothing)
 
 function register_active_eval!(state::ServerState, task::Task)
     lock(state.active_eval_lock) do

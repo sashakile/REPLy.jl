@@ -1,5 +1,10 @@
 # How-to: Use REPLy as a Global Dev Tool
 
+!!! tip "Also see"
+    If you use the REPLy CLI client (`replyc`), see
+    [Install the `replyc` CLI Command](howto-cli-install.md) for automatic
+    and manual installation instructions.
+
 Like [Revise.jl](https://github.com/timholy/Revise.jl), **REPLy.jl** is most useful when it is always available in your development environment, regardless of which project you are currently working on.
 
 By adding REPLy to your Julia `startup.jl` file, you can ensure that a REPLy server starts automatically whenever you launch an interactive Julia session.

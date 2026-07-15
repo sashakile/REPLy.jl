@@ -45,7 +45,40 @@ is created at that path. Otherwise, a TCP server is started on the given `host` 
 # Returns
 A server handle (`TCPServerHandle` or `UnixServerHandle`) which can be closed with `close(server)`.
 """
-function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
+const SESSION_SWEEP_INTERVAL_SECONDS = 60.0
+
+function start_session_sweeper!(state::ServerState, manager::SessionManager; interval_seconds::Real=SESSION_SWEEP_INTERVAL_SECONDS)
+    interval_seconds > 0 || throw(ArgumentError("interval_seconds must be positive, got $interval_seconds"))
+    state.limits.session_idle_timeout_s > 0 || throw(ArgumentError("session_idle_timeout_s must be positive, got $(state.limits.session_idle_timeout_s)"))
+    state.session_sweeper === nothing || throw(ArgumentError("session sweeper already started"))
+    timer = Timer(Float64(interval_seconds); interval=Float64(interval_seconds))
+    sweeper = SessionSweeper(timer, Task(() -> nothing))
+    sweeper.task = @async begin
+        while isopen(timer)
+            try
+                wait(timer)
+                isopen(timer) || break
+                sweep_idle_sessions!(manager; max_idle_seconds=state.limits.session_idle_timeout_s)
+            catch ex
+                isopen(timer) || break
+                @error "Idle session sweep failed" exception=(ex, catch_backtrace())
+            end
+        end
+    end
+    state.session_sweeper = sweeper
+    return sweeper
+end
+
+function stop_session_sweeper!(state::ServerState)
+    sweeper = state.session_sweeper
+    sweeper === nothing && return nothing
+    close(sweeper.timer)
+    wait(sweeper.task)
+    state.session_sweeper = nothing
+    return nothing
+end
+
+function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
     max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
     closing = Ref(false)
     state = ServerState(limits, max_message_bytes)
@@ -70,6 +103,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
             state,
         )
         server.accept_task = @async accept_loop!(listener, server)
+        start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
         return server
     end
 
@@ -89,6 +123,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         state,
     )
     server.accept_task = @async accept_loop!(listener, server)
+    start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
     return server
 end
 
@@ -142,6 +177,7 @@ function close_server!(server::AbstractServerHandle; grace_seconds::Real=DEFAULT
 
     deadline = time() + Float64(grace_seconds)
 
+    stop_session_sweeper!(server.state)
     _close_listener!(server)
     interrupt_active_evals!(server.state)
 
@@ -180,7 +216,7 @@ Each `spec` is a named tuple with either:
 
 Returns a `MultiListenerServer` which can be closed with `close(server)`.
 """
-function serve_multi(specs...; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)
+function serve_multi(specs...; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
     max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
     isempty(specs) && throw(ArgumentError("serve_multi requires at least one listener spec"))
 
@@ -208,6 +244,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
         end
     end
 
+    start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
     return MultiListenerServer(listeners, closing, state, stack)
 end
 
@@ -218,6 +255,7 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
 
     deadline = time() + Float64(grace_seconds)
 
+    stop_session_sweeper!(server.state)
     # Batch-close all listeners, then wait for accept tasks — better parallelism
     # than sequential close+wait per listener (which close_server! does for single handles).
     for handle in server.listeners
