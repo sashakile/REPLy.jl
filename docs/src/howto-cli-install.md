@@ -59,10 +59,15 @@ exec julia --startup-file=no --project="/path/to/reply/project" \
     -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- "$@"
 ```
 
-It uses `--project` to point to REPLy's project directory, which means it
-always resolves the same REPLy version and dependencies it was built with.
+It uses `--project` to point to REPLy's project directory at build time,
+which means it always resolves the same REPLy version and dependencies.
 Because `--project` overrides any `JULIA_PROJECT` set in your outer shell,
-the launcher is immune to environment drift.
+the launcher avoids surprises from accidental project-switching.
+
+!!! note "Path stays at build time"
+    The launcher caches the project path as it was when you last ran
+    `Pkg.build`. If you later garbage-collect or upgrade Julia, re-run
+    `Pkg.build("REPLy")` to regenerate the launcher.
 
 ### Overwrite guard
 
@@ -122,14 +127,16 @@ julia -e 'using Pkg; Pkg.build("REPLy")'
 
 ### `ArgumentError: Package REPLy not found`
 
-The scratch-space environment may not be fully instantiated. Run:
+The launcher is pinned to REPLy's project directory at build time. If REPLy
+was removed or moved since then, the path is stale. Re-run `Pkg.build` to
+regenerate the launcher:
 
 ```bash
-julia --project="$(julia -e 'using Scratch; println(get_scratch!(REPLy, "env"))')" \
-    -e 'using Pkg; Pkg.instantiate()'
+julia -e 'using Pkg; Pkg.build("REPLy")
 ```
 
-This resolves and precompiles all dependencies in the scratch environment.
+If you upgraded Julia or ran `Pkg.gc()` since installing REPLy, the package
+path may have changed. A fresh build always captures the current path.
 
 ## Uninstall
 
