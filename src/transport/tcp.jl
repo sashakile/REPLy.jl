@@ -127,11 +127,9 @@ function handle_client!(socket::IO, handler::Function;
                 # Handler threw — return error response, then continue.
                 actual_ex = ex isa TaskFailedException ? ex.task.exception : ex
                 request_id = safe_request_id(msg)
-                error_resp = error_response(
+                error_resp = internal_error_response(
                     request_id,
-                    exception_message(actual_ex);
-                    status_flags=String["error"],
-                    ex=actual_ex,
+                    actual_ex;
                     bt=(ex isa TaskFailedException ? ex.task.backtrace : catch_backtrace()),
                 )
                 try

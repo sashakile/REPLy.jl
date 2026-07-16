@@ -98,9 +98,14 @@ function error_response(
     status_flags::Vector{String}=String["error"],
     ex=nothing,
     bt=nothing,
+    correlation_id=nothing,
 )
     status = unique(vcat(String["done"], status_flags))
     msg = response_message(request_id, "status" => status, "err" => err)
+
+    if !isnothing(correlation_id)
+        msg["correlation-id"] = correlation_id
+    end
 
     if !isnothing(ex)
         msg["ex"] = Dict(

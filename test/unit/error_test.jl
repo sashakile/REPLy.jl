@@ -84,6 +84,74 @@
         @test msg == "<showerror failed: BrokenShowerror>"
     end
 
+    @testset "internal_error_response returns stable code + correlation id only" begin
+        # Server-internal failures must NOT leak stack traces or exception
+        # type details to the client. Only a stable error message and a
+        # correlation id for server-side log lookup.
+        ex = ErrorException("something went wrong deep inside")
+        bt = try
+            error("capture")
+        catch
+            catch_backtrace()
+        end
+        resp = REPLy.internal_error_response("req-1", ex; bt=bt)
+
+        @test resp["id"] == "req-1"
+        @test Set(resp["status"]) == Set(["done", "error"])
+        @test occursin("Internal server error", resp["err"])
+        # Must have a correlation id (non-empty string) for log correlation
+        @test haskey(resp, "correlation-id")
+        @test resp["correlation-id"] isa AbstractString
+        @test !isempty(resp["correlation-id"])
+        # Must NOT leak exception type or stack trace
+        @test !haskey(resp, "ex")
+        @test !haskey(resp, "stacktrace")
+    end
+
+    @testset "eval_error_response still returns full trace for user eval errors" begin
+        # User eval errors must continue to return full exception details
+        # and stack traces — this is the expected behavior for eval.
+        ex = UndefVarError(:missing_name)
+        bt = try
+            error("capture")
+        catch
+            catch_backtrace()
+        end
+        resp = REPLy.eval_error_response("req-2", ex; bt=bt)
+
+        @test resp["id"] == "req-2"
+        @test Set(resp["status"]) == Set(["done", "error"])
+        @test haskey(resp, "ex")
+        @test resp["ex"]["type"] == "UndefVarError"
+        @test haskey(resp, "stacktrace")
+        @test resp["stacktrace"] isa Vector
+        @test !isempty(resp["stacktrace"])
+        # No correlation-id on user-facing errors
+        @test !haskey(resp, "correlation-id")
+    end
+
+    @testset "internal_error_response opt-in trace exposure on loopback" begin
+        # When expose_internal_traces is true (e.g. loopback connection), the
+        # response should include the full exception and stacktrace.
+        ex = ErrorException("debug this")
+        bt = try
+            error("capture")
+        catch
+            catch_backtrace()
+        end
+        resp = REPLy.internal_error_response("req-3", ex; bt=bt, expose_trace=true)
+
+        @test resp["id"] == "req-3"
+        @test haskey(resp, "ex")
+        @test resp["ex"]["type"] == "ErrorException"
+        @test haskey(resp, "stacktrace")
+        @test resp["stacktrace"] isa Vector
+        @test !isempty(resp["stacktrace"])
+        # Still includes correlation id even when trace is exposed
+        @test haskey(resp, "correlation-id")
+        @test !isempty(resp["correlation-id"])
+    end
+
     @testset "fallback_render strips unstable module prefixes" begin
         m = Module()
         Core.eval(m, :(struct HiddenType end))

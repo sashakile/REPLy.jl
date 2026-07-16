@@ -71,14 +71,26 @@ function stacktrace_payload(bt)
     ]
 end
 
-# Transport-level handler failures intentionally reuse the same wire error
-# shape as eval failures so clients see one consistent internal-error format.
-function internal_error_response(request_id::AbstractString, ex; bt=catch_backtrace())
-    return error_response(request_id, safe_showerror(ex); ex=ex, bt=bt)
+# Transport-level handler failures return a stable error message and a
+# correlation id (UUID) for server-side log lookup. Full exception details
+# and stack traces are never leaked to the client by default.
+#
+# When `expose_trace=true` (opt-in for loopback connections), the full
+# exception type, message, and stack trace are included in the response.
+function internal_error_response(request_id::AbstractString, ex; bt=catch_backtrace(), expose_trace=false)
+    correlation_id = string(uuid4())
+    if expose_trace
+        return error_response(request_id, safe_showerror(ex); ex=ex, bt=bt, correlation_id=correlation_id)
+    end
+    return error_response(
+        request_id,
+        "Internal server error — contact administrator with correlation id: $(correlation_id)";
+        correlation_id=correlation_id,
+    )
 end
 
 function eval_error_response(request_id::AbstractString, ex; bt=catch_backtrace())
-    return internal_error_response(request_id, ex; bt=bt)
+    return error_response(request_id, safe_showerror(ex); ex=ex, bt=bt)
 end
 
 function unknown_op_response(request_id::AbstractString, op::AbstractString)
