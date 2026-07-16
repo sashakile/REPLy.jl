@@ -3,6 +3,7 @@ using Logging
 using REPLy
 using JSON3
 using Sockets
+using Pkg
 
 include("helpers/conformance.jl")
 include("helpers/tcp_client.jl")
