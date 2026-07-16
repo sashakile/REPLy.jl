@@ -424,7 +424,23 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
 
     try
         msgs = try
-            fetch(eval_task)
+            if !isnothing(effective_timeout_ms)
+                # Bounded wait for task completion. Polls with scheduler yield
+                # so the timeout timer can fire. If the timer fires and the task
+                # still hasn't completed (non-interruptible ccall, BLAS, etc.),
+                # release the slot immediately and return a timeout response.
+                while !istaskdone(eval_task) && !timed_out[]
+                    yield()
+                    sleep(0.01)
+                end
+                if istaskdone(eval_task)
+                    fetch(eval_task)
+                else
+                    [timeout_response()]
+                end
+            else
+                fetch(eval_task)
+            end
         catch ex
             # fetch wraps a failed task's exception in TaskFailedException.
             # InterruptException may escape _run_eval_core if it fires in the narrow
