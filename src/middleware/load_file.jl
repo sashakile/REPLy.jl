@@ -51,7 +51,8 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
     request_id = String(request["id"])
 
     file = get(request, "file", nothing)
-    file isa AbstractString || return [error_response(request_id, "load-file requires a string file field")]
+    file isa AbstractString || return [error_response(request_id, "load-file requires a string file field";
+                        status_flags=String["error", "missing-file-field"])]
 
     if isnothing(load_file_allowlist)
         return [error_response(
@@ -70,7 +71,8 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
     code = try
         read(file, String)
     catch ex
-        return [error_response(request_id, "Failed to read file: $(safe_showerror(ex))")]
+        return [error_response(request_id, "Failed to read file: $(safe_showerror(ex))";
+                        status_flags=String["error", "file-read-error"])]
     end
 
     max_output_bytes = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))

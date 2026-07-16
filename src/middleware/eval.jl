@@ -72,20 +72,85 @@ function eval_parsed(module_::Module, exprs)
     return Core.eval(module_, exprs)
 end
 
-# Concrete result of `_run_eval_core`, giving it a single stable return type.
-# `messages` is the response frames to emit; `captured` is `Some{Any}(value)` on
-# a successful eval (used to update `ans`/history) or `nothing` on error,
-# interrupt, or `silent` eval. Boxing the value as `Some{Any}` keeps the field —
-# and therefore the struct — concretely typed regardless of the value's type.
-struct EvalCoreResult
-    messages::Vector{Dict{String, Any}}
-    captured::Union{Some{Any}, Nothing}
+# EvalOutcome — discriminated union for eval results.
+#
+# Internal representation of what happened during an eval. Serialized to the
+# frozen wire format (status arrays, value/err/out messages) at the handler
+# boundary via `serialize(...)`, never before.
+
+"""
+    EvalOutcome
+
+Discriminated union of eval outcomes. Subtypes carry the data needed to
+serialize to wire format at the edge.
+"""
+abstract type EvalOutcome end
+
+"""
+    Completed(value, stdout, stderr)
+
+Eval finished normally. `value` is the evaluated result (may be `nothing` for
+empty code). `stdout` and `stderr` are captured output.
+"""
+struct Completed <: EvalOutcome
+    value::Any
+    stdout::String
+    stderr::String
 end
 
-function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))::EvalCoreResult
-    # TaskCapturingIO routes Julia-level writes to per-task IOBuffers without
-    # dup2, so concurrent evals across sessions capture their own output
-    # independently. Install is idempotent and performed once per process.
+"""
+    Interrupted(stdout, stderr)
+
+Eval was interrupted by `InterruptException` (interrupt op). `stdout` and
+`stderr` are any output captured before the interrupt.
+"""
+struct Interrupted <: EvalOutcome
+    stdout::String
+    stderr::String
+end
+
+"""
+    TimedOut(timeout_ms, stdout, stderr)
+
+Eval exceeded the configured timeout. `timeout_ms` is the effective timeout
+that fired. `stdout` and `stderr` are any output captured before timeout.
+"""
+struct TimedOut <: EvalOutcome
+    timeout_ms::Int
+    stdout::String
+    stderr::String
+end
+
+"""
+    Errored(exception, backtrace, stdout, stderr)
+
+Eval threw an exception. `stdout` and `stderr` are any output captured
+before the error.
+"""
+struct Errored <: EvalOutcome
+    exception::Any
+    backtrace::Any
+    stdout::String
+    stderr::String
+end
+
+"""
+    Cancelled(reason)
+
+Eval was cancelled before execution (e.g. session closed).
+"""
+struct Cancelled <: EvalOutcome
+    reason::String
+end
+
+"""
+    _run_eval_core(module_, request_id, code, max_repr_bytes; silent, max_output_bytes) -> EvalOutcome
+
+Core evaluation logic. Captures stdout/stderr, parses and evaluates code, and
+returns a typed `EvalOutcome` discriminated union instead of raw wire-format
+messages. Serialization to the wire format happens at the handler boundary.
+"""
+function _run_eval_core(module_::Module, request_id::AbstractString, code::AbstractString, max_repr_bytes::Int; silent::Bool=false, max_output_bytes::Int=typemax(Int))::EvalOutcome
     ensure_io_capture_installed!()
     stdout_cap = _STDOUT_CAPTURER[]::TaskCapturingIO
     stderr_cap = _STDERR_CAPTURER[]::TaskCapturingIO
@@ -98,7 +163,6 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
     register_task_capture!(stderr_cap, task, stderr_buf)
 
     try
-        # (:ok, value) on success; (:error, ex, bt) on exception.
         eval_result = try
             if isempty(strip(code))
                 (:ok, nothing)
@@ -114,22 +178,15 @@ function _run_eval_core(module_::Module, request_id::AbstractString, code::Abstr
 
         if first(eval_result) === :error
             _, ex, bt = eval_result
-            output_messages = buffered_output_messages(request_id, stdout_text, stderr_text)
             if ex isa InterruptException
-                push!(output_messages, response_message(request_id, "status" => ["done", "interrupted"]))
+                return Interrupted(stdout_text, stderr_text)
             else
-                append!(output_messages, [eval_error_response(request_id, ex; bt=bt)])
+                return Errored(ex, bt, stdout_text, stderr_text)
             end
-            return EvalCoreResult(output_messages, nothing)
         end
 
         _, value = eval_result
-        responses = buffered_output_messages(request_id, stdout_text, stderr_text)
-        if !silent
-            push!(responses, value_response(request_id, value, module_; max_repr_bytes=max_repr_bytes))
-        end
-        push!(responses, done_response(request_id))
-        return EvalCoreResult(responses, Some{Any}(value))
+        return Completed(value, stdout_text, stderr_text)
     finally
         unregister_task_capture!(stdout_cap, task)
         unregister_task_capture!(stderr_cap, task)
@@ -272,7 +329,8 @@ function with_session_eval(f::Function, ctx::RequestContext, request_id::Abstrac
         if session isa NamedSession
             lock(session.eval_lock) do
                 try_begin_eval!(session, current_task()) ||
-                    return [error_response(request_id, "session was closed")]
+                    return [error_response(request_id, "session was closed";
+                        status_flags=String["error", "session-closed"])]
                 try
                     f(session)
                 finally
@@ -288,25 +346,111 @@ function with_session_eval(f::Function, ctx::RequestContext, request_id::Abstrac
 end
 
 """
-    run_with_timeout(task, effective_timeout_ms, request_id) -> Vector{Dict}
+    serialize(outcome, request_id, module_; kwargs...) -> Vector{Dict}
 
-Wait for a scheduled `Task` with an optional bounded timeout. If
-`effective_timeout_ms` fires before the task finishes, returns a
-timeout response. The timeout timer sends `InterruptException` to the
-task; if the task is not interruptible (ccall, BLAS), the bounded wait
-expires and returns timeout.
+Serialize an `EvalOutcome` to the frozen wire format. This is the ONLY place
+where wire-format messages are constructed — internal code works with
+`EvalOutcome` values exclusively.
 
-When `effective_timeout_ms` is `nothing`, fetches the task directly
-with no timer — but still catches `InterruptException` from the
-interrupt middleware.
+Keyword arguments add edge-only metadata:
+- `max_repr_bytes`: truncation limit for `repr` of value
+- `silent`: when true, omit the `value` response frame
+- `eval_id`: eval sequence number for named sessions (added to terminal frame)
+- `ephemeral`: when true, mark terminal frame with `ephemeral: true`
+"""
+function serialize(outcome::Completed, request_id::AbstractString, module_::Module;
+    max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES, silent::Bool=false,
+    eval_id=nothing, ephemeral::Bool=false)
+
+    msgs = buffered_output_messages(request_id, outcome.stdout, outcome.stderr)
+    if !silent
+        push!(msgs, value_response(request_id, outcome.value, module_; max_repr_bytes=max_repr_bytes))
+    end
+    terminal = done_response(request_id)
+    if !isnothing(eval_id)
+        terminal["eval-id"] = eval_id
+    end
+    if ephemeral
+        terminal["ephemeral"] = true
+    end
+    push!(msgs, terminal)
+    return msgs
+end
+
+function serialize(outcome::Interrupted, request_id::AbstractString, module_::Module;
+    max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES, silent::Bool=false,
+    eval_id=nothing, ephemeral::Bool=false)
+
+    msgs = buffered_output_messages(request_id, outcome.stdout, outcome.stderr)
+    terminal = response_message(request_id, "status" => ["done", "interrupted"])
+    if !isnothing(eval_id)
+        terminal["eval-id"] = eval_id
+    end
+    if ephemeral
+        terminal["ephemeral"] = true
+    end
+    push!(msgs, terminal)
+    return msgs
+end
+
+function serialize(outcome::TimedOut, request_id::AbstractString, module_::Module;
+    max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES, silent::Bool=false,
+    eval_id=nothing, ephemeral::Bool=false)
+
+    msgs = buffered_output_messages(request_id, outcome.stdout, outcome.stderr)
+    terminal = timeout_response(request_id, outcome.timeout_ms)
+    if !isnothing(eval_id)
+        terminal["eval-id"] = eval_id
+    end
+    if ephemeral
+        terminal["ephemeral"] = true
+    end
+    push!(msgs, terminal)
+    return msgs
+end
+
+function serialize(outcome::Errored, request_id::AbstractString, module_::Module;
+    max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES, silent::Bool=false,
+    eval_id=nothing, ephemeral::Bool=false)
+
+    msgs = buffered_output_messages(request_id, outcome.stdout, outcome.stderr)
+    terminal = eval_error_response(request_id, outcome.exception; bt=outcome.backtrace)
+    if !isnothing(eval_id)
+        terminal["eval-id"] = eval_id
+    end
+    if ephemeral
+        terminal["ephemeral"] = true
+    end
+    push!(msgs, terminal)
+    return msgs
+end
+
+function serialize(outcome::Cancelled, request_id::AbstractString, ::Module;
+    max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES, silent::Bool=false,
+    eval_id=nothing, ephemeral::Bool=false)
+
+    return [error_response(request_id, outcome.reason)]
+end
+
+"""
+    run_with_timeout(task, effective_timeout_ms, request_id) -> EvalOutcome
+
+Wait for a scheduled `Task` that returns an `EvalOutcome`. If the timeout fires
+before the task finishes, returns a `TimedOut` outcome. The timeout timer sends
+`InterruptException` to the task; if the task is not interruptible (ccall, BLAS),
+the bounded wait expires and returns timeout.
+
+When `effective_timeout_ms` is `nothing`, fetches the task directly with no timer
+— but still catches `InterruptException` from the interrupt middleware.
 """
 function run_with_timeout(task::Task, ::Nothing, request_id::AbstractString)
     try
-        return fetch(task)
+        result = fetch(task)
+        return result isa EvalOutcome ? result : Interrupted("", "")
     catch ex
         inner = ex isa TaskFailedException ? ex.task.exception : ex
         inner isa InterruptException || rethrow()
-        return [response_message(request_id, "status" => ["done", "interrupted"])]
+        return Interrupted("", "")
     end
 end
 
@@ -329,64 +473,30 @@ function run_with_timeout(task::Task, timeout_ms::Int, request_id::AbstractStrin
         end
 
         if timed_out[]
-            # Timer fired — produce timeout response, replacing any
-            # "interrupted" status the task may have emitted.
             if istaskdone(task)
-                msgs = fetch(task)
-                return map(msgs) do m
-                    if haskey(m, "status") && "interrupted" in m["status"]
-                        timeout_response(request_id, timeout_ms)
-                    else
-                        m
-                    end
+                result = fetch(task)
+                if result isa Interrupted
+                    # Task finished with Interrupted — convert to TimedOut,
+                    # preserving captured stdout/stderr.
+                    return TimedOut(timeout_ms, result.stdout, result.stderr)
                 end
-            else
-                return [timeout_response(request_id, timeout_ms)]
             end
+            return TimedOut(timeout_ms, "", "")
         else
-            return fetch(task)
+            result = fetch(task)
+            return result isa EvalOutcome ? result : Interrupted("", "")
         end
     catch ex
         inner = ex isa TaskFailedException ? ex.task.exception : ex
         inner isa InterruptException || rethrow()
         if timed_out[]
-            [timeout_response(request_id, timeout_ms)]
+            return TimedOut(timeout_ms, "", "")
         else
-            [response_message(request_id, "status" => ["done", "interrupted"])]
+            return Interrupted("", "")
         end
     finally
         close(timeout_timer)
     end
-end
-
-"""
-    annotate_terminal!(msgs, request_id; kwargs...) -> Vector{Dict}
-
-Single pass over `msgs` to annotate the terminal (status-bearing) response
-frame with optional metadata. Replaces the previous pattern of 3× sequential
-`map`+`merge` passes with a single iteration.
-
-Supported keyword annotations:
-- `eval_id::Union{Nothing, Int}` — eval identifier for named sessions
-- `ephemeral::Bool` — whether the session is ephemeral (no persistent state)
-- `timed_out::Bool` — whether the eval was interrupted by the timeout timer
-"""
-function annotate_terminal!(msgs::Vector, request_id::AbstractString; eval_id=nothing, ephemeral=false, timed_out=false)
-    function decorate(m)
-        haskey(m, "status") || return m
-        decorated = copy(m)
-        if timed_out
-            decorated = merge(decorated, timeout_response(request_id, nothing))
-        end
-        if !isnothing(eval_id)
-            decorated = merge(decorated, Dict{String,Any}("eval-id" => eval_id))
-        end
-        if ephemeral
-            decorated = merge(decorated, Dict{String,Any}("ephemeral" => true))
-        end
-        return decorated
-    end
-    return map(decorate, msgs)
 end
 
 function timeout_response(request_id::AbstractString, effective_timeout_ms)
@@ -432,54 +542,63 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
 
     # For named sessions, eval_id is captured after try_begin_eval! increments it.
     this_eval_id = Ref{Union{Int, Nothing}}(nothing)
+    # The eval module is captured inside the task; read back for serialize.
+    eval_module_ref = Ref{Union{Module, Nothing}}(nothing)
 
     # Run the eval body on a DEDICATED child task.
-    eval_task = @task with_session_eval(ctx, request_id) do session
-        eval_module = session_module(session)
-        module_path = req.module_path
-        if module_path isa AbstractString
-            resolved = resolve_module(module_path)
-            if isnothing(resolved)
-                return [error_response(request_id, "Cannot resolve module: $(module_path)")]
+    eval_task = @task begin
+        result = with_session_eval(ctx, request_id) do session
+            eval_module = session_module(session)
+            eval_module_ref[] = eval_module
+            module_path = req.module_path
+            if module_path isa AbstractString
+                resolved = resolve_module(module_path)
+                if isnothing(resolved)
+                    return Cancelled("Cannot resolve module: $(module_path)")
+                end
+                eval_module = resolved
             end
-            eval_module = resolved
-        end
 
-        if session isa NamedSession
-            this_eval_id[] = session_eval_id(session)
-            revise_enabled = effective_limit(ctx.server_state, :revise_hook_enabled, true)
-            revise_enabled && _maybe_revise!()
-        end
+            if session isa NamedSession
+                this_eval_id[] = session_eval_id(session)
+                revise_enabled = effective_limit(ctx.server_state, :revise_hook_enabled, true)
+                revise_enabled && _maybe_revise!()
+            end
 
-        core_result = if allow_stdin && session isa NamedSession
-            pipe = _ensure_stdin_feeder!(session)
-            redirect_stdin(pipe.out) do
+            outcome = if allow_stdin && session isa NamedSession
+                pipe = _ensure_stdin_feeder!(session)
+                redirect_stdin(pipe.out) do
+                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+                end
+            elseif allow_stdin
                 _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+            else
+                redirect_stdin(devnull) do
+                    _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
+                end
             end
-        elseif allow_stdin
-            _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-        else
-            redirect_stdin(devnull) do
-                _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
-            end
-        end
 
-        session isa NamedSession && _update_history!(session, core_result.captured, store_history, max_session_history)
-        core_result.messages
+            session isa NamedSession && _update_history!(session, outcome, store_history, max_session_history)
+            outcome
+        end
+        # Normalize: with_session_eval may return Vector{Dict} for session-closed error.
+        result isa EvalOutcome ? result : Cancelled("session was closed")
     end
     eval_task.sticky = true
     !isnothing(state) && register_active_eval!(state, eval_task)
     schedule(eval_task)
 
     try
-        msgs = run_with_timeout(eval_task, effective_timeout_ms, request_id)
+        outcome = run_with_timeout(eval_task, effective_timeout_ms, request_id)
 
-        # Single annotation pass replaces 3× sequential map+merge passes.
+        # Serialize EvalOutcome to wire format at the edge.
         eid = this_eval_id[]
         ephemeral_flag = !(ctx.session isa NamedSession)
-        msgs = annotate_terminal!(msgs, request_id;
-            eval_id = eid,
-            ephemeral = ephemeral_flag,
+        msgs = serialize(outcome, request_id, something(eval_module_ref[]);
+            max_repr_bytes=max_repr_bytes,
+            silent=silent,
+            eval_id=eid,
+            ephemeral=ephemeral_flag,
         )
 
         return msgs
@@ -492,10 +611,10 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
 end
 
 # Update ans binding and history for `session` when `store_history` is true
-# and `captured` is `Some(value)` (successful eval). Does nothing on error.
-function _update_history!(session::NamedSession, captured::Union{Some, Nothing}, store_history::Bool, max_session_history::Int=MAX_SESSION_HISTORY_SIZE)
-    store_history && !isnothing(captured) || return
-    value = something(captured)
+# and the outcome is `Completed` (successful eval). Does nothing on error.
+function _update_history!(session::NamedSession, outcome::EvalOutcome, store_history::Bool, max_session_history::Int=MAX_SESSION_HISTORY_SIZE)
+    store_history && outcome isa Completed || return
+    value = outcome.value
     try
         Core.eval(session_module(session), :(ans = $(QuoteNode(value))))
     catch
@@ -512,7 +631,8 @@ function handle_message(mw::EvalMiddleware, msg, next, ctx::RequestContext)
         parse_eval_request(msg)
     catch ex
         ex isa ArgumentError || rethrow()
-        return [error_response(String(get(msg, "id", "")), ex.msg)]
+        return [error_response(String(get(msg, "id", "")), ex.msg;
+                    status_flags=String["error", "invalid-request"])]
     end
     return eval_responses(ctx, req; max_repr_bytes=mw.max_repr_bytes)
 end
