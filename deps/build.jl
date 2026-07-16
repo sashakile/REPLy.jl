@@ -2,34 +2,57 @@
 # Auto-installed replyc launcher — see docs/src/howto-cli-install.md
 #
 # This build script runs automatically on Pkg.add/Pkg.develop via Pkg.build.
-# It creates a private scratch-space environment that freezes the REPLy
-# dependency snapshot at build time, then writes a replyc launcher script
-# that resolves REPLy from the project at build time.
+# It resolves REPLy and its full dependency closure into a private,
+# UUID-namespaced scratch environment, then writes a replyc launcher script
+# pinned to that scratch environment.
+#
+# Why not pin --project directly at REPLy's own install directory (pkg_dir),
+# as an earlier version of this script did? Because pkg_dir is not reliably
+# a resolvable Julia environment:
+#   - `Pkg.add(url=...)` populates a read-only, content-addressed directory
+#     under `~/.julia/packages/` that never contains a Manifest.toml (it's
+#     gitignored in the source tree, so it was never there to copy).
+#   - A fresh `Pkg.develop(path=...)` writes the *resolved* Manifest.toml
+#     into the consuming project, not into the dev-tracked path itself — a
+#     brand-new `git clone` handed to `Pkg.develop` has no Manifest.toml
+#     either.
+#   - The only case where pkg_dir happens to have a Manifest.toml is when
+#     someone has already run `Pkg.instantiate()`/`Pkg.resolve()` there
+#     directly (e.g. a maintainer's own working checkout) — not a state any
+#     downstream user reaches via the documented install commands.
+#
+# Instead, we `Pkg.develop` REPLy *into* our own scratch environment and
+# `Pkg.instantiate` that. `Pkg.develop` only needs pkg_dir/Project.toml
+# (never gitignored) to record pkg_dir as a path-tracked source; it does not
+# require pkg_dir to already contain a Manifest.toml. This produces a
+# genuinely resolvable, launcher-owned environment regardless of how REPLy
+# itself was installed.
 
+using Pkg
 using Scratch
 
-# The REPLy module is not loaded during build, so use the UUID directly
 reply_uuid = Base.UUID("d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51")
+pkg_dir = dirname(@__DIR__)
 
-# Step 1: Create a private, UUID-namespaced scratch environment
+# Step 1: Create (or reuse) a private, UUID-namespaced scratch environment.
 scratch_env = get_scratch!(reply_uuid, "env")
 mkpath(scratch_env)
 
-# Step 2: Copy the full Project.toml and Manifest.toml into the scratch env
-# to preserve the dependency snapshot at build time for reference/troubleshooting.
-# The launcher itself pins via --project to the package directory (step 5),
-# not to the scratch env — REPLy is not registered so it cannot be resolved
-# as a named dependency from a separate project.
-pkg_dir = dirname(@__DIR__)
-cp(joinpath(pkg_dir, "Manifest.toml"), joinpath(scratch_env, "Manifest.toml"); force=true)
-cp(joinpath(pkg_dir, "Project.toml"), joinpath(scratch_env, "Project.toml"); force=true)
+# Step 2: Resolve REPLy + its full dependency closure into the scratch env.
+# The do-block form of `Pkg.activate` restores the caller's active project
+# on exit (including on error), so this is safe to run from inside
+# `Pkg.build`'s own sandboxed process without leaking environment state.
+Pkg.activate(scratch_env) do
+    Pkg.develop(Pkg.PackageSpec(path=pkg_dir))
+    Pkg.instantiate()
+end
 
-# Step 3: Determine the depot bin directory and target launcher path
+# Step 3: Determine the depot bin directory and target launcher path.
 bin_dir = joinpath(DEPOT_PATH[1], "bin")
 mkpath(bin_dir)
 launcher_path = joinpath(bin_dir, "replyc")
 
-# Step 4: Overwrite guard — refuse to clobber a non-REPLy file
+# Step 4: Overwrite guard — refuse to clobber a non-REPLy file.
 should_write = true
 if isfile(launcher_path)
     # The marker lives on the second line (first is shebang); check that
@@ -45,14 +68,15 @@ if isfile(launcher_path)
 end
 
 if should_write
-    # Step 5: Write the launcher script pinned to the project directory.
-    # REPLy is not registered, so it cannot be resolved from a separate
-    # scratch-space project. The scratch env preserves the dependency
-    # snapshot for reference only.
+    # Step 5: Write the launcher script pinned to the scratch environment.
+    # The scratch environment resolves REPLy via a dev-tracked path entry
+    # (pointing at pkg_dir) plus a fully instantiated Manifest.toml for its
+    # transitive dependencies, so it works whether REPLy was installed via
+    # `Pkg.add(url=...)`, `Pkg.develop`, or (in the future) the registry.
     launcher_src = """
 #!/usr/bin/env bash
 # REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51
-exec julia --startup-file=no --project="$(pkg_dir)" \\
+exec julia --startup-file=no --project="$(scratch_env)" \\
     -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- "\$@"
 """
 
