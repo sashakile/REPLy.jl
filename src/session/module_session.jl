@@ -49,7 +49,7 @@ No transition out of `SessionClosed` is possible.
 end
 
 """Maximum number of entries kept in each `NamedSession`'s history vector."""
-const MAX_SESSION_HISTORY_SIZE = 1000
+const MAX_SESSION_HISTORY_SIZE = 10_000
 
 """Maximum number of buffered stdin strings per session before back-pressure applies."""
 const MAX_STDIN_BUFFER_SIZE = 256

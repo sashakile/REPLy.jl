@@ -152,7 +152,7 @@
     end
 
     @testset "LoadFileMiddleware(limits) picks up max_repr_bytes from ResourceLimits" begin
-        limits = REPLy.ResourceLimits(max_repr_bytes = 33)
+        limits = REPLy.ResourceLimits(max_value_repr_bytes = 33)
         mw = REPLy.LoadFileMiddleware(limits; load_file_allowlist = _ -> true)
         @test mw.max_repr_bytes == 33
     end
