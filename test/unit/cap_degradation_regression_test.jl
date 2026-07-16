@@ -12,12 +12,12 @@
     handler(Dict("op" => "eval", "id" => "w0", "code" => "1"))  # warmup
 
     # ── Phase 1: fire >limit concurrent evals ─────────────────────────────
-    sessions = ["degrade-s$i" for i in 1:6]
+    sessions = ["degrade-s$i" for i in 1:9]
     for name in sessions
         REPLy.create_named_session!(manager, name)
     end
 
-    eval_tasks = map(1:6) do i
+    eval_tasks = map(1:9) do i
         @async handler(Dict(
             "op" => "eval", "id" => "e$i",
             "session" => sessions[i],
