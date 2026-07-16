@@ -91,10 +91,14 @@ mutable struct RequestContext
     emitted::Vector{Dict{String, Any}}
     session::Union{ModuleSession, NamedSession, Nothing}
     server_state::Union{ServerState, Nothing}
+    emit_stream::Union{Channel{Dict{String, Any}}, Nothing}
 end
 
 RequestContext(manager::SessionManager, emitted::Vector{Dict{String, Any}}, session) =
-    RequestContext(manager, emitted, session, nothing)
+    RequestContext(manager, emitted, session, nothing, nothing)
+
+RequestContext(manager::SessionManager, emitted::Vector{Dict{String, Any}}, session, server_state) =
+    RequestContext(manager, emitted, session, server_state, nothing)
 
 emit!(ctx::RequestContext, msg::Dict{String, Any}) = push!(ctx.emitted, msg)
 
@@ -185,12 +189,12 @@ function build_handler(; manager::SessionManager=SessionManager(), middleware::V
     # The public `middleware=` Vector API is unchanged; this is an internal copy.
     stack = Tuple(materialize_middleware_stack(middleware))
     connection_ctx = HandlerContext(manager)
-    return function(msg::AbstractDict)
+    return function(msg::AbstractDict, stream::Union{Channel{Dict{String, Any}}, Nothing}=nothing)
         validation_error = validate_request(msg)
         !isnothing(validation_error) && return [validation_error]
 
         request_id = String(get(msg, "id", ""))
-        ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing, state)
+        ctx = RequestContext(connection_ctx.manager, Dict{String, Any}[], nothing, state, stream)
         result = dispatch_middleware(stack, msg, ctx)
         return finalize_responses(ctx, result, request_id)
     end
