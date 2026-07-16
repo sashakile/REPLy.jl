@@ -380,6 +380,38 @@ end
         @test !("timeout" in last(follow_msgs)["status"])
         @test any(get(m, "value", nothing) == "42" for m in follow_msgs)
     end
+
+    @testset "bounded wait releases eval slot for non-interruptible eval" begin
+        # Regression: an eval that never observes InterruptException (e.g.
+        # stuck in non-interruptible code) must not hold the eval slot
+        # forever. The bounded wait should release the slot after timeout
+        # and allow subsequent evals to proceed.
+        limits  = REPLy.ResourceLimits(max_eval_time_ms=100, max_concurrent_evals=1)
+        manager = REPLy.SessionManager()
+        state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        handler = REPLy.build_handler(; manager=manager, state=state)
+
+        # First eval: code that swallows InterruptException in a tight loop,
+        # simulating a non-interruptible operation (ccall, BLAS, etc.).
+        stuck = handler(Dict(
+            "op"         => "eval",
+            "id"         => "ni1",
+            "code"       => "try; while true; sleep(1); end; catch; while true; sleep(1); end; end",
+            "timeout-ms" => 50,
+        ))
+        @test "timeout" in last(stuck)["status"]
+
+        # After the bounded wait fires, the eval slot should be released
+        # (max_concurrent_evals=1, so this would deadlock if the slot
+        # were leaked).
+        follow = handler(Dict(
+            "op"   => "eval",
+            "id"   => "ni2",
+            "code" => "42",
+        ))
+        @test "done" in last(follow)["status"]
+        @test any(get(m, "value", nothing) == "42" for m in follow)
+    end
 end
 
 @testset "eval-id in eval response" begin

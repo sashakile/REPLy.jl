@@ -2,7 +2,7 @@
 
 ## Why
 
-The normative `cli-distribution/spec.md` mandates `--project=<pkg_dir>` — the design that was abandoned because it was broken. The shipped code uses a private, UUID-namespaced scratch environment (via `Scratch.jl`). A public release must not ship a spec that contradicts (and mis-instructs re-implementation of) the shipped code.
+The normative `cli-distribution/spec.md` mandates `--project=<pkg_dir>` — the design that was abandoned because it was broken. The shipped code uses a private, UUID-namespaced scratch environment (via `Scratch.jl`). A public release must not ship a spec that contradicts the shipped code (and would lead a re-implementor astray).
 
 ## What Changes
 
