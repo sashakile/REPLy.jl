@@ -388,22 +388,27 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
     source_mod = session_module(source)
     dest_mod = session_module(dest)
 
-    # Copy all user-defined bindings from source module to destination module.
-    # We skip names that start with '#' (gensym'd module name) and 'eval'/'include'
-    # which are auto-defined in every module.
-    for sym in names(source_mod; all=true)
-        sym in (:eval, :include) && continue
-        startswith(String(sym), "#") && continue
-        if isdefined(source_mod, sym)
-            val = getfield(source_mod, sym)
-            val isa Module && continue
-            copied = ismutable(val) ? deepcopy(val) : val
-            # Julia >= 1.11 (#56933) rejects bare `sym = val` global assignment via
-            # Core.eval into a foreign module, silently producing an empty binding.
-            # Use a `const` binding, which is accepted. Cloned bindings are therefore
-            # const: reassignment throws ConstAssignmentError, but mutation of the
-            # (deep-copied) mutable value still works.
-            Core.eval(dest_mod, :(const $(sym) = $(QuoteNode(copied))))
+    # Use Base.invokelatest so names()/getfield() see bindings created by
+    # Core.eval in child tasks (latest world age). Without this, the copy loop
+    # reads zero names over the wire — see REPLy_jl-efe.
+    Base.invokelatest() do
+        # Copy all user-defined bindings from source module to destination module.
+        # We skip names that start with '#' (gensym'd module name) and 'eval'/'include'
+        # which are auto-defined in every module.
+        for sym in names(source_mod; all=true)
+            sym in (:eval, :include) && continue
+            startswith(String(sym), "#") && continue
+            if isdefined(source_mod, sym)
+                val = getfield(source_mod, sym)
+                val isa Module && continue
+                copied = ismutable(val) ? deepcopy(val) : val
+                # Julia >= 1.11 (#56933) rejects bare `sym = val` global assignment via
+                # Core.eval into a foreign module, silently producing an empty binding.
+                # Use a `const` binding, which is accepted. Cloned bindings are therefore
+                # const: reassignment throws ConstAssignmentError, but mutation of the
+                # (deep-copied) mutable value still works.
+                Core.eval(dest_mod, :(const $(sym) = $(QuoteNode(copied))))
+            end
         end
     end
 
