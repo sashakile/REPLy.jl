@@ -4,7 +4,7 @@
 
 `eval_responses` is a ~178-line god-function handling 8 concerns (parse, validate, slot acquire, eval, timeout, response rebuild, session management, error handling). Extract `run_with_timeout` + single `annotate_terminal!` pass to kill the 3× redundant response rebuilds (pure allocation win). Target: ~30-line coordinator.
 
-**Depends on:** 
+**Depends on:**
 - Step 5 — `EvalGate` semaphore (B1), for clean slot acquire/release
 - Step 8 — typed `EvalRequest` (B3), for clean input
 

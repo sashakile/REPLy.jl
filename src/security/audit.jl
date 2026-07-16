@@ -88,4 +88,4 @@ function record_audit!(log::AuditLog, entry::AuditLogEntry)
     return entry
 end
 
-audit_entries(log::AuditLog) = copy(log.entries)
+audit_entries(log::AuditLog) = lock(log.lock) do; copy(log.entries); end

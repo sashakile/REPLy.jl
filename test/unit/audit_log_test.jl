@@ -78,4 +78,51 @@ using UUIDs
             @test current["success"] === true
         end
     end
+
+    @testset "audit_entries is race-free under concurrent writes" begin
+        log = REPLy.AuditLog(max_entries=10_000, evict_count=100)
+
+        base_time = DateTime(2026, 4, 23, 12, 0, 0)
+
+        # Writer task: continuously push entries into the audit log.
+        writer = @task begin
+            for i in 1:10_000
+                entry = REPLy.AuditLogEntry(
+                    timestamp=base_time + Millisecond(i),
+                    client_id=UUID("123e4567-e89b-12d3-a456-426614174000"),
+                    session_id=nothing,
+                    operation="op-$i",
+                    user="",
+                    source_ip="127.0.0.1",
+                    success=true,
+                    error=nothing,
+                )
+                REPLy.record_audit!(log, entry)
+            end
+        end
+
+        # Reader task: repeatedly snapshot the audit log while the
+        # writer is running. Must never throw BoundsError or produce
+        # a torn read.
+        reader = @task begin
+            for _ in 1:500
+                entries = REPLy.audit_entries(log)
+                # Snapshot must be internally consistent: no duplicate
+                # timestamps from a torn read, and each entry must be
+                # a valid AuditLogEntry (not a partially-constructed object).
+                @test all(e -> e isa REPLy.AuditLogEntry, entries)
+                # Within a snapshot, timestamps must be strictly increasing
+                # (audit entries are appended, never reordered).
+                for i in 2:length(entries)
+                    @test entries[i].timestamp > entries[i-1].timestamp
+                end
+                yield()
+            end
+        end
+
+        schedule(writer)
+        schedule(reader)
+        wait(writer)
+        wait(reader)
+    end
 end
