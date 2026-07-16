@@ -57,6 +57,17 @@
         end
     end
 
+    @testset "eval suppresses spurious 'nothing' for println-style evals (regression: REPLy_jl-btd)" begin
+        with_server(port=0) do handle
+            # println returns nothing — replyc must NOT print a trailing "nothing" line
+            r = run_replyc("eval", "--port", string(handle.port),
+                           "println(\"just stdout\")")
+            @test r.code == 0
+            @test occursin("just stdout", r.out)
+            @test !occursin("nothing", r.out)
+        end
+    end
+
     @testset "eval reports errors with non-zero exit" begin
         with_server(port=0) do handle
             r = run_replyc("eval", "--port", string(handle.port), "missing_name + 1")
