@@ -134,3 +134,32 @@ function session_limit_response(request_id::AbstractString)
         status_flags=String["error", "session-limit-reached"],
     )
 end
+
+"""
+    classify_read_error(ex) -> (status_flag::String, safe_message::String)
+
+Classify an exception raised by `read(file, String)` into a stable error code
+and a safe (path-free) error message. Intended to prevent sensitive paths from
+leaking to clients.
+
+Mapping:
+- `SystemError` with errnum == 2 (ENOENT) → `file-not-found`
+- `SystemError` with errnum == 13 (EACCES) → `path-not-allowed`
+- Other `SystemError` → `io-error`
+- `ArgumentError` → `io-error`
+- Any other exception → `io-error`
+"""
+function classify_read_error(ex)
+    if ex isa SystemError
+        if ex.errnum == 2   # ENOENT
+            return ("file-not-found", "File not found")
+        elseif ex.errnum == 13  # EACCES
+            return ("path-not-allowed", "Permission denied — path not accessible")
+        else
+            return ("io-error", "I/O error reading file")
+        end
+    elseif ex isa ArgumentError
+        return ("io-error", "Invalid file path")
+    end
+    return ("io-error", "Unexpected error reading file")
+end

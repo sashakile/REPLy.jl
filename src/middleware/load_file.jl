@@ -71,8 +71,8 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
     code = try
         read(file, String)
     catch ex
-        return [error_response(request_id, "Failed to read file: $(safe_showerror(ex))";
-                        status_flags=String["error", "file-read-error"])]
+        flag, msg = classify_read_error(ex)
+        return [error_response(request_id, msg; status_flags=String["error", flag])]
     end
 
     max_output_bytes = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))

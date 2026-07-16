@@ -40,7 +40,7 @@
         end
     end
 
-    @testset "unreadable file returns error response" begin
+    @testset "unreadable file returns classified error (no path leak)" begin
         ctx = make_ctx()
         mw = REPLy.LoadFileMiddleware(; load_file_allowlist = _ -> true)
         stack = REPLy.AbstractMiddleware[mw, REPLy.UnknownOpMiddleware()]
@@ -48,7 +48,11 @@
 
         @test length(msgs) == 1
         @test "error" in msgs[1]["status"]
-        @test occursin("Failed to read file", msgs[1]["err"])
+        @test "file-not-found" in msgs[1]["status"]
+        # Verify no path is leaked in the error message
+        @test !occursin("/nonexistent", msgs[1]["err"])
+        @test !occursin("Failed to read file", msgs[1]["err"])
+        @test occursin("File not found", msgs[1]["err"])
     end
 
     @testset "path blocked by allowlist returns path-not-allowed error" begin
