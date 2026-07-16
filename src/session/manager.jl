@@ -97,12 +97,28 @@ function create_named_session!(manager::SessionManager, name::AbstractString; id
         end
         mod = trusted ? Main : new_session_module(:REPLyNamedSession)
         session = NamedSession(uuid, String(name), mod; trusted=trusted)
-        manager.named_sessions[uuid] = session
-        if !isempty(name)
-            manager.name_to_uuid[String(name)] = uuid
-        end
+        _register_named_session_unlocked!(manager, session)
         return session
     end
+end
+
+"""
+    _register_named_session_unlocked!(manager, session)
+
+Register `session` in `manager.named_sessions` and, if the session has a non-empty
+name, also in `manager.name_to_uuid`. Callers must hold `manager.lock`.
+
+This is the single point of registration for all named session creation paths,
+replacing the 5× duplicated pattern that existed before extraction.
+"""
+function _register_named_session_unlocked!(manager::SessionManager, session::NamedSession)
+    uuid = session.id
+    manager.named_sessions[uuid] = session
+    name = session.name
+    if !isempty(name)
+        manager.name_to_uuid[name] = uuid
+    end
+    return nothing
 end
 
 """
@@ -147,10 +163,7 @@ function create_named_session_if_within_limit!(manager::SessionManager, name::Ab
         end
         mod = trusted ? Main : new_session_module(:REPLyNamedSession)
         session = NamedSession(uuid, String(name), mod; trusted=trusted)
-        manager.named_sessions[uuid] = session
-        if !isempty(name)
-            manager.name_to_uuid[String(name)] = uuid
-        end
+        _register_named_session_unlocked!(manager, session)
         return session
     end
 end
@@ -261,10 +274,7 @@ function get_or_create_named_session!(manager::SessionManager, name::AbstractStr
         end
         mod = trusted ? Main : new_session_module(:REPLyNamedSession)
         session = NamedSession(string(uuid4()), key, mod; trusted=trusted)
-        manager.named_sessions[session.id] = session
-        if !isempty(key)
-            manager.name_to_uuid[key] = session.id
-        end
+        _register_named_session_unlocked!(manager, session)
         return session
     end
 end

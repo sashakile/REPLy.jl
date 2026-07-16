@@ -60,8 +60,10 @@
     end
 
     @testset "optional middleware ops appear when middleware added to stack" begin
-        stack_base = REPLy.default_middleware_stack()
-        stack = vcat(stack_base[1:end-1], [REPLy.CompleteMiddleware(), stack_base[end]])
+        # Remove the default CompleteMiddleware, then add it back so there's
+        # no duplicate — tests that describe picks up the added middleware.
+        stack_base = filter(mw -> !(mw isa REPLy.CompleteMiddleware), REPLy.default_middleware_stack())
+        stack = vcat(stack_base, [REPLy.CompleteMiddleware()])
         handler = REPLy.build_handler(; middleware=stack)
         responses = handler(Dict("op" => "describe", "id" => "d4b"))
         ops = only(responses)["ops"]

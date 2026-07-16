@@ -188,6 +188,7 @@ function close_server!(server::AbstractServerHandle; grace_seconds::Real=DEFAULT
 
     _drain_clients!(server, deadline)
     shutdown_middleware_stack!(server.middleware)
+    restore_io_capture!()
     return nothing
 end
 

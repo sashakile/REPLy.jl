@@ -184,10 +184,17 @@ function materialize_middleware_stack(middleware::Vector{<:AbstractMiddleware})
 end
 
 function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
+    # Validate middleware stack at startup — catches misconfigured stacks early
+    # rather than failing at request time.
+    materialized = materialize_middleware_stack(middleware)
+    validation_errors = validate_stack(materialized)
+    if !isempty(validation_errors)
+        throw(ArgumentError("middleware stack validation failed:\n  - " * join(validation_errors, "\n  - ")))
+    end
     # Snapshot the materialized stack as a concrete heterogeneous Tuple so the
     # per-message dispatch is statically resolved (see tuple `dispatch_middleware`).
     # The public `middleware=` Vector API is unchanged; this is an internal copy.
-    stack = Tuple(materialize_middleware_stack(middleware))
+    stack = Tuple(materialized)
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict, stream::Union{Channel{Dict{String, Any}}, Nothing}=nothing)
         validation_error = validate_request(msg)

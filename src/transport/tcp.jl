@@ -54,6 +54,7 @@ function handle_client!(socket::IO, handler::Function;
     # When rate_limit_per_min == 0, enforcement is disabled.
     rl_window_start = time()
     rl_count        = 0
+    consecutive_malformed = 0
 
     try
         while isopen(transport)
@@ -67,8 +68,25 @@ function handle_client!(socket::IO, handler::Function;
                     end
                     return nothing
                 end
+                if ex isa MalformedJSONError
+                    consecutive_malformed += 1
+                    if consecutive_malformed >= 10
+                        try
+                            send!(transport, error_response("", "too many consecutive malformed requests"))
+                        catch
+                        end
+                        return nothing
+                    end
+                    try
+                        send!(transport, error_response("", "malformed JSON"; status_flags=String["error", "malformed-request"]))
+                    catch
+                        return nothing
+                    end
+                    continue
+                end
                 rethrow()
             end
+            consecutive_malformed = 0
             isnothing(msg) && return nothing
 
             # Rate limiting: reset window when 60 s have elapsed.
