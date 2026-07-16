@@ -616,10 +616,16 @@ end
 function _update_history!(session::NamedSession, outcome::EvalOutcome, store_history::Bool, max_session_history::Int=MAX_SESSION_HISTORY_SIZE)
     store_history && outcome isa Completed || return
     value = outcome.value
+    # QuoteNode throws MethodError for non-quotable types (e.g. Task, IOStream).
+    # Catch that specific case and skip silently; rethrow anything unexpected.
     try
         Core.eval(session_module(session), :(ans = $(QuoteNode(value))))
-    catch
-        # If ans update fails (e.g. type not quotable), skip silently.
+    catch ex
+        if ex isa MethodError
+            @debug "ans update skipped (non-quotable type)" value_type=typeof(value)
+            return
+        end
+        rethrow()
     end
     push!(session.history, value)
     clamp_history!(session, max_session_history)

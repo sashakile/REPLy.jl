@@ -190,4 +190,21 @@
         @test_throws ArgumentError REPLy.truncate_output("hello", 0)
         @test_throws ArgumentError REPLy.truncate_output("hello", -1)
     end
+
+    @testset "safe_render error counter increments on render failure" begin
+        before = REPLy.safe_render_error_count()
+        renderer = _ -> error("render boom")
+        result = REPLy.safe_render("test", renderer, 42)
+        after = REPLy.safe_render_error_count()
+        @test result == "<test failed: Int64>"
+        @test after == before + 1
+    end
+
+    @testset "safe_render returns actual value on success" begin
+        before = REPLy.safe_render_error_count()
+        result = REPLy.safe_render("show", v -> sprint(show, v), "hello")
+        @test result == "\"hello\""
+        # Counter should not increment on successful render
+        @test REPLy.safe_render_error_count() == before
+    end
 end

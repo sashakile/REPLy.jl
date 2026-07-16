@@ -2,6 +2,19 @@ const DEFAULT_MAX_REPR_BYTES = 1_048_576  # 1 MB (spec: max_value_repr_bytes)
 
 const OUTPUT_TRUNCATION_MARKER = "…[truncated]"
 
+# Tracks unexpected exceptions caught by safe_render (bare-catch safety net).
+# Incremented each time safe_render catches an exception; exposed for test
+# introspection and observability.
+const _safe_render_error_counter = Threads.Atomic{Int}(0)
+
+"""
+    safe_render_error_count() -> Int
+
+Return the number of exceptions caught by `safe_render` since module load.
+Useful for test assertions and observability probes.
+"""
+safe_render_error_count() = _safe_render_error_counter[]
+
 function truncate_output(s::AbstractString, max_bytes::Int)
     max_bytes > 0 || throw(ArgumentError("max_bytes must be positive, got $max_bytes"))
     ncodeunits(s) <= max_bytes && return s
@@ -23,7 +36,9 @@ fallback_render(kind::AbstractString, value) = "<$(kind) failed: $(safe_type_nam
 function safe_render(kind::AbstractString, renderer, value)
     try
         return renderer(value)
-    catch
+    catch ex
+        @debug "safe_render caught exception" kind=kind exception=ex
+        Threads.atomic_add!(_safe_render_error_counter, 1)
         return fallback_render(kind, value)
     end
 end

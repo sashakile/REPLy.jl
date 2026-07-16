@@ -117,4 +117,23 @@
         @test length(session.history) == limit
         @test session.history[1] == 6  # oldest entries dropped
     end
+
+    @testset "non-quotable ans type does not crash" begin
+        manager = REPLy.SessionManager()
+        session = REPLy.create_named_session!(manager, "nonquot-sess")
+        stack = eval_stack()
+
+        # Eval a value whose type is not quotable (e.g. a Task).
+        # This exercises the MethodError catch in _update_history!.
+        code = "Task(()->1)"
+        REPLy.dispatch_middleware(stack, 1,
+            Dict("op" => "eval", "id" => "nq1", "session" => "nonquot-sess", "code" => code), make_ctx(manager))
+
+        # Subsequent eval should still work normally
+        msgs = REPLy.dispatch_middleware(stack, 1,
+            Dict("op" => "eval", "id" => "nq2", "session" => "nonquot-sess", "code" => "42"), make_ctx(manager))
+
+        value_msg = only(filter(m -> haskey(m, "value"), msgs))
+        @test value_msg["value"] == "42"
+    end
 end
