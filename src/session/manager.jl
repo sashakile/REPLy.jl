@@ -88,14 +88,15 @@ If a session with the same `id` already exists it is silently replaced.
 Name and id validation is the caller's responsibility.
 An explicit `id` may be supplied (for testing); otherwise a fresh UUID is generated.
 """
-function create_named_session!(manager::SessionManager, name::AbstractString; id::Union{Nothing,AbstractString}=nothing)
+function create_named_session!(manager::SessionManager, name::AbstractString; id::Union{Nothing,AbstractString}=nothing, trusted::Bool=false)
     lock(manager.lock) do
         uuid = isnothing(id) ? string(uuid4()) : String(id)
         # Reject duplicate alias — callers must destroy the existing session first.
         if !isempty(name) && haskey(manager.name_to_uuid, String(name))
             throw(ArgumentError("session already exists: $(name)"))
         end
-        session = NamedSession(uuid, String(name), new_session_module(:REPLyNamedSession))
+        mod = trusted ? Main : new_session_module(:REPLyNamedSession)
+        session = NamedSession(uuid, String(name), mod; trusted=trusted)
         manager.named_sessions[uuid] = session
         if !isempty(name)
             manager.name_to_uuid[String(name)] = uuid
@@ -137,14 +138,15 @@ Atomically check the total session count against `max_sessions` and create a
 new named session if below the limit. Returns `nothing` when the limit is
 reached. Throws `ArgumentError` if a non-empty `name` alias already exists.
 """
-function create_named_session_if_within_limit!(manager::SessionManager, name::AbstractString, max_sessions::Int; id::Union{Nothing,AbstractString}=nothing)
+function create_named_session_if_within_limit!(manager::SessionManager, name::AbstractString, max_sessions::Int; id::Union{Nothing,AbstractString}=nothing, trusted::Bool=false)
     lock(manager.lock) do
         _total_session_count_unlocked(manager) >= max_sessions && return nothing
         uuid = isnothing(id) ? string(uuid4()) : String(id)
         if !isempty(name) && haskey(manager.name_to_uuid, String(name))
             throw(ArgumentError("session already exists: $(name)"))
         end
-        session = NamedSession(uuid, String(name), new_session_module(:REPLyNamedSession))
+        mod = trusted ? Main : new_session_module(:REPLyNamedSession)
+        session = NamedSession(uuid, String(name), mod; trusted=trusted)
         manager.named_sessions[uuid] = session
         if !isempty(name)
             manager.name_to_uuid[String(name)] = uuid
@@ -248,7 +250,7 @@ or atomically create and register one if absent. The check-and-create is
 performed under a single `manager.lock` acquisition to prevent concurrent
 callers from each creating a session and silently replacing the other's work.
 """
-function get_or_create_named_session!(manager::SessionManager, name::AbstractString)
+function get_or_create_named_session!(manager::SessionManager, name::AbstractString; trusted::Bool=false)
     lock(manager.lock) do
         key = String(name)
         # Check by name alias first.
@@ -257,7 +259,8 @@ function get_or_create_named_session!(manager::SessionManager, name::AbstractStr
             existing = get(manager.named_sessions, uuid, nothing)
             isnothing(existing) || return existing
         end
-        session = NamedSession(string(uuid4()), key, new_session_module(:REPLyNamedSession))
+        mod = trusted ? Main : new_session_module(:REPLyNamedSession)
+        session = NamedSession(string(uuid4()), key, mod; trusted=trusted)
         manager.named_sessions[session.id] = session
         if !isempty(key)
             manager.name_to_uuid[key] = session.id

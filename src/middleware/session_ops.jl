@@ -22,9 +22,9 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
     expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
     op_info  = Dict{String, Dict{String, Any}}(
         "new-session" => Dict{String, Any}(
-            "doc"      => "Create a new named session. Returns a UUID and optional name alias. Optional 'if-exists' field: 'error' (default) fails if a session with 'name' already exists; 'reuse' returns the existing session UUID instead, making repeated calls idempotent.",
+            "doc"      => "Create a new named session. Returns a UUID and optional name alias. Optional 'if-exists' field: 'error' (default) fails if a session with 'name' already exists; 'reuse' returns the existing session UUID instead, making repeated calls idempotent. Optional 'trusted' field: when true, backs the session by Main instead of an anonymous module — include, bare using, and Main.eval work as in an interactive REPL, at the cost of cross-session isolation. Default: false.",
             "requires" => String[],
-            "optional" => ["name", "if-exists"],
+            "optional" => ["name", "if-exists", "trusted"],
             "returns"  => ["session", "name"],
         ),
         "ls-sessions" => Dict{String, Any}(
@@ -106,6 +106,13 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
 
     alias = isnothing(name) ? "" : String(name)
 
+    # Optional `trusted` — when true, back the session by Main instead of
+    # an anonymous module. Opt-in, single-user only.
+    trusted = get(msg, "trusted", false)
+    if !isa(trusted, Bool)
+        return [error_response(request_id, "new-session \"trusted\": must be a boolean (true or false)")]
+    end
+
     # Reuse path: for a named session that already exists, return it instead of
     # erroring. Anonymous (no name) sessions can never be reused, so fall through
     # to normal creation.
@@ -125,7 +132,7 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
     local session
     if !isnothing(ctx.server_state)
         try
-            session = create_named_session_if_within_limit!(ctx.manager, alias, ctx.server_state.limits.max_sessions)
+            session = create_named_session_if_within_limit!(ctx.manager, alias, ctx.server_state.limits.max_sessions; trusted=trusted)
         catch e
             e isa ArgumentError || rethrow()
             return [error_response(request_id, "new-session: $(e.msg)")]
@@ -133,7 +140,7 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
         isnothing(session) && return [session_limit_response(request_id)]
     else
         try
-            session = create_named_session!(ctx.manager, alias)
+            session = create_named_session!(ctx.manager, alias; trusted=trusted)
         catch e
             e isa ArgumentError || rethrow()
             return [error_response(request_id, "new-session: $(e.msg)")]
@@ -144,6 +151,7 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
         response_message(request_id,
             "session" => session_id(session),
             "name"    => isempty(alias) ? nothing : alias,
+            "trusted" => trusted,
         ),
         done_response(request_id),
     ]
@@ -161,6 +169,7 @@ function handle_ls_sessions(ctx::RequestContext, request_id::AbstractString)
             "last-activity" => _iso(session_last_active_at(s)),
             "type"          => "light",
             "module"        => session_module_name(s),
+            "trusted"       => is_trusted(s),
             "eval-count"    => session_eval_count(s),
             "pid"           => nothing,
         )
