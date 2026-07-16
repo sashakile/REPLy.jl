@@ -73,7 +73,7 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
         return [error_response(request_id, "Failed to read file: $(safe_showerror(ex))")]
     end
 
-    max_output_bytes = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
+    max_output_bytes = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))
 
     with_session_eval(ctx, request_id) do session
         _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes, max_repr_bytes)

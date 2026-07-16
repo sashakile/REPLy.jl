@@ -30,6 +30,22 @@ Construct a `ServerState` with all counters initialised to zero.
 ServerState(limits::ResourceLimits, max_message_bytes::Int) =
     ServerState(limits, max_message_bytes, EvalGate(limits.max_concurrent_evals), ReentrantLock(), IdDict{Task, Nothing}(), nothing)
 
+"""
+    effective_limit(state, field, default)
+
+Return the value of `state.limits.<field>` if `state` is a `ServerState`,
+or `default` if `state` is `nothing`. Retires the `isnothing(server_state)`
+guard pattern that was repeated at every call site.
+
+# Examples
+```julia
+effective_limit(ctx.server_state, :max_sessions, 100)      # → limit or 100
+effective_limit(nothing, :max_output_bytes, typemax(Int))   # → typemax(Int)
+```
+"""
+effective_limit(::Nothing, ::Symbol, default) = default
+effective_limit(state::ServerState, field::Symbol, _default) = getfield(state.limits, field)
+
 function register_active_eval!(state::ServerState, task::Task)
     lock(state.active_eval_lock) do
         state.active_eval_tasks[task] = nothing

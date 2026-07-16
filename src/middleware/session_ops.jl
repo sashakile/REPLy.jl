@@ -130,22 +130,14 @@ function handle_new_session(ctx::RequestContext, msg, request_id::AbstractString
     end
 
     local session
-    if !isnothing(ctx.server_state)
-        try
-            session = create_named_session_if_within_limit!(ctx.manager, alias, ctx.server_state.limits.max_sessions; trusted=trusted)
-        catch e
-            e isa ArgumentError || rethrow()
-            return [error_response(request_id, "new-session: $(e.msg)")]
-        end
-        isnothing(session) && return [session_limit_response(request_id)]
-    else
-        try
-            session = create_named_session!(ctx.manager, alias; trusted=trusted)
-        catch e
-            e isa ArgumentError || rethrow()
-            return [error_response(request_id, "new-session: $(e.msg)")]
-        end
+    max_sessions = effective_limit(ctx.server_state, :max_sessions, 100)
+    try
+        session = create_named_session_if_within_limit!(ctx.manager, alias, max_sessions; trusted=trusted)
+    catch e
+        e isa ArgumentError || rethrow()
+        return [error_response(request_id, "new-session: $(e.msg)")]
     end
+    isnothing(session) && return [session_limit_response(request_id)]
 
     return [
         response_message(request_id,
@@ -273,7 +265,7 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         )]
     end
 
-    ms = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_sessions
+    ms = effective_limit(ctx.server_state, :max_sessions, typemax(Int))
     local cloned
     try
         cloned = clone_named_session!(ctx.manager, source_str, name; max_sessions=ms)

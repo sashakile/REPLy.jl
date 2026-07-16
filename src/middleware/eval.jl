@@ -304,12 +304,13 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     end
 
     # Effective timeout: per-request value capped at server max, or server max alone.
-    effective_timeout_ms = if !isnothing(timeout_ms) && !isnothing(ctx.server_state)
-        min(Int(timeout_ms), ctx.server_state.limits.max_eval_time_ms)
+    max_eval_time = effective_limit(ctx.server_state, :max_eval_time_ms, nothing)
+    effective_timeout_ms = if !isnothing(timeout_ms) && !isnothing(max_eval_time)
+        min(Int(timeout_ms), max_eval_time)
     elseif !isnothing(timeout_ms)
         Int(timeout_ms)
-    elseif !isnothing(ctx.server_state)
-        ctx.server_state.limits.max_eval_time_ms
+    elseif !isnothing(max_eval_time)
+        max_eval_time
     else
         nothing
     end
@@ -318,8 +319,8 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     allow_stdin   = get(request, "allow-stdin", true) !== false
     store_history = get(request, "store-history", true) !== false
 
-    max_output_bytes    = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
-    max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_history_entries
+    max_output_bytes    = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))
+    max_session_history = effective_limit(ctx.server_state, :max_history_entries, MAX_SESSION_HISTORY_SIZE)
 
     # Concurrent eval slot acquisition via EvalGate (spec REQ-RPL-047d).
     # If the cap is reached, acquire! queues and blocks until a slot
@@ -358,7 +359,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
 
         if session isa NamedSession
             this_eval_id[] = session_eval_id(session)
-            revise_enabled = isnothing(ctx.server_state) || ctx.server_state.limits.revise_hook_enabled
+            revise_enabled = effective_limit(ctx.server_state, :revise_hook_enabled, true)
             revise_enabled && _maybe_revise!()
         end
 

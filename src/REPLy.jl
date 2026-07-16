@@ -25,6 +25,7 @@ export session_state, session_eval_task, session_last_active_at, session_eval_co
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!
 export ResourceLimits
+export effective_limit
 export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware
 export MiddlewareDescriptor, descriptor, validate_stack
 export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware

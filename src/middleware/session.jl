@@ -51,13 +51,10 @@ function handle_message(::SessionMiddleware, msg, next, ctx::RequestContext)
     end
 
     request_id = String(get(msg, "id", ""))
-    if !isnothing(ctx.server_state)
-        session = create_ephemeral_session_if_within_limit!(ctx.manager, ctx.server_state.limits.max_sessions)
-        if isnothing(session)
-            return [session_limit_response(request_id)]
-        end
-    else
-        session = create_ephemeral_session!(ctx.manager)
+    max_sessions = effective_limit(ctx.server_state, :max_sessions, 100)
+    session = create_ephemeral_session_if_within_limit!(ctx.manager, max_sessions)
+    if isnothing(session)
+        return [session_limit_response(request_id)]
     end
     ctx.session = session
     try
