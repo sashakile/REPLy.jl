@@ -28,7 +28,7 @@ end
 LoadFileMiddleware(; load_file_allowlist=nothing, max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) =
     LoadFileMiddleware(load_file_allowlist, max_repr_bytes)
 LoadFileMiddleware(limits::ResourceLimits; load_file_allowlist=nothing) =
-    LoadFileMiddleware(load_file_allowlist, limits.max_repr_bytes)
+    LoadFileMiddleware(load_file_allowlist, limits.max_value_repr_bytes)
 
 descriptor(::LoadFileMiddleware) = MiddlewareDescriptor(
     provides = Set(["load-file"]),

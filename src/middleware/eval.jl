@@ -18,7 +18,7 @@ struct EvalMiddleware <: AbstractMiddleware
     max_repr_bytes::Int
 end
 EvalMiddleware(; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES) = EvalMiddleware(max_repr_bytes)
-EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_repr_bytes)
+EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_value_repr_bytes)
 
 descriptor(::EvalMiddleware) = MiddlewareDescriptor(
     provides = Set(["eval"]),
@@ -319,7 +319,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     store_history = get(request, "store-history", true) !== false
 
     max_output_bytes    = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
-    max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_session_history
+    max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_history_entries
 
     # Concurrent eval limit enforcement.
     state = ctx.server_state

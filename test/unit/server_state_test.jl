@@ -11,10 +11,10 @@
     end
 
     @testset "custom ResourceLimits flows through to server state" begin
-        limits = REPLy.ResourceLimits(max_repr_bytes=42)
+        limits = REPLy.ResourceLimits(max_value_repr_bytes=42)
         server = REPLy.serve(; port=0, limits=limits)
         try
-            @test server.state.limits.max_repr_bytes == 42
+            @test server.state.limits.max_value_repr_bytes == 42
         finally
             close(server)
         end
