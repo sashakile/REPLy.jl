@@ -87,14 +87,19 @@
     @testset "internal_error_response returns stable code + correlation id only" begin
         # Server-internal failures must NOT leak stack traces or exception
         # type details to the client. Only a stable error message and a
-        # correlation id for server-side log lookup.
+        # correlation id for server-side log lookup. Full trace is logged
+        # server-side at Error level.
         ex = ErrorException("something went wrong deep inside")
         bt = try
             error("capture")
         catch
             catch_backtrace()
         end
-        resp = REPLy.internal_error_response("req-1", ex; bt=bt)
+
+        logger = TestLogger()
+        resp = with_logger(logger) do
+            REPLy.internal_error_response("req-1", ex; bt=bt)
+        end
 
         @test resp["id"] == "req-1"
         @test Set(resp["status"]) == Set(["done", "error"])
@@ -103,9 +108,15 @@
         @test haskey(resp, "correlation-id")
         @test resp["correlation-id"] isa AbstractString
         @test !isempty(resp["correlation-id"])
-        # Must NOT leak exception type or stack trace
+        # Must NOT leak exception type or stack trace to client
         @test !haskey(resp, "ex")
         @test !haskey(resp, "stacktrace")
+        # Server-side log must include correlation_id and exception
+        @test length(logger.logs) == 1
+        @test logger.logs[1].level == Logging.Error
+        @test occursin("Internal handler failure", logger.logs[1].message)
+        @test logger.logs[1].kwargs[:correlation_id] == resp["correlation-id"]
+        @test haskey(logger.logs[1].kwargs, :exception)
     end
 
     @testset "eval_error_response still returns full trace for user eval errors" begin
@@ -133,13 +144,18 @@
     @testset "internal_error_response opt-in trace exposure on loopback" begin
         # When expose_internal_traces is true (e.g. loopback connection), the
         # response should include the full exception and stacktrace.
+        # Server-side @error logging still occurs.
         ex = ErrorException("debug this")
         bt = try
             error("capture")
         catch
             catch_backtrace()
         end
-        resp = REPLy.internal_error_response("req-3", ex; bt=bt, expose_trace=true)
+
+        logger = TestLogger()
+        resp = with_logger(logger) do
+            REPLy.internal_error_response("req-3", ex; bt=bt, expose_trace=true)
+        end
 
         @test resp["id"] == "req-3"
         @test haskey(resp, "ex")
@@ -150,6 +166,12 @@
         # Still includes correlation id even when trace is exposed
         @test haskey(resp, "correlation-id")
         @test !isempty(resp["correlation-id"])
+        # Server-side log includes correlation_id and exception
+        @test length(logger.logs) == 1
+        @test logger.logs[1].level == Logging.Error
+        @test occursin("Internal handler failure", logger.logs[1].message)
+        @test logger.logs[1].kwargs[:correlation_id] == resp["correlation-id"]
+        @test haskey(logger.logs[1].kwargs, :exception)
     end
 
     @testset "fallback_render strips unstable module prefixes" begin

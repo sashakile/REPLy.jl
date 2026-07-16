@@ -94,6 +94,7 @@ end
 # exception type, message, and stack trace are included in the response.
 function internal_error_response(request_id::AbstractString, ex; bt=catch_backtrace(), expose_trace=false)
     correlation_id = string(uuid4())
+    @error "Internal handler failure" correlation_id=correlation_id request_id=request_id exception=(ex, bt)
     if expose_trace
         return error_response(request_id, safe_showerror(ex); ex=ex, bt=bt, correlation_id=correlation_id)
     end
