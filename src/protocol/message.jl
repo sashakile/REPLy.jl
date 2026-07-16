@@ -64,8 +64,7 @@ function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_ME
             msg = try
                 JSON3.read(line)
             catch
-                # Malformed wire JSON is treated as a closed boundary.
-                return nothing
+                throw(MalformedJSONError())
             end
 
             msg isa JSON3.Object || continue

@@ -102,7 +102,13 @@ end
 
     @testset "custom eval-only stack does not leak fallback sessions" begin
         manager = REPLy.SessionManager()
-        handler = REPLy.build_handler(; manager=manager, middleware=REPLy.AbstractMiddleware[REPLy.EvalMiddleware()])
+        # Include SessionMiddleware so stack validation passes; the test
+        # verifies that eval ephemeral sessions don't leak into named sessions.
+        handler = REPLy.build_handler(; manager=manager, middleware=REPLy.AbstractMiddleware[
+            REPLy.SessionMiddleware(),
+            REPLy.EvalMiddleware(),
+            REPLy.UnknownOpMiddleware(),
+        ])
 
         @test REPLy.session_count(manager) == 0
         responses = handler(Dict("op" => "eval", "id" => "mw-cleanup", "code" => "1 + 1"))

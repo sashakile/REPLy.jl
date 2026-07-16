@@ -82,6 +82,10 @@ const _STDOUT_CAPTURER = Ref{Union{TaskCapturingIO, Nothing}}(nothing)
 const _STDERR_CAPTURER = Ref{Union{TaskCapturingIO, Nothing}}(nothing)
 const _CAPTURER_INSTALL_LOCK = ReentrantLock()
 
+# Saved originals so restore_io_capture! can put them back.
+const _ORIGINAL_STDOUT = Ref{Union{IO, Nothing}}(nothing)
+const _ORIGINAL_STDERR = Ref{Union{IO, Nothing}}(nothing)
+
 # Cross-task buffer registry: maps eval tasks to their stdout IOBuffer so a
 # periodic flush timer can read interim output during a running eval.
 const _ACTIVE_CAPTURE_BUFS = Dict{Task, IOBuffer}()
@@ -91,6 +95,8 @@ function ensure_io_capture_installed!()
     isnothing(_STDOUT_CAPTURER[]) || return  # fast path
     lock(_CAPTURER_INSTALL_LOCK) do
         isnothing(_STDOUT_CAPTURER[]) || return  # double-checked under lock
+        _ORIGINAL_STDOUT[] = Base.stdout
+        _ORIGINAL_STDERR[] = Base.stderr
         stdout_cap = TaskCapturingIO(:__reply_capture_stdout, Base.stdout)
         stderr_cap = TaskCapturingIO(:__reply_capture_stderr, Base.stderr)
         Base.stdout = stdout_cap
@@ -98,4 +104,24 @@ function ensure_io_capture_installed!()
         _STDOUT_CAPTURER[] = stdout_cap
         _STDERR_CAPTURER[] = stderr_cap
     end
+end
+
+"""
+    restore_io_capture!()
+
+Restore `Base.stdout` and `Base.stderr` to their original values before
+`ensure_io_capture_installed!` was called. Safe to call multiple times;
+subsequent calls are no-ops.
+"""
+function restore_io_capture!()
+    orig_out = _ORIGINAL_STDOUT[]
+    orig_err = _ORIGINAL_STDERR[]
+    isnothing(orig_out) && isnothing(orig_err) && return nothing
+    isnothing(orig_out) || (Base.stdout = orig_out)
+    isnothing(orig_err) || (Base.stderr = orig_err)
+    _ORIGINAL_STDOUT[] = nothing
+    _ORIGINAL_STDERR[] = nothing
+    _STDOUT_CAPTURER[] = nothing
+    _STDERR_CAPTURER[] = nothing
+    return nothing
 end

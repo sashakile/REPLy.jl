@@ -20,12 +20,21 @@ AuditMiddleware(log::AuditLog; client_id::UUID=UUID(UInt128(0)), source_ip::Abst
 _session_id_or_nothing(session::NamedSession) = session_id(session)
 _session_id_or_nothing(::Any) = nothing
 
+function _record_audit_safe!(log::AuditLog, entry::AuditLogEntry)
+    try
+        record_audit!(log, entry)
+    catch ex
+        @warn "Audit write failed, degrading to warning-only" exception=(ex, catch_backtrace())
+    end
+    return nothing
+end
+
 function handle_message(mw::AuditMiddleware, msg, next, ctx::RequestContext)
     op = String(get(msg, "op", ""))
     t = now(UTC)
     try
         result = next(msg)
-        record_audit!(mw.log, AuditLogEntry(
+        _record_audit_safe!(mw.log, AuditLogEntry(
             timestamp=t,
             client_id=mw.client_id,
             session_id=_session_id_or_nothing(ctx.session),
@@ -35,7 +44,7 @@ function handle_message(mw::AuditMiddleware, msg, next, ctx::RequestContext)
         ))
         return result
     catch ex
-        record_audit!(mw.log, AuditLogEntry(
+        _record_audit_safe!(mw.log, AuditLogEntry(
             timestamp=t,
             client_id=mw.client_id,
             session_id=_session_id_or_nothing(ctx.session),

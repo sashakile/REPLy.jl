@@ -118,6 +118,15 @@ changing the function's return type.
 """
 struct SessionLimitReachedError <: Exception end
 
+"""
+    MalformedJSONError()
+
+Thrown by `receive` when the wire message cannot be parsed as valid JSON.
+Callers should respond with a `malformed-request` error status and decide
+whether to close the connection based on their own consecutive-count policy.
+"""
+struct MalformedJSONError <: Exception end
+
 function session_limit_response(request_id::AbstractString)
     return error_response(
         request_id,
