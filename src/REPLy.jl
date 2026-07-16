@@ -23,7 +23,7 @@ export session_id, is_trusted
 export SessionState, SessionIdle, SessionRunning, SessionClosed
 export session_state, session_eval_task, session_last_active_at, session_eval_count, session_eval_id, session_module_name
 export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
-export MAX_SESSION_HISTORY_SIZE, clamp_history!
+export MAX_SESSION_HISTORY_SIZE, clamp_history!, StdinFeeder, teardown_stdin_feeder!
 export ResourceLimits
 export effective_limit
 export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware

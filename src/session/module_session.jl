@@ -55,6 +55,20 @@ const MAX_SESSION_HISTORY_SIZE = 10_000
 const MAX_STDIN_BUFFER_SIZE = 256
 
 """
+    StdinFeeder
+
+Encapsulates the persistent per-session stdin Pipe + feeder Task pair. Created
+on the first `allow_stdin` eval and torn down when the session is destroyed.
+
+- `pipe` — linked `Base.Pipe` whose `out` end is redirected as the eval's stdin
+- `feeder` — `@async` task that reads from `stdin_channel` and writes to `pipe.in`
+"""
+struct StdinFeeder
+    pipe::Base.Pipe
+    feeder::Task
+end
+
+"""
     NamedSession
 
 Persistent named session with explicit identity, lifecycle state, and activity tracking.
@@ -68,8 +82,31 @@ governed by `session.lock` and must not be acquired while holding it. The
 `stdin_channel` is a bounded `Channel{String}` (capacity `MAX_STDIN_BUFFER_SIZE`) that buffers stdin text across
 evals; it is thread-safe and must not be accessed under `session.lock`.
 
+# Lock ownership table
+
+| Field | Protected by | Notes |
+|---|---|---|
+| `id` | immutable | Set at creation, never changes |
+| `name` | immutable | Set at creation, never changes |
+| `session_mod` | immutable | Set at creation, never changes |
+| `trusted` | immutable | Set at creation, never changes |
+| `created_at` | immutable | Set at creation, never changes |
+| `state` | `session.lock` | Use `transition_session_state!` / `begin_eval!` / `end_eval!` |
+| `eval_task` | `session.lock` | Use `begin_eval!` / `end_eval!` |
+| `last_active_at` | `session.lock` | Updated by `begin_eval!` / `end_eval!` |
+| `eval_count` | `session.lock` | Incremented by `end_eval!` |
+| `eval_id` | `session.lock` | Incremented by `begin_eval!` |
+| `history` | unguarded (mutation in eval task only) | `_update_history!` runs inside the eval task; no concurrent access |
+| `stdin_channel` | thread-safe `Channel` | Not accessed under `session.lock` |
+| `stdin_feeder` | unguarded (created/cleared during eval_lock) | Created under `eval_lock` (see `_ensure_stdin_feeder!`); torn down in `teardown_stdin_feeder!` which acquires neither lock |
+| `lock` | N/A | The lock itself, not protected by anything |
+| `eval_lock` | N/A | Standalone serialization primitive, not under `session.lock` |
+
+# Field documentation
+
 - `id` — canonical UUID string (generated at creation, never changes).
 - `name` — optional human-readable alias (may be empty string for unnamed sessions).
+- `stdin_feeder` — `StdinFeeder` value (Pipe + feeder Task) or `nothing` if no stdin eval has run yet.
 """
 
 mutable struct NamedSession
@@ -87,8 +124,7 @@ mutable struct NamedSession
     history::Vector{Any}
     eval_count::Int
     eval_id::Int
-    stdin_pipe::Union{Base.Pipe, Nothing}
-    stdin_feeder::Union{Task, Nothing}
+    stdin_feeder::Union{StdinFeeder, Nothing}
 end
 
 function NamedSession(id::String, name::String, mod::Module; trusted::Bool=false)
@@ -96,32 +132,34 @@ function NamedSession(id::String, name::String, mod::Module; trusted::Bool=false
     s = NamedSession(id, name, mod, trusted, now, SessionIdle, nothing, now,
                      ReentrantLock(), ReentrantLock(),
                      Channel{String}(MAX_STDIN_BUFFER_SIZE),
-                     Any[], 0, 0, nothing, nothing)
+                     Any[], 0, 0, nothing)
     return s
 end
 
 function teardown_stdin_feeder!(session::NamedSession)
     feeder = session.stdin_feeder
-    pipe = session.stdin_pipe
     session.stdin_feeder = nothing
-    session.stdin_pipe = nothing
-    if !isnothing(feeder) && !istaskdone(feeder)
-        schedule(feeder, InterruptException(); error=true)
-    end
-    if !isnothing(pipe)
-        isopen(pipe.in) && close(pipe.in)
-        isopen(pipe.out) && close(pipe.out)
+    if !isnothing(feeder)
+        if !istaskdone(feeder.feeder)
+            schedule(feeder.feeder, InterruptException(); error=true)
+        end
+        p = feeder.pipe
+        isopen(p.in) && close(p.in)
+        isopen(p.out) && close(p.out)
     end
     return nothing
 end
 
 """
-    clamp_history!(session, max_size=MAX_SESSION_HISTORY_SIZE)
+    clamp_history!(session, max_size)
 
 Drop the oldest entries from `session.history` so it does not exceed
-`max_size`. Called after each history push.
+`max_size`. Called after each history push. Does NOT acquire `session.lock`
+— caller must ensure exclusive access (currently: called inside the eval task
+which is the sole writer to history).
 """
 function clamp_history!(session::NamedSession, max_size::Int=MAX_SESSION_HISTORY_SIZE)
+    @assert !islocked(session.lock) "clamp_history! must not be called while holding session.lock (called from eval task)"
     excess = length(session.history) - max_size
     excess > 0 && deleteat!(session.history, 1:excess)
     return session

@@ -245,12 +245,13 @@ end
 # Create (or return existing) persistent stdin Pipe + feeder Task for `session`.
 # Must be called while holding session.eval_lock (serializes initialization).
 function _ensure_stdin_feeder!(session::NamedSession)
-    isnothing(session.stdin_pipe) || return session.stdin_pipe::Base.Pipe
+    isnothing(session.stdin_feeder) || return session.stdin_feeder::StdinFeeder
     pipe = Base.Pipe()
     Base.link_pipe!(pipe; reader_supports_async=true, writer_supports_async=true)
-    session.stdin_feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
-    session.stdin_pipe = pipe
-    return pipe
+    feeder = @async _stdin_feeder(session.stdin_channel, pipe.in)
+    sf = StdinFeeder(pipe, feeder)
+    session.stdin_feeder = sf
+    return sf
 end
 
 # UUID of the authentic Revise.jl package (registered in the Julia General registry).
@@ -566,8 +567,8 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
             end
 
             outcome = if allow_stdin && session isa NamedSession
-                pipe = _ensure_stdin_feeder!(session)
-                redirect_stdin(pipe.out) do
+                sf = _ensure_stdin_feeder!(session)
+                redirect_stdin(sf.pipe.out) do
                     _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
                 end
             elseif allow_stdin

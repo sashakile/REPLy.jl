@@ -19,21 +19,21 @@
         REPLy.lookup_named_session(manager, name)
     end
 
-    @testset "first allow_stdin eval creates session.stdin_pipe" begin
+    @testset "first allow_stdin eval creates session.stdin_feeder" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "feeder-1")
-        @test isnothing(session.stdin_pipe)
+        @test isnothing(session.stdin_feeder)
         eval_in(manager, "feeder-1", "1"; id="fe1")
-        @test !isnothing(session.stdin_pipe)
+        @test !isnothing(session.stdin_feeder)
     end
 
     @testset "consecutive evals reuse the same pipe object" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "feeder-2")
         eval_in(manager, "feeder-2", "1"; id="fe2a")
-        pipe_first = session.stdin_pipe
+        pipe_first = session.stdin_feeder.pipe
         eval_in(manager, "feeder-2", "2"; id="fe2b")
-        @test session.stdin_pipe === pipe_first
+        @test session.stdin_feeder.pipe === pipe_first
     end
 
     @testset "feeder task stays alive across multiple evals" begin
@@ -43,7 +43,7 @@
             eval_in(manager, "feeder-3", "$i"; id="fe3-$i")
         end
         @test !isnothing(session.stdin_feeder)
-        @test !istaskdone(session.stdin_feeder)
+        @test !istaskdone(session.stdin_feeder.feeder)
     end
 
     @testset "allow_stdin=false does not create a persistent pipe" begin
@@ -52,7 +52,7 @@
         stack = make_eval_stack()
         ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
         REPLy.dispatch_middleware(stack, 1, Dict("op" => "eval", "id" => "fe4", "session" => "feeder-4", "allow-stdin" => false, "code" => "1"), ctx)
-        @test isnothing(session.stdin_pipe)
+        @test isnothing(session.stdin_feeder)
     end
 
     @testset "stdin still works correctly on second eval using reused pipe" begin
@@ -97,9 +97,9 @@
         eval_in(manager, "feeder-6", "1"; id="fe6")
         feeder = session.stdin_feeder
         @test !isnothing(feeder)
-        @test !istaskdone(feeder)
+        @test !istaskdone(feeder.feeder)
         REPLy.destroy_named_session!(manager, "feeder-6")
-        timedwait(() -> istaskdone(feeder), 2.0)
-        @test istaskdone(feeder)
+        timedwait(() -> istaskdone(feeder.feeder), 2.0)
+        @test istaskdone(feeder.feeder)
     end
 end
