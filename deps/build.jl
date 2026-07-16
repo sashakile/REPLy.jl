@@ -76,7 +76,7 @@ if should_write
     launcher_src = """
 #!/usr/bin/env bash
 # REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51
-exec julia --startup-file=no --project="$(scratch_env)" \\
+exec $(Base.julia_cmd()[1]) --startup-file=no --project="$(scratch_env)" \\
     -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- "\$@"
 """
 

@@ -13,7 +13,7 @@
             socket = accept(listener)
             close(listener)
             try
-                REPLy.handle_client!(socket, msg -> begin
+                REPLy.handle_client!(socket, (msg, _) -> begin
                     sleep(0.05)  # yield so client can disconnect first
                     [REPLy.done_response(String(get(msg, "id", "")))]
                 end)

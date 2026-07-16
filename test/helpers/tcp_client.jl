@@ -22,7 +22,10 @@ function collect_until_done(sock; timeout_s=5.0)::Vector{Dict}
                 rethrow()
             end
 
-            isempty(strip(line)) && continue
+            if isempty(strip(line))
+                eof(sock) && return msgs
+                continue
+            end
 
             local msg
             try
