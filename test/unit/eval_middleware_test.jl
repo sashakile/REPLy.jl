@@ -612,7 +612,7 @@ end
         @test "error" in msgs[1]["status"]
         @test occursin("Cannot resolve module", msgs[1]["err"])
         # After rejection, both counters must be back to zero.
-        @test state.active_evals[] == 0
+        @test REPLy.active_count(state.gate) == 0
         @test isempty(REPLy.active_eval_tasks(state))
     end
 end

@@ -15,7 +15,7 @@
     @testset "ServerState exposes active_evals counter" begin
         limits = REPLy.ResourceLimits()
         state  = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
-        @test state.active_evals[] == 0
+        @test REPLy.active_count(state.gate) == 0
     end
 
     @testset "clone-session rejected when session limit reached" begin
@@ -77,9 +77,9 @@
         middleware = REPLy.default_middleware_stack()
         handler    = REPLy.build_handler(; manager=manager, middleware=middleware, state=state)
 
-        @test state.active_evals[] == 0
+        @test REPLy.active_count(state.gate) == 0
         handler(Dict("op" => "eval", "code" => "2+2", "id" => "t4"))
-        @test state.active_evals[] == 0  # decremented after eval
+        @test REPLy.active_count(state.gate) == 0  # decremented after eval
     end
 
     @testset "create_named_session! rejected when session limit reached" begin

@@ -186,7 +186,7 @@ REPLy.shutdown_middleware!(mw::ShutdownProbe) = push!(mw.recorder, mw.name)
             msgs = fetch(reader)
 
             @test REPLy.session_state(session) == REPLy.SessionIdle
-            @test server.state.active_evals[] == 0
+            @test server.state.gate.active[] == 0
             terminals = filter(m -> haskey(m, "status"), msgs)
             @test !isempty(terminals)
             @test "interrupted" in terminals[end]["status"]

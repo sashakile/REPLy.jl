@@ -36,7 +36,7 @@
     REPLy.create_named_session!(manager, "post-burst")
 
     # Server state is clean
-    @test state.active_evals[] == 0
+    @test REPLy.active_count(state.gate) == 0
     @test isempty(REPLy.active_eval_tasks(state))
 
     # Interrupt works
@@ -86,5 +86,5 @@
              "code" => "42", "silent" => true), sl_ctx)
     @test !any(m -> haskey(m, "value"), sl_msgs)
 
-    @test state.active_evals[] == 0
+    @test REPLy.active_count(state.gate) == 0
 end

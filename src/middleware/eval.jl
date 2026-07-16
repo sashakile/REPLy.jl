@@ -321,12 +321,12 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     max_output_bytes    = isnothing(ctx.server_state) ? typemax(Int) : ctx.server_state.limits.max_output_bytes
     max_session_history = isnothing(ctx.server_state) ? MAX_SESSION_HISTORY_SIZE : ctx.server_state.limits.max_history_entries
 
-    # Concurrent eval slot acquisition with FIFO queue (spec REQ-RPL-047d).
-    # If the cap is reached, _eval_acquire_slot queues and blocks until a slot
+    # Concurrent eval slot acquisition via EvalGate (spec REQ-RPL-047d).
+    # If the cap is reached, acquire! queues and blocks until a slot
     # opens. If the queue is full (2× limit), the eval is rejected immediately.
     state = ctx.server_state
     if !isnothing(state)
-        _eval_acquire_slot(state) ||
+        acquire!(state.gate) ||
             return [error_response(request_id, "Too many concurrent evals";
                         status_flags=String["error", "concurrency-limit-reached"])]
     end
@@ -492,8 +492,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         !isnothing(t) && close(t)
         if !isnothing(state)
             unregister_active_eval!(state, eval_task)
-            Threads.atomic_sub!(state.active_evals, 1)
-            _eval_release_slot(state)
+            release!(state.gate)
         end
     end
 end
