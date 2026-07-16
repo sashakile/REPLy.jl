@@ -1,3 +1,5 @@
+using Logging
+
 @testset "ServerState — shared above listener-local paths" begin
     @testset "default serve creates state with ResourceLimits" begin
         server = REPLy.serve(; port=0)
