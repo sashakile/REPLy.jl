@@ -2,7 +2,7 @@
 
 ### Requirement: Launcher pinning via scratch environment
 
-The `deps/build.jl` script SHALL create a private, UUID-namespaced scratch environment (via `Scratch.jl`) that preserves the REPLy dependency snapshot at build time. The generated launcher script SHALL resolve the REPLy package from this scratch environment, not from a `--project` flag. Because the scratch environment is immutable after build, the launcher is immune to environment drift from changes to the active Julia project.
+The `deps/build.jl` script SHALL create a private, UUID-namespaced scratch environment (via `Scratch.jl`) that preserves the REPLy dependency snapshot at build time. The generated launcher script SHALL resolve the REPLy package from this scratch environment by embedding `--project=<scratch_env>` in the exec line. Because the scratch environment is immutable after build, the launcher is immune to environment drift from changes to the active Julia project.
 
 #### Scenario: Launcher works after global env changes
 - **WHEN** a user installs REPLy and builds the launcher
