@@ -36,16 +36,11 @@ descriptor(::LsBindingsMiddleware) = MiddlewareDescriptor(
 # Names that always exist in a session module but are not user bindings.
 const _LS_BINDINGS_EXCLUDED = Set{Symbol}([:eval, :include])
 
-function handle_message(::LsBindingsMiddleware, msg, next, ctx::RequestContext)
-    get(msg, "op", nothing) == "ls-bindings" || return next(msg)
-    request_id = String(get(msg, "id", ""))
-
-    session = ctx.session
-    if !(session isa NamedSession)
-        return [error_response(request_id, "ls-bindings requires a session")]
-    end
-    mod = session_module(session)
-
+# Collect user-defined bindings from a module, excluding auto-injected names
+# (eval, include), gensym names (starting with #), and sub-modules.
+# Extracted as a separate function so it can be called via Base.invokelatest
+# to see bindings created by Core.eval in the latest world age.
+function _collect_bindings(mod::Module)
     bindings = Dict{String, Any}[]
     for sym in names(mod; all=true)
         startswith(string(sym), "#") && continue
@@ -60,6 +55,24 @@ function handle_message(::LsBindingsMiddleware, msg, next, ctx::RequestContext)
         push!(bindings, Dict{String, Any}("name" => string(sym), "type" => string(typeof(value))))
     end
     sort!(bindings; by = b -> b["name"])
+    return bindings
+end
+
+function handle_message(::LsBindingsMiddleware, msg, next, ctx::RequestContext)
+    get(msg, "op", nothing) == "ls-bindings" || return next(msg)
+    request_id = String(get(msg, "id", ""))
+
+    session = ctx.session
+    if !(session isa NamedSession)
+        return [error_response(request_id, "ls-bindings requires a session")]
+    end
+    mod = session_module(session)
+
+    # Use Base.invokelatest to force the latest world age so that bindings
+    # created by Core.eval in a child task are visible here. Without this,
+    # names()/getfield() on the connection handler task see an older snapshot
+    # of the module — see REPLy_jl-efe.
+    bindings = Base.invokelatest(_collect_bindings, mod)
 
     return [
         response_message(request_id,
