@@ -3,12 +3,20 @@
 
 This page tracks the implementation state of REPLy.jl against the canonical OpenSpec definitions.
 
+!!! warning "What \"verified\" means here"
+    On this page **"verified" and "tested" mean covered by the automated test suite**
+    (~95% coverage across unit, integration, and end-to-end layers) and checked against the
+    OpenSpec definitions. It does **not** mean the project has had a manual security audit or
+    human code review — as the [home page](index.md) banner states, REPLy is entirely
+    LLM-generated and unaudited. Test coverage ≠ security audit; treat security-sensitive
+    deployments accordingly.
+
 ## Summary
 
-REPLy.jl has progressed significantly beyond its initial tracer-bullet state. The core protocol, session management, and a rich set of middleware-driven operations are now fully implemented and verified.
+REPLy.jl has progressed significantly beyond its initial tracer-bullet state. The core protocol, session management, and a rich set of middleware-driven operations are implemented and covered by the test suite.
 
 - **Protocol**: Fully implemented flat JSON envelopes, correlation by `id`, and newline-delimited framing.
-- **Operations**: `eval`, `describe`, `load-file`, `interrupt`, `complete`, `lookup`, `stdin`, and full session lifecycle (`new-session`, `ls-sessions`, `close`, `clone`) are all functional.
+- **Operations**: `eval`, `describe`, `ping`, `interrupt`, `stdin`, `complete`, `lookup`, `ls-bindings`, `load-file`, `reload-file`, and full session lifecycle (`new-session`, `ls-sessions`, `close`, `clone`) are all functional.
 - **Sessions**: Support for ephemeral and named sessions, binding isolation, FIFO serialization, and Revise.jl integration.
 - **Transports**: TCP and Unix domain sockets (with owner-only permissions) are both supported, including concurrent multi-listeners.
 - **Adapter**: A complete MCP (Model Context Protocol) reference adapter exists with tool mappings for the core REPLy operations.
@@ -20,7 +28,7 @@ REPLy.jl has progressed significantly beyond its initial tracer-bullet state. Th
 | --- | --- | --- | --- | --- |
 | Protocol envelope and JSON framing | ✅ | ✅ | ✅ | Covers flat envelopes, echoed `id`, kebab-case keys, and `done`-terminated streams. |
 | Core `eval` flow | ✅ | ✅ | ✅ | Supports `timeout-ms`, `silent`, `store-history`, `allow-stdin`, and `module` path resolution. |
-| Additional core operations | ✅ | ✅ | ✅ | `describe`, `load-file`, `interrupt`, `complete`, `lookup`, `stdin`, `clone`, `close`, `ls-sessions` are all built. |
+| Additional core operations | ✅ | ✅ | ✅ | `describe`, `ping`, `interrupt`, `stdin`, `complete`, `lookup`, `ls-bindings`, `load-file`, `reload-file`, `clone`, `close`, `ls-sessions` are all built. |
 | Session management | ✅ | ✅ | ✅ | Named/ephemeral sessions, FIFO eval, idle timeout sweeping, and Revise integration are complete. |
 | Middleware system | ✅ | ✅ | ✅ | Unified `handle_message` protocol with descriptor-based metadata and dynamic stack building. |
 | TCP transport | ✅ | ✅ | ✅ | Fully supported with concurrent client handling. |

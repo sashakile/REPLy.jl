@@ -103,6 +103,78 @@ Hello from client!
 Result: 2
 ```
 
+## Persistent Sessions (Keeping State Between Evals)
+
+The recipe above opens a fresh connection per call and runs each eval in a *fresh,
+ephemeral* session — variables do **not** survive between calls. For editor integration you
+usually want the opposite: one long-lived connection and a **named session** so state
+persists. That is what [index.md](index.md#Next-Steps) pointed you here for.
+
+Two changes make it persistent:
+
+1. Keep a single `conn` open and reuse it across evals (don't `close` after each one).
+2. Create a named session once, then include `"session" => name` in every request.
+
+```julia
+using Sockets
+using JSON3
+
+# Send one request over an already-open connection and return the collected responses.
+function send_request(conn, request)
+    JSON3.write(conn, request)
+    write(conn, '\n')
+    flush(conn)
+    responses = Dict{String,Any}[]
+    while isopen(conn)
+        line = readline(conn)
+        if isempty(line)
+            eof(conn) && break
+            continue
+        end
+        msg = JSON3.read(line, Dict{String,Any})
+        get(msg, "id", "") == request["id"] || continue   # demux by id
+        push!(responses, msg)
+        "done" in get(msg, "status", String[]) && break
+    end
+    return responses
+end
+
+# Open ONE connection, create a session, and run several evals against it.
+function session_demo(host::IPAddr, port::Int)
+    conn = connect(host, port)
+    try
+        # 1. Create a named session (state will persist in it).
+        #    `if-exists => "reuse"` makes this idempotent: re-running the demo against
+        #    a server that already has "main" reuses it instead of erroring.
+        send_request(conn, Dict("op" => "new-session", "id" => "s-1",
+                                "name" => "main", "if-exists" => "reuse"))
+
+        # 2. First eval: define x in the session.
+        send_request(conn, Dict("op" => "eval", "id" => "e-1",
+                                "session" => "main", "code" => "x = 42"))
+
+        # 3. Second eval on the SAME connection/session: x is still defined.
+        rs = send_request(conn, Dict("op" => "eval", "id" => "e-2",
+                                     "session" => "main", "code" => "x + 10"))
+        for msg in rs
+            haskey(msg, "value") && println("Result: ", msg["value"])
+        end
+    finally
+        close(conn)
+    end
+end
+
+session_demo(ip"127.0.0.1", 5555)
+```
+
+**Output:**
+```
+Result: 52
+```
+
+The second eval sees `x` because both ran in the `"main"` session over one connection. See
+[How-to: Manage Sessions](howto-sessions.md) for listing, cloning, and closing sessions.
+
 ## Adding Concurrency (Optional)
 
 Since REPLy servers can handle concurrent clients, you could start multiple asynchronous tasks running `evaluate_code` against the same server.

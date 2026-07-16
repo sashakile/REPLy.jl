@@ -43,6 +43,36 @@ Using `atreplinit` ensures the server only starts in **interactive** REPL sessio
 ### Why `@eval using REPLy`?
 Using `@eval` inside the hook prevents Julia from trying to load REPLy immediately when the startup file is parsed. This keeps your non-interactive startup time fast.
 
+!!! warning "Two REPLs at once will collide on the default port"
+    The recipe above binds the fixed default port `5555`. Open a **second** interactive
+    Julia session and its `REPLy.serve()` fails with an address-in-use error — and because
+    the `try/catch` only `@warn`s, that second REPL comes up with **no server listening**
+    while looking healthy. Your editor then gets "connection refused" with only a buried
+    warning. Make the recipe idempotent instead:
+
+    ```julia
+    atreplinit() do repl
+        try
+            @eval using REPLy
+            # Option A: per-process Unix socket — never collides, and access is
+            # restricted to your user by file permissions.
+            sock = joinpath(homedir(), ".julia", "reply-$(getpid()).sock")
+            server = REPLy.serve(socket_path=sock)
+            @info "REPLy listening" socket=REPLy.server_socket_path(server)
+
+            # Option B (TCP): let the OS pick a free port with port=0, then print it
+            # so your editor can discover which port this REPL got.
+            # server = REPLy.serve(port=0)
+            # @info "REPLy listening" port=REPLy.server_port(server)
+        catch e
+            @warn "REPLy failed to start" exception=e
+        end
+    end
+    ```
+
+    With `port=5555` fixed, only one REPL at a time can serve; a per-process socket or
+    `port=0` lets every session bring up its own server.
+
 ## 3. Integration with Revise.jl
 
 REPLy has built-in support for Revise.jl. If `Revise` is loaded in `Main`, REPLy calls `Revise.revise()` before an evaluation so your networked client sees the latest version of your code.

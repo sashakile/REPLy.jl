@@ -2,6 +2,21 @@
 
 REPLy ships with a built-in adapter layer for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). The adapter exposes Julia evaluation and session management as MCP tools, so any MCP-compatible client (Claude Desktop, VS Code MCP extensions, etc.) can use REPLy as a code-execution backend.
 
+!!! danger "Security: this gives an AI agent arbitrary code execution"
+    Any MCP client wired to REPLy can run **arbitrary Julia code in your process** — there is
+    no sandbox and no authentication. Understand the trust boundary before enabling it:
+
+    - **`serve_mcp()` uses stdio, not the network.** The Quick Start below launches a
+      subprocess that talks over stdin/stdout to exactly one local client (e.g. Claude
+      Desktop). It does **not** open a TCP port, so it is not network-reachable.
+    - **The TCP embedding path (below) is different.** If you instead point the adapter at a
+      `REPLy.serve(port=...)` server, everything in the main
+      [Security Model](index.md#Security-Model) applies: loopback-only by default, **no auth
+      over TCP**, and use a [Unix domain socket](howto-unix-sockets.md) for OS-level access
+      control on shared machines.
+    - Treat the agent as an untrusted caller: apply [resource
+      limits](index.md#Resource-Limits) and a `load-file` allowlist as appropriate.
+
 ## Quick Start (Recommended)
 
 The simplest way to use REPLy as an MCP server is via the `REPLy.serve_mcp()` entry point. This starts a stdio-based MCP server that handles the protocol handshake and tool dispatch automatically.
@@ -26,6 +41,13 @@ Add the following to your `claude_desktop_config.json` (usually found in `~/Libr
 ```
 
 Replace `/path/to/REPLy.jl` with the actual path to the REPLy.jl repository. Once configured, restart Claude Desktop, and you will see the `julia_eval` and other tools available.
+
+!!! tip "You don't have to clone the repo"
+    `--project=` just needs to point at **any Julia environment that has REPLy installed**.
+    If you installed REPLy with `Pkg.add("REPLy")` into an environment (rather than cloning),
+    point `--project` at that environment's directory — e.g. your default env
+    `--project=@v1.10`, or a dedicated one you created with `Pkg.activate("/path/to/env")`
+    then `Pkg.add("REPLy")`. Cloning is only needed for local development.
 
 ## Programmatic Usage
 
@@ -128,6 +150,13 @@ request = mcp_eval_request("req-1", Dict("code" => "1 + 1"); default_session=def
 ```
 
 Then create a transport, send the request, and collect the response stream:
+
+!!! note "This path needs a separately started TCP server"
+    Unlike the stdio `serve_mcp()` Quick Start, the snippet below connects to a REPLy
+    server listening on a TCP port. Start one first in another process —
+    `REPLy.serve(port=5555)` (see [Quick Start](index.md#Quick-Start)) — or use a Unix
+    socket and the `connect(socket_path)` variant shown after. `serve_mcp()` does **not**
+    open port 5555.
 
 ```julia
 using Sockets

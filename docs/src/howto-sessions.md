@@ -10,6 +10,12 @@ Clients can create a new named session at any time using the `new-session` opera
 printf '%s\n' '{"op":"new-session","id":"new-1","name":"main"}' | nc 127.0.0.1 5555
 ```
 
+!!! tip "Prefer a CLI? Use `replyc`"
+    If you have the [`replyc` CLI](howto-cli-install.md) installed, the session ops below
+    have direct equivalents: `replyc session new main`, `replyc session ls`,
+    `replyc eval --session main 'x = 42'`, and `replyc session rm main`. The `nc`/JSON form
+    shown here is the raw wire protocol underneath.
+
 The server returns the session's UUID and echoes the name alias:
 
 ```json

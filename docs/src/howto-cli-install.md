@@ -76,6 +76,86 @@ belong to REPLy (i.e., it lacks the UUID marker shown above), `Pkg.build`
 will refuse to overwrite it and print a warning. Remove the conflicting file
 manually and re-run `Pkg.build("REPLy")` to install the REPLy launcher.
 
+## Using `replyc`
+
+`replyc` talks to an already-running REPLy server (start one with
+`REPLy.serve(port=5555)` — see [Quick Start](index.md#Quick-Start)). Run `replyc --help`
+for the full usage:
+
+```text
+replyc — minimal REPLy client
+
+Usage:
+  replyc eval    [--host H] [--port N] [--session NAME] 'CODE'
+  replyc session new [--host H] [--port N] [NAME]
+  replyc session ls  [--host H] [--port N]
+  replyc session rm  [--host H] [--port N] NAME
+
+Defaults: --host 127.0.0.1  --port 5555
+```
+
+### First eval
+
+Evaluate an expression against the default server and read the result on stdout:
+
+```bash
+replyc eval '1 + 1'
+```
+
+```text
+2
+```
+
+Standard output from the code is streamed too; the final value prints last:
+
+```bash
+replyc eval 'println("hi"); 3 * 7'
+```
+
+```text
+hi
+21
+```
+
+A runtime error is printed to stderr and `replyc` exits non-zero:
+
+```bash
+replyc eval 'missing_name + 1'; echo "exit=$?"
+```
+
+```text
+UndefVarError: `missing_name` not defined
+exit=1
+```
+
+### Persistent state with sessions
+
+By default each `eval` runs in a fresh ephemeral session. To keep variables between calls,
+create a named session and pass `--session`:
+
+```bash
+replyc session new main          # prints the new session UUID
+replyc eval --session main 'x = 42'
+replyc eval --session main 'x + 10'
+```
+
+```text
+52
+```
+
+List and remove sessions:
+
+```bash
+replyc session ls                # prints "<uuid>\t<name>" per session
+replyc session rm main           # close by name or UUID
+```
+
+Use `--host`/`--port` to reach a non-default server (for Unix sockets, see
+[Unix Sockets](howto-unix-sockets.md)). This maps directly onto the wire protocol: `eval`
+sends an `eval` op, `--session` sets the `"session"` key, and `session new/ls/rm` send
+`new-session`/`ls-sessions`/`close`. See the [Protocol Reference](reference-protocol.md) for
+the underlying messages.
+
 ## Manual Install (Project-Scoped)
 
 If you need `replyc` to resolve a specific project's REPLy version (e.g., a
