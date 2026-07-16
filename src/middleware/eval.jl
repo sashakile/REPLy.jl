@@ -287,6 +287,118 @@ function with_session_eval(f::Function, ctx::RequestContext, request_id::Abstrac
     end
 end
 
+"""
+    run_with_timeout(task, effective_timeout_ms, request_id) -> Vector{Dict}
+
+Wait for a scheduled `Task` with an optional bounded timeout. If
+`effective_timeout_ms` fires before the task finishes, returns a
+timeout response. The timeout timer sends `InterruptException` to the
+task; if the task is not interruptible (ccall, BLAS), the bounded wait
+expires and returns timeout.
+
+When `effective_timeout_ms` is `nothing`, fetches the task directly
+with no timer — but still catches `InterruptException` from the
+interrupt middleware.
+"""
+function run_with_timeout(task::Task, ::Nothing, request_id::AbstractString)
+    try
+        return fetch(task)
+    catch ex
+        inner = ex isa TaskFailedException ? ex.task.exception : ex
+        inner isa InterruptException || rethrow()
+        return [response_message(request_id, "status" => ["done", "interrupted"])]
+    end
+end
+
+function run_with_timeout(task::Task, timeout_ms::Int, request_id::AbstractString)
+    timed_out = Ref(false)
+
+    timeout_timer = Timer(timeout_ms / 1000.0) do _
+        istaskdone(task) && return
+        timed_out[] = true
+        try
+            schedule(task, InterruptException(); error=true)
+        catch
+        end
+    end
+
+    try
+        while !istaskdone(task) && !timed_out[]
+            yield()
+            sleep(0.01)
+        end
+
+        if timed_out[]
+            # Timer fired — produce timeout response, replacing any
+            # "interrupted" status the task may have emitted.
+            if istaskdone(task)
+                msgs = fetch(task)
+                return map(msgs) do m
+                    if haskey(m, "status") && "interrupted" in m["status"]
+                        timeout_response(request_id, timeout_ms)
+                    else
+                        m
+                    end
+                end
+            else
+                return [timeout_response(request_id, timeout_ms)]
+            end
+        else
+            return fetch(task)
+        end
+    catch ex
+        inner = ex isa TaskFailedException ? ex.task.exception : ex
+        inner isa InterruptException || rethrow()
+        if timed_out[]
+            [timeout_response(request_id, timeout_ms)]
+        else
+            [response_message(request_id, "status" => ["done", "interrupted"])]
+        end
+    finally
+        close(timeout_timer)
+    end
+end
+
+"""
+    annotate_terminal!(msgs, request_id; kwargs...) -> Vector{Dict}
+
+Single pass over `msgs` to annotate the terminal (status-bearing) response
+frame with optional metadata. Replaces the previous pattern of 3× sequential
+`map`+`merge` passes with a single iteration.
+
+Supported keyword annotations:
+- `eval_id::Union{Nothing, Int}` — eval identifier for named sessions
+- `ephemeral::Bool` — whether the session is ephemeral (no persistent state)
+- `timed_out::Bool` — whether the eval was interrupted by the timeout timer
+"""
+function annotate_terminal!(msgs::Vector, request_id::AbstractString; eval_id=nothing, ephemeral=false, timed_out=false)
+    function decorate(m)
+        haskey(m, "status") || return m
+        decorated = copy(m)
+        if timed_out
+            decorated = merge(decorated, timeout_response(request_id, nothing))
+        end
+        if !isnothing(eval_id)
+            decorated = merge(decorated, Dict{String,Any}("eval-id" => eval_id))
+        end
+        if ephemeral
+            decorated = merge(decorated, Dict{String,Any}("ephemeral" => true))
+        end
+        return decorated
+    end
+    return map(decorate, msgs)
+end
+
+function timeout_response(request_id::AbstractString, effective_timeout_ms)
+    return response_message(
+        request_id,
+        "status" => ["done", "error", "timeout"],
+        "err" => isnothing(effective_timeout_ms) ? "eval timed out" : "eval timed out after $(effective_timeout_ms) ms",
+        "max-eval-time-ms" => effective_timeout_ms,
+        "hint" => "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations",
+    )
+end
+
 function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = req.id
     code = req.code
@@ -311,8 +423,6 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
     max_session_history = effective_limit(ctx.server_state, :max_history_entries, MAX_SESSION_HISTORY_SIZE)
 
     # Concurrent eval slot acquisition via EvalGate (spec REQ-RPL-047d).
-    # If the cap is reached, acquire! queues and blocks until a slot
-    # opens. If the queue is full (2× limit), the eval is rejected immediately.
     state = ctx.server_state
     if !isnothing(state)
         acquire!(state.gate) ||
@@ -320,20 +430,10 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
                         status_flags=String["error", "concurrency-limit-reached"])]
     end
 
-    # Timeout state: timed_out is set by the Timer callback before firing InterruptException.
-    # timeout_timer is closed (cancelled) in the finally block when the eval completes.
-    timed_out = Ref(false)
-    timeout_timer = Ref{Union{Timer, Nothing}}(nothing)
-
     # For named sessions, eval_id is captured after try_begin_eval! increments it.
-    # Nothing for ephemeral sessions (they have no persistent identity).
     this_eval_id = Ref{Union{Int, Nothing}}(nothing)
 
-    # Run the eval body on a DEDICATED child task. Timeout, interrupt-op, and
-    # shutdown InterruptExceptions all target this child (via session.eval_task
-    # and register_active_eval!), so a late/racing interrupt can never bleed into
-    # the connection task's next request or the receive loop. A schedule against
-    # a finished child throws harmlessly into the empty catch below.
+    # Run the eval body on a DEDICATED child task.
     eval_task = @task with_session_eval(ctx, request_id) do session
         eval_module = session_module(session)
         module_path = req.module_path
@@ -352,8 +452,6 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
         end
 
         core_result = if allow_stdin && session isa NamedSession
-            # Reuse a persistent Pipe + feeder Task for this session to avoid
-            # per-eval libuv handle + Task allocation.
             pipe = _ensure_stdin_feeder!(session)
             redirect_stdin(pipe.out) do
                 _run_eval_core(eval_module, request_id, code, max_repr_bytes; silent, max_output_bytes)
@@ -370,115 +468,22 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
         core_result.messages
     end
     eval_task.sticky = true
-    # Register the child (not the connection task) so shutdown interrupts it and
-    # close_server! waits on the eval itself.
     !isnothing(state) && register_active_eval!(state, eval_task)
-    # Start the child BEFORE arming the timer: a timer that fires first would
-    # enqueue the child with an exception, making our own schedule(eval_task) throw.
     schedule(eval_task)
 
-    if !isnothing(effective_timeout_ms)
-        timeout_timer[] = Timer(effective_timeout_ms / 1000.0) do _
-            istaskdone(eval_task) && return
-            timed_out[] = true
-            try
-                schedule(eval_task, InterruptException(); error=true)
-            catch
-            end
-        end
-    end
-
-    # Build a timeout terminal that tells the caller the limit is configurable.
-    timeout_response() = response_message(
-        request_id,
-        "status" => ["done", "error", "timeout"],
-        "err" => isnothing(effective_timeout_ms) ? "eval timed out" : "eval timed out after $(effective_timeout_ms) ms",
-        "max-eval-time-ms" => effective_timeout_ms,
-        "hint" => "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations",
-    )
-
-    # Streaming stdout: periodic flush of partial output during long-running
-    # evals. When ctx.emit_stream is set, a timer periodically reads the eval
-    # task's stdout buffer and pushes interim "out" messages to the stream.
-    # This allows clients to observe stdout without waiting for completion.
-    #
-    # NOTE: This is currently stubbed. The streaming timer has a fundamental
-    # issue with Julia's single-threaded event loop — the eval task and the
-    # timer callback run on the same thread, so the timer can't fire while
-    # the eval is running. A proper fix requires running the eval on a
-    # separate thread (e.g., Threads.@spawn) or using a pipe-based approach
-    # with Base.redirect_stdout and a reader task. See REPLy_jl-3oz.
-    stream_timer = Ref{Union{Timer, Nothing}}(nothing)
-    had_streamed_output = Ref(false)
-
     try
-        msgs = try
-            if !isnothing(effective_timeout_ms)
-                # Bounded wait for task completion. Polls with scheduler yield
-                # so the timeout timer can fire. If the timer fires and the task
-                # still hasn't completed (non-interruptible ccall, BLAS, etc.),
-                # release the slot immediately and return a timeout response.
-                while !istaskdone(eval_task) && !timed_out[]
-                    yield()
-                    sleep(0.01)
-                end
-                if istaskdone(eval_task)
-                    fetch(eval_task)
-                else
-                    [timeout_response()]
-                end
-            else
-                fetch(eval_task)
-            end
-        catch ex
-            # fetch wraps a failed task's exception in TaskFailedException.
-            # InterruptException may escape _run_eval_core if it fires in the narrow
-            # window during redirect setup rather than inside eval_parsed itself.
-            inner = ex isa TaskFailedException ? ex.task.exception : ex
-            inner isa InterruptException || rethrow()
-            if timed_out[]
-                [timeout_response()]
-            else
-                [response_message(request_id, "status" => ["done", "interrupted"])]
-            end
-        end
+        msgs = run_with_timeout(eval_task, effective_timeout_ms, request_id)
 
-        # Replace any "interrupted" terminal with a "timeout" response when the timer fired.
-        if timed_out[]
-            msgs = map(msgs) do m
-                if haskey(m, "status") && "interrupted" in m["status"]
-                    timeout_response()
-                else
-                    m
-                end
-            end
-        end
+        # Single annotation pass replaces 3× sequential map+merge passes.
+        eid = this_eval_id[]
+        ephemeral_flag = !(ctx.session isa NamedSession)
+        msgs = annotate_terminal!(msgs, request_id;
+            eval_id = eid,
+            ephemeral = ephemeral_flag,
+        )
 
-        # Annotate the terminal message with eval-id for named sessions.
-        if !isnothing(this_eval_id[])
-            eid = this_eval_id[]
-            msgs = map(msgs) do m
-                haskey(m, "status") ? merge(m, Dict{String,Any}("eval-id" => eid)) : m
-            end
-        end
-
-        # Advisory flag: an eval without a `session` field runs in a throwaway
-        # anonymous module whose state does not persist across requests. The
-        # SessionMiddleware materializes this as an ephemeral `ModuleSession`
-        # (or `ctx.session` is `nothing` when eval runs standalone). Mark the
-        # terminal frame with `ephemeral: true` so callers know they need a named
-        # session for persistence (a common trip-hazard). See REPLy_jl-34m.
-        if !(ctx.session isa NamedSession)
-            msgs = map(msgs) do m
-                haskey(m, "status") ? merge(m, Dict{String,Any}("ephemeral" => true)) : m
-            end
-        end
-
-        msgs
+        return msgs
     finally
-        # Cancel the timeout timer (no-op if already fired or never started).
-        t = timeout_timer[]
-        !isnothing(t) && close(t)
         if !isnothing(state)
             unregister_active_eval!(state, eval_task)
             release!(state.gate)
