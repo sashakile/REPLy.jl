@@ -287,21 +287,13 @@ function with_session_eval(f::Function, ctx::RequestContext, request_id::Abstrac
     end
 end
 
-function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
-    request_id = String(request["id"])
-    code = get(request, "code", "")
-    code isa AbstractString || return [error_response(request_id, "code must be a string")]
-
-    # timeout-ms validation: must be a positive integer when present.
-    timeout_ms = get(request, "timeout-ms", nothing)
-    if !isnothing(timeout_ms)
-        if !(timeout_ms isa Integer)
-            return [error_response(request_id, "timeout-ms must be a positive integer")]
-        end
-        if timeout_ms < 1
-            return [error_response(request_id, "timeout-ms must be ≥ 1")]
-        end
-    end
+function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
+    request_id = req.id
+    code = req.code
+    timeout_ms = req.timeout_ms
+    silent = req.silent
+    allow_stdin = req.allow_stdin
+    store_history = req.store_history
 
     # Effective timeout: per-request value capped at server max, or server max alone.
     max_eval_time = effective_limit(ctx.server_state, :max_eval_time_ms, nothing)
@@ -314,10 +306,6 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     else
         nothing
     end
-
-    silent        = get(request, "silent", false) === true
-    allow_stdin   = get(request, "allow-stdin", true) !== false
-    store_history = get(request, "store-history", true) !== false
 
     max_output_bytes    = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))
     max_session_history = effective_limit(ctx.server_state, :max_history_entries, MAX_SESSION_HISTORY_SIZE)
@@ -348,7 +336,7 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
     # a finished child throws harmlessly into the empty catch below.
     eval_task = @task with_session_eval(ctx, request_id) do session
         eval_module = session_module(session)
-        module_path = get(request, "module", nothing)
+        module_path = req.module_path
         if module_path isa AbstractString
             resolved = resolve_module(module_path)
             if isnothing(resolved)
@@ -515,5 +503,11 @@ end
 
 function handle_message(mw::EvalMiddleware, msg, next, ctx::RequestContext)
     get(msg, "op", nothing) == "eval" || return next(msg)
-    return eval_responses(ctx, msg; max_repr_bytes=mw.max_repr_bytes)
+    req = try
+        parse_eval_request(msg)
+    catch ex
+        ex isa ArgumentError || rethrow()
+        return [error_response(String(get(msg, "id", "")), ex.msg)]
+    end
+    return eval_responses(ctx, req; max_repr_bytes=mw.max_repr_bytes)
 end

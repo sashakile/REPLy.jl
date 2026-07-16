@@ -28,6 +28,7 @@ export ResourceLimits
 export effective_limit
 export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware
 export MiddlewareDescriptor, descriptor, validate_stack
+export EvalRequest, parse_eval_request
 export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
@@ -45,6 +46,7 @@ include("session/manager.jl")
 include("io_capture.jl")
 include("middleware/core.jl")
 include("middleware/audit.jl")
+include("middleware/eval_request.jl")
 include("middleware/eval.jl")
 include("middleware/describe.jl")
 include("middleware/load_file.jl")
