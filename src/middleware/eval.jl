@@ -408,6 +408,20 @@ function eval_responses(ctx::RequestContext, request::AbstractDict; max_repr_byt
         "hint" => "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations",
     )
 
+    # Streaming stdout: periodic flush of partial output during long-running
+    # evals. When ctx.emit_stream is set, a timer periodically reads the eval
+    # task's stdout buffer and pushes interim "out" messages to the stream.
+    # This allows clients to observe stdout without waiting for completion.
+    #
+    # NOTE: This is currently stubbed. The streaming timer has a fundamental
+    # issue with Julia's single-threaded event loop — the eval task and the
+    # timer callback run on the same thread, so the timer can't fire while
+    # the eval is running. A proper fix requires running the eval on a
+    # separate thread (e.g., Threads.@spawn) or using a pipe-based approach
+    # with Base.redirect_stdout and a reader task. See REPLy_jl-3oz.
+    stream_timer = Ref{Union{Timer, Nothing}}(nothing)
+    had_streamed_output = Ref(false)
+
     try
         msgs = try
             fetch(eval_task)

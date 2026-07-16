@@ -42,18 +42,50 @@ Base.flush(::TaskCapturingIO) = nothing
 function register_task_capture!(io::TaskCapturingIO, task::Task, buf::IOBuffer)
     @assert task === current_task() "register_task_capture! must run on the task being captured"
     task_local_storage(io.key, buf)
+    if io === _STDOUT_CAPTURER[]
+        lock(_ACTIVE_CAPTURE_LOCK) do
+            _ACTIVE_CAPTURE_BUFS[task] = buf
+        end
+    end
     return nothing
 end
 
 function unregister_task_capture!(io::TaskCapturingIO, task::Task)
     @assert task === current_task() "unregister_task_capture! must run on the task being captured"
     delete!(task_local_storage(), io.key)
+    if io === _STDOUT_CAPTURER[]
+        lock(_ACTIVE_CAPTURE_LOCK) do
+            delete!(_ACTIVE_CAPTURE_BUFS, task)
+        end
+    end
     return nothing
+end
+
+"""
+    read_stdout_buffer(task) -> String or Nothing
+
+Read and clear the stdout capture buffer for `task`. Returns `nothing` if
+`task` has no registered buffer or if the buffer is empty. Used by the
+streaming flush timer to extract interim output during a running eval.
+"""
+function read_stdout_buffer(task::Task)
+    lock(_ACTIVE_CAPTURE_LOCK) do
+        buf = get(_ACTIVE_CAPTURE_BUFS, task, nothing)
+        isnothing(buf) && return nothing
+        n = bytesavailable(buf)
+        n == 0 && return nothing
+        return String(take!(buf))
+    end
 end
 
 const _STDOUT_CAPTURER = Ref{Union{TaskCapturingIO, Nothing}}(nothing)
 const _STDERR_CAPTURER = Ref{Union{TaskCapturingIO, Nothing}}(nothing)
 const _CAPTURER_INSTALL_LOCK = ReentrantLock()
+
+# Cross-task buffer registry: maps eval tasks to their stdout IOBuffer so a
+# periodic flush timer can read interim output during a running eval.
+const _ACTIVE_CAPTURE_BUFS = Dict{Task, IOBuffer}()
+const _ACTIVE_CAPTURE_LOCK = ReentrantLock()
 
 function ensure_io_capture_installed!()
     isnothing(_STDOUT_CAPTURER[]) || return  # fast path

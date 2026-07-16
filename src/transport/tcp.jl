@@ -90,17 +90,38 @@ function handle_client!(socket::IO, handler::Function;
                 end
             end
 
-            responses = try
-                handler(msg)
-            catch ex
-                [internal_error_response(safe_request_id(msg), ex; bt=catch_backtrace())]
+            # Create a streaming channel for this request so eval can emit
+            # interim "out" messages during long-running evals.
+            stream = Channel{Dict{String, Any}}(32)
+
+            # Spawn a handler task that uses the stream channel.
+            handler_task = @async begin
+                try
+                    responses = handler(msg, stream)
+                    for response in responses
+                        put!(stream, response)
+                    end
+                finally
+                    close(stream)
+                end
             end
 
-            for response in responses
+            # Read from the stream channel and send each message as it arrives.
+            # This allows the client to see partial stdout during long evals.
+            for response in stream
                 try
                     send!(transport, response)
                 catch ex
                     is_connection_closed(ex) && return nothing
+                    rethrow()
+                end
+            end
+
+            # Wait for the handler task to finish (catch any unhandled errors).
+            try
+                fetch(handler_task)
+            catch ex
+                if !is_connection_closed(ex)
                     rethrow()
                 end
             end
