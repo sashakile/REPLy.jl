@@ -65,7 +65,7 @@ function replyc_print_eval_responses(responses)
     for msg in responses
         haskey(msg, "out") && print(msg["out"])
         haskey(msg, "err") && !haskey(msg, "status") && print(stderr, msg["err"])
-        if haskey(msg, "value") && !isnothing(msg["value"])
+        if haskey(msg, "value") && !isnothing(msg["value"]) && msg["value"] != "nothing"
             println(msg["value"])
         elseif haskey(msg, "repr-error")
             println("<repr failed: $(msg["repr-error"])>")
