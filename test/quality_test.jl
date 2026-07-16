@@ -7,9 +7,10 @@ using JET
         ambiguities = true,
         unbound_args = true,
         undefined_exports = true,
-        # stale_deps disabled: Scratch is a [deps] used by deps/build.jl, not by
-        # REPLy's source code, so Aqua flags it as stale. Available Aqua v0.8
-        # does not support `ignore` kwarg to exclude it.
+        # persistent_tasks disabled: REPLy is a path-based dependency (not registered)
+        # so the precompilation wrapper can't properly test it. Also, transitive deps
+        # like Revise/JET create persistent tasks that block precompilation.
+        persistent_tasks = false,
         stale_deps = false,
         deps_compat = true,
         piracies = true,
