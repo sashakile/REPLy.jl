@@ -122,8 +122,9 @@ end
             assert_conformance(error_msgs, "e2e-handler-error")
             @test length(error_msgs) == 1
             @test Set(only(error_msgs)["status"]) == Set(["done", "error"])
-            @test only(error_msgs)["err"] == "transport boom"
-            @test only(error_msgs)["ex"]["message"] == "transport boom"
+            @test occursin("Internal server error", only(error_msgs)["err"])
+            @test haskey(only(error_msgs), "correlation-id")
+            @test !haskey(only(error_msgs), "ex")
 
             send_request(sock, Dict("op" => "eval", "id" => "e2e-after-error", "code" => "1 + 2"))
             survivor_msgs = collect_until_done(sock)

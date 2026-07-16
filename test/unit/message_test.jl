@@ -128,14 +128,18 @@
                 msgs = collect_until_done(client)
 
                 @test length(msgs) == 1
-                @test only(msgs)["err"] == "transport boom"
+                @test occursin("Internal server error", only(msgs)["err"])
+                @test haskey(only(msgs), "correlation-id")
+                @test !haskey(only(msgs), "ex")
 
                 # Second request also works — connection stays open
                 send_request(client, Dict("id" => "e2", "op" => "eval", "code" => "2 + 2"))
                 second_msgs = collect_until_done(client)
 
                 @test length(second_msgs) == 1
-                @test only(second_msgs)["err"] == "transport boom"
+                @test occursin("Internal server error", only(second_msgs)["err"])
+                @test haskey(only(second_msgs), "correlation-id")
+                @test !haskey(only(second_msgs), "ex")
             finally
                 isopen(client) && close(client)
                 wait(server_task)
