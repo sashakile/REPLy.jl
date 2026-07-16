@@ -117,12 +117,27 @@ function handle_client!(socket::IO, handler::Function;
                 end
             end
 
-            # Wait for the handler task to finish (catch any unhandled errors).
+            # Wait for the handler task to finish and handle any errors.
             try
                 fetch(handler_task)
             catch ex
-                if !is_connection_closed(ex)
-                    rethrow()
+                if is_connection_closed(ex)
+                    return nothing
+                end
+                # Handler threw — return error response, then continue.
+                actual_ex = ex isa TaskFailedException ? ex.task.exception : ex
+                request_id = safe_request_id(msg)
+                error_resp = error_response(
+                    request_id,
+                    exception_message(actual_ex);
+                    status_flags=String["error"],
+                    ex=actual_ex,
+                    bt=(ex isa TaskFailedException ? ex.task.backtrace : catch_backtrace()),
+                )
+                try
+                    send!(transport, error_resp)
+                catch
+                    return nothing
                 end
             end
         end

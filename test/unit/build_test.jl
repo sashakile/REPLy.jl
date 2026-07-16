@@ -22,6 +22,14 @@
     content = read(launcher, String)
     @test occursin("--project", content)
 
+    # Verify the launcher uses the captured Julia binary path, not bare `julia`.
+    # Base.julia_cmd()[1] returns the full path to the Julia executable (e.g.
+    # /usr/bin/julia), and the build script must embed this at compile time so
+    # the launcher works regardless of PATH or runtime julia resolution.
+    julia_exe = Base.julia_cmd()[1]
+    @test occursin(julia_exe, content)
+    @test !occursin("exec julia ", content)
+
     # Verify the scratch env was created and is fully resolvable — a
     # Manifest.toml alone doesn't prove REPLy actually resolves from it.
     scratch_dir = joinpath(DEPOT_PATH[1], "scratchspaces", "d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51", "env")
@@ -69,6 +77,12 @@ end
         # real `using REPLy` through the pinned environment.
         help_output = read(`$launcher --help`, String)
         @test occursin("replyc", help_output)
+
+        # Verify interpreter pin: the launcher must embed the captured Julia
+        # binary path, not bare `julia` (regression guard for R1).
+        launcher_content = read(launcher, String)
+        @test occursin(Base.julia_cmd()[1], launcher_content)
+        @test !occursin("exec julia ", launcher_content)
     finally
         empty!(DEPOT_PATH)
         append!(DEPOT_PATH, old_depot_path)

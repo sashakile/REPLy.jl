@@ -121,7 +121,7 @@ end
         server_task = @async begin
             socket = accept(listener)
             try
-                REPLy.handle_client!(socket, msg -> [REPLy.done_response(String(get(msg, "id", "")))];
+                REPLy.handle_client!(socket, (msg, _) -> [REPLy.done_response(String(get(msg, "id", "")))];
                     rate_limit_per_min=2,
                 )
             finally
