@@ -1,6 +1,7 @@
 module REPLy
 
 using Dates
+using PrecompileTools: @setup_workload, @compile_workload
 using JSON3
 using REPL
 using Sockets
@@ -63,5 +64,39 @@ protocol_name() = "REPLy"
 
 """Return a human-readable package version string."""
 version_string() = string(pkgversion(REPLy))
+
+# Precompile the first-request hot path so first-use latency (TTFX) is paid at
+# package build time instead of on the first client request.
+#
+# The eval op materialises an anonymous session module via `Core.eval`, which
+# Julia forbids during precompilation. We therefore drive the middleware stack
+# with request shapes that exercise dispatch, validation, and response
+# formatting without executing user code, then cover the eval path with
+# `precompile` directives (inference only, no evaluation).
+@setup_workload begin
+    @compile_workload begin
+        handler = build_handler()
+        # Non-eval ops traverse the middleware dispatch chain without
+        # materialising a session module (which `Core.eval` would forbid during
+        # precompilation). The unknown op falls through every middleware layer,
+        # precompiling the full recursive tuple-dispatch tail.
+        handler(Dict("op" => "describe", "id" => "pc-describe"))
+        handler(Dict("op" => "ping", "id" => "pc-ping"))
+        handler(Dict("op" => "frobnicate", "id" => "pc-unknown"))
+        for msg in (
+            Dict("op" => "describe", "id" => "pc-v"),
+            Dict{String, String}(),
+        )
+            validate_request(msg)
+        end
+    end
+    # The eval execution path cannot run during precompilation (it evals user
+    # code into a fresh anonymous module), so cover it with inference-only
+    # `precompile` directives instead.
+    precompile(_run_eval_core, (Module, String, String, Int))
+    precompile(eval_responses, (RequestContext, Dict{String, String}))
+    precompile(lookup_responses, (RequestContext, Dict{String, String}))
+    precompile(buffered_output_messages, (String, String, String))
+end
 
 end
