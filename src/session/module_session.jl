@@ -76,6 +76,7 @@ mutable struct NamedSession
     id::String
     name::String
     session_mod::Module
+    trusted::Bool
     created_at::Float64
     state::SessionState
     eval_task::Union{Task, Nothing}
@@ -90,9 +91,9 @@ mutable struct NamedSession
     stdin_feeder::Union{Task, Nothing}
 end
 
-function NamedSession(id::String, name::String, mod::Module)
+function NamedSession(id::String, name::String, mod::Module; trusted::Bool=false)
     now = time()
-    s = NamedSession(id, name, mod, now, SessionIdle, nothing, now,
+    s = NamedSession(id, name, mod, trusted, now, SessionIdle, nothing, now,
                      ReentrantLock(), ReentrantLock(),
                      Channel{String}(MAX_STDIN_BUFFER_SIZE),
                      Any[], 0, 0, nothing, nothing)
@@ -195,10 +196,17 @@ session_eval_id(session::NamedSession) = lock(session.lock) do; session.eval_id;
 """
     session_module_name(session)
 
-Return the module name for `session`. Always `"<anonymous>"` for light sessions,
-since they are backed by gensym'd anonymous modules.
+Return the module name for `session`. Returns `"Main"` for trusted sessions,
+`"<anonymous>"` for light sessions backed by gensym'd anonymous modules.
 """
-session_module_name(::NamedSession) = "<anonymous>"
+session_module_name(s::NamedSession) = s.trusted ? "Main" : "<anonymous>"
+
+"""
+    is_trusted(session)
+
+Return `true` if `session` is a trusted session backed by `Main`.
+"""
+is_trusted(session::NamedSession) = session.trusted
 
 """
     transition_session_state!(session, new_state)
