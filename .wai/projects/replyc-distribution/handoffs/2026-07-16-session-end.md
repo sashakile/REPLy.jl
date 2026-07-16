@@ -41,11 +41,10 @@ phase: implement
 ○ REPLy_jl-gm2i ● P2 Step 7b: Add correlation ids + server-side error logging (improvement)
 ○ REPLy_jl-jys ● P2 Step 13b: Drop MCP loopback hop — use in-process handler
 ○ REPLy_jl-n4mu ● P2 Step 13a: Split mcp_adapter.jl god-file into modules
-○ REPLy_jl-puwy ● P2 [bug] Part C: Fix bare catch in safe_render and _update_history!
 ○ REPLy_jl-hsf ● P3 Part C: Optimize read_bounded_line — chunked read
 
 --------------------------------------------------------------------------------
-Total: 8 issues (8 open, 0 in progress)
+Total: 7 issues (7 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
 ```
