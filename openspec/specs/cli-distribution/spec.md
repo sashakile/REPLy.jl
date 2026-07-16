@@ -27,27 +27,24 @@ no explicit user opt-in.
 - **THEN** `deps/build.jl` runs automatically
 - **AND** `<depot>/bin/replyc` exists and is executable
 
-### Requirement: Launcher pinning via `--project` to the package directory
+### Requirement: Launcher pinning via scratch environment
 
 The `deps/build.jl` script SHALL create a private, UUID-namespaced scratch
 environment (via `Scratch.jl`) that preserves the REPLy dependency snapshot at
-build time for reference. The generated launcher script SHALL use
-`--project=<pkg_dir>` (where `<pkg_dir>` is REPLy's project directory at build
-time) so that the launcher always resolves the same REPLy version. Because
-`--project` takes precedence over any `JULIA_PROJECT` set in the invoking
-shell, the launcher is immune to environment drift from changes to the active
-Julia project.
+build time. The generated launcher script SHALL resolve the REPLy package from
+this scratch environment by embedding `--project=<scratch_env>` in the exec
+line. Because the scratch environment is immutable after build, the launcher
+is immune to environment drift from changes to the active Julia project.
 
 #### Scenario: Launcher works after global env changes
 - **WHEN** a user installs REPLy and builds the launcher
 - **WHEN** the user later changes their global Julia environment (adds/removes packages)
-- **THEN** `replyc eval "1+1"` still resolves the original REPLy snapshot and works correctly
+- **THEN** `replyc eval "1+1"` still resolves the original REPLy snapshot from the scratch environment and works correctly
 
 #### Scenario: Launcher ignores outer `JULIA_PROJECT`
 - **WHEN** a user sets `JULIA_PROJECT=/some/other/project` in their shell
 - **WHEN** they invoke `replyc eval "1+1"`
-- **THEN** the launcher's `--project=<pkg_dir>` overrides the outer env and
-  resolves REPLy from the build-time project directory
+- **THEN** the launcher's scratch-env resolution overrides the outer env and resolves REPLy from the build-time snapshot
 
 ### Requirement: Overwrite guard for existing `replyc` file
 
