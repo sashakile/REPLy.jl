@@ -1,24 +1,15 @@
 using Test
 using JSON3
 using REPLy
-using Sockets
 
 @testset "MCP Server (stdio)" begin
     manager = REPLy.SessionManager()
     default_session = REPLy.mcp_ensure_default_session!(manager)
 
-    # Helper to run a single request-response cycle through serve_mcp logic
+    # Helper to run a single request-response cycle through in-process handler
     function test_mcp_rpc(method, params=Dict(); id=1)
-        # For julia_eval, we need a running server.
-        server = serve(host=ip"127.0.0.1", port=0, manager=manager)
-        port = server_port(server)
-
-        try
-            resp = REPLy.process_mcp_request(method, params, id, manager, default_session, port)
-            return resp
-        finally
-            close(server)
-        end
+        handler = REPLy.build_handler(; manager=manager)
+        return REPLy.process_mcp_request(method, params, id, manager, default_session, handler)
     end
 
     @testset "Handshake" begin

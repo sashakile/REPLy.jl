@@ -111,48 +111,31 @@ function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::S
     end
 end
 
-# --- Transport dispatch ---
+# --- In-process dispatch (direct handler call, no TCP loopback) ---
 
-# Execute a Reply `request` over the internal loopback transport and convert the
-# collected reply stream to an MCP result via `to_result`. Shared by all live
-# tools (eval, complete, lookup, load-file, interrupt).
-function mcp_dispatch_over_transport(request::AbstractDict, port::Integer, to_result::Function)
-    try
-        client = Client("127.0.0.1", port)
-        try
-            send!(client, request)
-            msgs = collect_reply_stream(client.transport, String(request["id"]))
-            return to_result(msgs)
-        finally
-            disconnect(client)
-        end
-    catch ex
-        mcp_log("Internal request error: $ex")
-        return error_result("Internal server error during request")
-    end
-end
-
-# Build a Reply request via `build_request` (an MCP-args → Reply-request mapper),
-# then dispatch it over the transport, converting the result with `to_result`.
-# ArgumentErrors from `build_request` are surfaced as MCP error results.
-function mcp_dispatch_tool(build_request::Function, args, default_session, port::Integer, to_result::Function)
+# Execute a Reply `request` through the handler closure directly and convert the
+# response vector to an MCP result via `to_result`. Shared by all live tools
+# (eval, complete, lookup, load-file, interrupt).
+function mcp_dispatch_direct(build_request::Function, args, default_session, handler::Function, to_result::Function)
     request = try
         build_request("mcp-tool-$(time_ns())", args; default_session)
     catch ex
         ex isa ArgumentError || rethrow()
         return error_result(ex.msg)
     end
-    return mcp_dispatch_over_transport(request, port, to_result)
+    msgs = handler(request)
+    return to_result(msgs)
 end
 
-function mcp_dispatch_eval(args, default_session, port)
+function mcp_dispatch_eval_direct(args, default_session, handler::Function)
     request = try
         mcp_eval_request("mcp-eval-$(time_ns())", args; default_session)
     catch ex
         ex isa ArgumentError || rethrow()
         return error_result(ex.msg)
     end
-    return mcp_dispatch_over_transport(request, port, reply_stream_to_mcp_result)
+    msgs = handler(request)
+    return reply_stream_to_mcp_result(msgs)
 end
 
 # --- JSON-RPC 2.0 helpers ---
@@ -177,7 +160,7 @@ end
 
 # --- JSON-RPC 2.0 request dispatch ---
 
-function process_mcp_request(method::AbstractString, params, id, manager, default_session, port)
+function process_mcp_request(method::AbstractString, params, id, manager, default_session, handler::Function)
     if method == "initialize"
         return mcp_rpc_result(id, mcp_initialize_result())
     elseif method == "tools/list"
@@ -188,15 +171,15 @@ function process_mcp_request(method::AbstractString, params, id, manager, defaul
         args = get(args_container, "arguments", Dict{String, Any}())
 
         if name == "julia_eval"
-            return mcp_rpc_result(id, mcp_dispatch_eval(args, default_session, port))
+            return mcp_rpc_result(id, mcp_dispatch_eval_direct(args, default_session, handler))
         elseif name == "julia_complete"
-            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_complete_request, args, default_session, port, reply_stream_to_json_result))
+            return mcp_rpc_result(id, mcp_dispatch_direct(mcp_complete_request, args, default_session, handler, reply_stream_to_json_result))
         elseif name == "julia_lookup"
-            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_lookup_request, args, default_session, port, reply_stream_to_json_result))
+            return mcp_rpc_result(id, mcp_dispatch_direct(mcp_lookup_request, args, default_session, handler, reply_stream_to_json_result))
         elseif name == "julia_load_file"
-            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_load_file_request, args, default_session, port, reply_stream_to_mcp_result))
+            return mcp_rpc_result(id, mcp_dispatch_direct(mcp_load_file_request, args, default_session, handler, reply_stream_to_mcp_result))
         elseif name == "julia_interrupt"
-            return mcp_rpc_result(id, mcp_dispatch_tool(mcp_interrupt_request, args, default_session, port, reply_stream_to_json_result))
+            return mcp_rpc_result(id, mcp_dispatch_direct(mcp_interrupt_request, args, default_session, handler, reply_stream_to_json_result))
         else
             result = mcp_call_tool(String(name), args, manager)
             return mcp_rpc_result(id, result)
@@ -215,30 +198,63 @@ end
 # --- Entry point ---
 
 """
-    serve_mcp(; manager=SessionManager(), middleware=default_middleware_stack(), limits=ResourceLimits(), max_message_bytes=DEFAULT_MAX_MESSAGE_BYTES)
+    serve_mcp(; manager=SessionManager(), middleware=default_middleware_stack(), limits=ResourceLimits(), max_message_bytes=DEFAULT_MAX_MESSAGE_BYTES, use_socket=false)
 
 Start a stdio-based MCP server. This function blocks, reading JSON-RPC 2.0
 messages from `stdin` and writing responses to `stdout`.
 
 It automatically:
-1. Starts a background REPLy TCP server on a random loopback port.
-2. Handles the MCP `initialize` and `tools/list` handshake.
-3. Dispatches `tools/call` requests.
-4. Routes `julia_eval` to the background REPLy server.
+1. Builds an in-process handler via `build_handler` (no TCP loopback).
+2. Starts an idle-session sweeper for automatic session cleanup.
+3. Handles the MCP `initialize` and `tools/list` handshake.
+4. Dispatches `tools/call` requests through the in-process handler.
 5. Logs internal errors and diagnostic info to `stderr`.
 
 Use this as the entry point for integrating REPLy with MCP clients like
 Claude Desktop or VS Code extensions.
+
+# Keyword arguments
+- `use_socket`: If `true`, start a background REPLy TCP server on a random
+  loopback port and dispatch through it (legacy TCP loopback mode). This mode
+  is retained for testing and comparison. Default: `false`.
 """
 function serve_mcp(;
     manager::SessionManager=SessionManager(),
     middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(),
     limits::ResourceLimits=ResourceLimits(),
-    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES
+    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
+    use_socket::Bool=false,
 )
-    server = serve(; host=ip"127.0.0.1", port=0, manager, middleware, limits, max_message_bytes)
-    port = server_port(server)
-    mcp_log("REPLy internal server started on 127.0.0.1:$port")
+    state = ServerState(limits, max_message_bytes)
+
+    userver = nothing
+    handler = nothing
+
+    if use_socket
+        # Legacy TCP loopback mode — retained for testing and comparison.
+        userver = serve(; host=ip"127.0.0.1", port=0, manager, middleware, limits, max_message_bytes)
+        port = server_port(userver)
+        mcp_log("REPLy internal server started on 127.0.0.1:$port")
+        handler = function(msg::AbstractDict)
+            client = Client("127.0.0.1", port)
+            try
+                send!(client, msg)
+                return collect_until_done(client, String(msg["id"]))
+            finally
+                disconnect(client)
+            end
+        end
+    else
+        # In-process mode — call the handler closure directly, no TCP loopback.
+        stack = materialize_middleware_stack(middleware)
+        validation_errors = validate_stack(stack)
+        if !isempty(validation_errors)
+            throw(ArgumentError("middleware stack validation failed:\n  - " * join(validation_errors, "\n  - ")))
+        end
+        handler = build_handler(; manager, middleware=stack, state)
+        start_session_sweeper!(state, manager)
+        mcp_log("REPLy in-process handler initialized")
+    end
 
     default_session = mcp_ensure_default_session!(manager)
 
@@ -263,14 +279,17 @@ function serve_mcp(;
             id = get(req, "id", nothing)
             params = get(req, "params", Dict{String, Any}())
 
-            response = process_mcp_request(String(method), params, id, manager, default_session, port)
+            response = process_mcp_request(String(method), params, id, manager, default_session, handler)
             if !isnothing(response)
                 println(stdout, JSON3.write(response))
                 flush(stdout)
             end
         end
     finally
+        stop_session_sweeper!(state)
+        if !isnothing(userver)
+            close(userver)
+        end
         mcp_log("MCP server shutting down")
-        close(server)
     end
 end
