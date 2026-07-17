@@ -32,19 +32,22 @@ phase: implement
 
 ## Context
 
+### git_status
+
+```
+M  .beads/issues.jsonl
+```
+
 ### open_issues
 
 ```
-○ REPLy_jl-3o6 ● P2 Step 12: Add first-class REPLy.Client
 ○ REPLy_jl-4s1 ● P2 Step 14a: Add Windows CLI launcher (.bat/.cmd) (A6 ⚖️)
 ○ REPLy_jl-b24a ● P2 Step 14b: Add install self-verification (--verify flag) (A6 ⚖️)
-○ REPLy_jl-gm2i ● P2 Step 7b: Add correlation ids + server-side error logging (improvement)
 ○ REPLy_jl-jys ● P2 Step 13b: Drop MCP loopback hop — use in-process handler
-○ REPLy_jl-n4mu ● P2 Step 13a: Split mcp_adapter.jl god-file into modules
 ○ REPLy_jl-hsf ● P3 Part C: Optimize read_bounded_line — chunked read
 
 --------------------------------------------------------------------------------
-Total: 7 issues (7 open, 0 in progress)
+Total: 4 issues (4 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
 ```
