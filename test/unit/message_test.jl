@@ -1,3 +1,5 @@
+using JSON3
+
 @testset "message transport" begin
     @testset "framing and receive postconditions" begin
         @testset "send! serializes newline-delimited JSON" begin

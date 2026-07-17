@@ -621,8 +621,8 @@ function _update_history!(session::NamedSession, outcome::EvalOutcome, store_his
     try
         Core.eval(session_module(session), :(ans = $(QuoteNode(value))))
     catch ex
-        if ex isa MethodError
-            @debug "ans update skipped (non-quotable type)" value_type=typeof(value)
+        if ex isa MethodError || ex isa ErrorException
+            @debug "ans update skipped" value_type=typeof(value) exception_type=typeof(ex)
             return
         end
         rethrow()

@@ -1,5 +1,6 @@
 using Dates
 using UUIDs
+using JSON3
 
 @testset "Audit logging" begin
     make_entry(i; session_id=nothing, success=true, error=nothing) = REPLy.AuditLogEntry(

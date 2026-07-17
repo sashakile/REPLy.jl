@@ -35,26 +35,12 @@ replyc_host(opts) = get(opts, "--host", REPLYC_DEFAULT_HOST)
 replyc_port(opts) = parse(Int, get(opts, "--port", string(REPLYC_DEFAULT_PORT)))
 
 function replyc_send_and_collect(host::String, port::Int, request::Dict)
-    conn = connect(host, port)
+    client = Client(host, port)
     try
-        JSON3.write(conn, request)
-        write(conn, '\n')
-        flush(conn)
-        responses = Dict{String, Any}[]
-        while isopen(conn)
-            line = readline(conn)
-            if isempty(line)
-                eof(conn) && break
-                continue
-            end
-            msg = JSON3.read(line, Dict{String, Any})
-            get(msg, "id", "") == request["id"] || continue
-            push!(responses, msg)
-            "done" in get(msg, "status", String[]) && break
-        end
-        return responses
+        send!(client, request)
+        return collect_until_done(client, String(request["id"]))
     finally
-        close(conn)
+        disconnect(client)
     end
 end
 

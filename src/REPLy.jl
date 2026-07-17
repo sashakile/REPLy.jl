@@ -35,6 +35,8 @@ export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
     mcp_close_session_result, mcp_call_tool, MCP_DEFAULT_SESSION_NAME
 
+export Client, disconnect
+
 include("errors.jl")
 include("protocol/message.jl")
 include("session/module_session.jl")
@@ -67,6 +69,7 @@ include("mcp/requests.jl")
 include("mcp/results.jl")
 include("mcp/server.jl")
 include("replyc.jl")
+include("client.jl")
 
 """Return the canonical protocol name for this package."""
 protocol_name() = "REPLy"

@@ -118,14 +118,13 @@ end
 # tools (eval, complete, lookup, load-file, interrupt).
 function mcp_dispatch_over_transport(request::AbstractDict, port::Integer, to_result::Function)
     try
-        conn = connect(ip"127.0.0.1", port)
-        transport = JSONTransport(conn, ReentrantLock())
+        client = Client("127.0.0.1", port)
         try
-            send!(transport, request)
-            msgs = collect_reply_stream(transport, String(request["id"]))
+            send!(client, request)
+            msgs = collect_reply_stream(client.transport, String(request["id"]))
             return to_result(msgs)
         finally
-            close(transport)
+            disconnect(client)
         end
     catch ex
         mcp_log("Internal request error: $ex")

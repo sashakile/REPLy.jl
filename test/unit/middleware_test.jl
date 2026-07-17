@@ -1,6 +1,8 @@
 # Custom middleware used to exercise the tuple-based dispatch path in
 # build_handler: it delegates via next(msg) and then does work *after* next
 # returns (tags terminal frames), proving post-next wrappers still compose.
+using JSON3
+
 struct TagTerminalMiddleware <: REPLy.AbstractMiddleware end
 function REPLy.handle_message(::TagTerminalMiddleware, msg, next, ctx::REPLy.RequestContext)
     result = next(msg)

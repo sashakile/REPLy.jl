@@ -1,5 +1,16 @@
 using JSON3
 
+"""
+    send_request(client, msg::Dict)
+
+Send a JSON request to a REPLy server via the given `Client` or TCP socket.
+Deprecated: prefer `Client` and `send!` directly.
+"""
+function send_request(client::REPLy.Client, msg::Dict)
+    REPLy.send!(client, msg)
+    return nothing
+end
+
 function send_request(sock, msg::Dict)
     write(sock, JSON3.write(msg))
     write(sock, UInt8('\n'))
