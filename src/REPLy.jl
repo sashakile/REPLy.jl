@@ -62,7 +62,10 @@ include("middleware/session_ops.jl")
 include("middleware/unknown_op.jl")
 include("transport/tcp.jl")
 include("server.jl")
-include("mcp_adapter.jl")
+include("mcp/tools.jl")
+include("mcp/requests.jl")
+include("mcp/results.jl")
+include("mcp/server.jl")
 include("replyc.jl")
 
 """Return the canonical protocol name for this package."""
