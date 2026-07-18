@@ -7,9 +7,11 @@ This page tracks the implementation state of REPLy.jl against the canonical Open
     On this page **"verified" and "tested" mean covered by the automated test suite**
     (~95% coverage across unit, integration, and end-to-end layers) and checked against the
     OpenSpec definitions. It does **not** mean the project has had a manual security audit or
-    human code review — as the [home page](index.md) banner states, REPLy is entirely
-    LLM-generated and unaudited. Test coverage ≠ security audit; treat security-sensitive
+    human line-by-line code review. Test coverage ≠ security audit; treat security-sensitive
     deployments accordingly.
+
+    See the [methodology page](methodology.md) for a full description of the project's
+    development practices and what "AI-assisted" means in this context.
 
 ## Summary
 

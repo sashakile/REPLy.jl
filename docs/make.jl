@@ -22,6 +22,7 @@ makedocs(
             "Protocol Reference" => "reference-protocol.md",
         ],
         "Status" => "status.md",
+        "Methodology" => "methodology.md",
         "API"  => "api.md",
     ],
     checkdocs = :exports,

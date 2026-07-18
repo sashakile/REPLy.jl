@@ -1,7 +1,12 @@
 # REPLy.jl
 
-!!! warning "LLM-generated code"
-    This project is entirely LLM-generated code. It has not been manually reviewed or audited. Use at your own risk.
+!!! warning "AI-Assisted Development"
+    This project is built through a structured Human–AI pair-programming workflow:
+    specification-first design, test-driven implementation, multi-pass automated
+    review, and human approval at every decision point. The code has ~95%
+    automated test coverage but has **not** had a professional manual security
+    audit or human line-by-line code review.
+    [See the methodology page](methodology.md) for full details.
 
 **REPLy.jl** is a network REPL server for Julia. It exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively — similar to [nREPL](https://nrepl.org/) for Clojure.
 
