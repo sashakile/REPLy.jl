@@ -2,13 +2,18 @@
 # Development Methodology
 
 This page describes how REPLy.jl is built. It exists so that users, contributors, and
-the Julia community can evaluate the project's development practices for themselves.
+anyone evaluating the project can inspect the development practices for themselves.
 
-**TL;DR:** REPLy.jl uses AI-assisted development, not vibe-coding. Every line of code
+REPLy.jl is also an experiment: how far can a non-trivial codebase be pushed using
+this Human–AI pair-programming workflow? Every feature, defect, and refactoring is
+tracked as a [published bead ticket](https://charly-vibes.github.io/atril/?owner=sashakile&repo=REPLy.jl&branch=main&view=beads&mode=list)
+so the full lifecycle — from initial research through review to commit — is
+inspectable.
+
+**TL;DR:** REPLy.jl uses AI-assisted development. Every line of code
 passes through specification-first design, test-driven implementation, automated
 multi-agent review, and human approval before landing in `main`. The repo's warning
-banner is deliberately conservative; the pipeline behind it is more structured than
-the banner alone suggests.
+banner is deliberately conservative; the pipeline behind it is more structured than the banner alone suggests.
 
 ---
 
@@ -24,8 +29,7 @@ REPLy.jl is developed through a Human–AI pair programming workflow where:
   human oversight. Every code change and design decision is reviewed by the human
   before it is committed.
 
-This is not what the Julia community calls "vibe coding" — building software
-with an LLM without reviewing the output. The human is involved at every phase.
+The human is involved at every phase of the development cycle.
 
 ---
 
@@ -120,8 +124,8 @@ The development process is supported by a toolchain that enforces discipline:
 |---|---|
 | **[OpenSpec](https://openspec.dev/)** | Specification-driven development: capability specs, change proposals, validation |
 | **[wai](https://github.com/charly-vibes/wai)** | Reasoning capture: research, design decisions, handoffs, session continuity |
-| **[beads (bd)](https://github.com/charly-vibes/beads)** | Issue tracking: tasks, bugs, dependencies, status tracking |
-| **[pi](https://github.com/charly-vibes/pi)** | Coding agent (the tool generating this documentation under human supervision): executes research, implementation, and reviews |
+| **[beads (bd)](https://github.com/gastownhall/beads)** | Issue tracking: tasks, bugs, dependencies, status tracking |
+| **[pi](https://github.com/earendil-works/pi)** | Coding agent (the tool generating this documentation under human supervision): executes research, implementation, and reviews |
 | **Skill system** | Structured prompts for specific tasks: code review, TDD, design review, security audit, etc. |
 | **just** | Lightweight automation: test, lint, check, smoke test |
 | **GitHub Actions** | CI: automated testing, linting, coverage |
@@ -152,27 +156,10 @@ responsible AI-assisted development are met:
 
 - A human maintainer has full understanding of the generated code
 - Code is tested and CI runs
-- Documentation is concise, not AI-slop (reviewed for concision)
 - LLM-generated contributions are disclosed (this page is that disclosure)
 - The human communicates their own thoughts, not LLM-generated ones
 
 The current warning banner in the README and docs is a conservative disclosure.
-When the project approaches registration, the banner will be updated to reference
-this methodology page as the primary disclosure.
-
----
-
-## What This Is Not
-
-- **Not unsupervised**: Every code change and design decision is reviewed by the
-  human before it is committed. See the [Limitations](#limitations) section for
-  what this does and does not cover.
-- **Not a black box**: All research, design decisions, and review findings are
-  stored in the repository
-- **Not a replacement for manual audit**: The automated review pipeline does not
-  substitute for a professional security audit or human code review.
-  [See the earlier note](#the-code-is-tested-but-not-manually-audited) on what
-  is and isn't covered.
 
 ---
 
@@ -190,8 +177,7 @@ The pipeline is consistent but not infallible. Three caveats:
   `.beads/issues.jsonl`.
 - **Automated reviews are not a human audit.** Multi-pass AI reviews catch
   structural and logical problems, but they do not substitute for a professional
-  security audit conducted by a human expert. See the [What This Is Not](#what-this-is-not)
-  section above.
+  security audit conducted by a human expert.
 - **Not every file receives line-by-line human scrutiny.** Boilerplate artifacts
   (auto-generated handoff templates, CI scaffolding, configuration files) may
   enter the repository without individual human review. All substantive code and
