@@ -82,6 +82,41 @@
         @test REPLy.active_count(state.gate) == 0  # decremented after eval
     end
 
+    @testset "EvalGate transfers slots to queued waiters in FIFO order" begin
+        gate = REPLy.EvalGate(1)
+        @test REPLy.acquire!(gate)
+
+        acquired = Channel{Int}(2)
+        proceed  = Channel{Nothing}(2)
+        waiters  = Task[]
+
+        for id in 1:2
+            push!(waiters, @async begin
+                @test REPLy.acquire!(gate)
+                put!(acquired, id)
+                take!(proceed)
+                REPLy.release!(gate)
+            end)
+            @test timedwait(() -> length(gate.queue) == id, 1.0) === :ok
+        end
+
+        @test !REPLy.acquire!(gate)  # queue is capped at 2× max
+
+        REPLy.release!(gate)
+        @test REPLy.active_count(gate) == 1  # slot is reserved for the first waiter
+        @test timedwait(() -> isready(acquired), 1.0) === :ok
+        @test take!(acquired) == 1
+
+        put!(proceed, nothing)
+        @test timedwait(() -> isready(acquired), 1.0) === :ok
+        @test take!(acquired) == 2
+
+        put!(proceed, nothing)
+        @test timedwait(() -> all(istaskdone, waiters), 1.0) === :ok
+        @test REPLy.active_count(gate) == 0
+        @test isempty(gate.queue)
+    end
+
     @testset "create_named_session! rejected when session limit reached" begin
         limits  = REPLy.ResourceLimits(max_sessions=1)
         manager = REPLy.SessionManager()

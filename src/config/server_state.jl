@@ -6,7 +6,7 @@ Holds the configured `ResourceLimits` and runtime counters that span all client 
 
 - `limits::ResourceLimits` — resource limits configured at `serve()` time.
 - `max_message_bytes::Int` — maximum inbound message size (bytes).
-- `gate::EvalGate` — concurrent-eval slot manager (counter + FIFO queue + condition var).
+- `gate::EvalGate` — concurrent-eval slot manager (counter + directed FIFO handoff queue).
 """
 mutable struct SessionSweeper
     timer::Timer
