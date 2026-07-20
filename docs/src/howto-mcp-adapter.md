@@ -44,10 +44,12 @@ Replace `/path/to/REPLy.jl` with the actual path to the REPLy.jl repository. Onc
 
 !!! tip "You don't have to clone the repo"
     `--project=` just needs to point at **any Julia environment that has REPLy installed**.
-    If you installed REPLy with `Pkg.add("REPLy")` into an environment (rather than cloning),
-    point `--project` at that environment's directory — e.g. your default env
-    `--project=@v1.10`, or a dedicated one you created with `Pkg.activate("/path/to/env")`
-    then `Pkg.add("REPLy")`. Cloning is only needed for local development.
+    If you installed REPLy from its repository URL into an environment, point
+    `--project` at that environment's directory — for example, your default env
+    `--project=@v1.10`, or a dedicated environment created with
+    `Pkg.activate("/path/to/env")` followed by
+    `Pkg.add(url="https://github.com/sashakile/REPLy.jl")`. Cloning is only needed
+    for local development.
 
 ## Programmatic Usage
 
@@ -81,12 +83,10 @@ The adapter exposes 8 tools via `mcp_tools()`:
 | `julia_new_session` | Implemented | Create a new persistent session |
 | `julia_list_sessions` | Implemented | List active sessions |
 | `julia_close_session` | Implemented | Close a persistent session |
-| `julia_complete` | Stub | Tab completions (not yet implemented) |
-| `julia_lookup` | Stub | Symbol documentation (not yet implemented) |
-| `julia_load_file` | Stub | Load a Julia source file (not yet implemented) |
-| `julia_interrupt` | Stub | Interrupt in-flight evaluations (not yet implemented) |
-
-Stub tools return a structured error response rather than silently failing.
+| `julia_complete` | Implemented | Return tab completions |
+| `julia_lookup` | Implemented | Return symbol documentation |
+| `julia_load_file` | Implemented | Load and evaluate a Julia source file |
+| `julia_interrupt` | Implemented | Interrupt in-flight evaluations |
 
 ## Initializing the MCP Handshake
 

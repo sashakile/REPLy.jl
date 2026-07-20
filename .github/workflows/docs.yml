@@ -6,14 +6,13 @@ name: Docs
 on:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
-  pages: write      # required by actions/deploy-pages
-  id-token: write   # required by actions/deploy-pages
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -44,8 +43,11 @@ jobs:
 
   deploy:
     needs: build
-    if: ${{ success() }}
+    if: ${{ success() && github.event_name == 'push' }}
     runs-on: ubuntu-latest
+    permissions:
+      pages: write      # required by actions/deploy-pages
+      id-token: write   # required by actions/deploy-pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

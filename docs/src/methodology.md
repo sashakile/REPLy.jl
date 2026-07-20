@@ -1,50 +1,68 @@
 <!-- vale off -->
 # Development Methodology
 
-This page describes how REPLy.jl is built. It exists so that users, contributors, and
-anyone evaluating the project can inspect the development practices for themselves.
+This page explains how REPLy.jl uses AI-assisted development, which controls are
+automated, and where the process has limits. It exists so users and contributors can
+evaluate the project using inspectable evidence rather than broad assurances.
 
 REPLy.jl is also an experiment: how far can a non-trivial codebase be pushed using
-this Human–AI pair-programming workflow? Every feature, defect, and refactoring is
-tracked as a [published bead ticket](https://charly-vibes.github.io/atril/?owner=sashakile&repo=REPLy.jl&branch=main&view=beads&mode=list)
-so the full lifecycle — from initial research through review to commit — is
-inspectable.
+this Human–AI pair-programming workflow? Substantive features, defects, and
+refactorings are tracked as [published bead tickets](https://charly-vibes.github.io/atril/?owner=sashakile&repo=REPLy.jl&branch=main&view=beads&mode=list),
+with supporting specifications, research, tests, and review artifacts stored in the
+repository when the scope warrants them.
 
-**TL;DR:** REPLy.jl uses AI-assisted development. Every line of code
-passes through specification-first design, test-driven implementation, automated
-multi-agent review, and human approval before landing in `main`. The repo's warning
-banner is deliberately conservative; the pipeline behind it is more structured than the banner alone suggests.
+**TL;DR:** AI agents help research, design, implement, test, review, and document
+REPLy.jl. The maintainer directs the work, approves changes, and remains accountable
+for releases. The project uses tracked specifications, tickets, automated tests, CI,
+and structured review, but it has not received a professional security audit or a
+human line-by-line review of the entire codebase.
 
 ---
 
 ## What "AI-assisted" Means Here
 
-REPLy.jl is developed through a Human–AI pair programming workflow where:
+REPLy.jl is developed through a Human–AI pair-programming workflow where:
 
 - **The human** (the maintainer, Sasha) defines goals, makes architectural decisions,
-  reviews all output, pushes back on recommendations, and owns every line of code
-  that enters the repository.
-- **The AI** (a coding agent, currently pi) executes research, writes code under TDD
-  discipline, runs reviews, and produces documentation — but never acts without
-  human oversight. Every code change and design decision is reviewed by the human
-  before it is committed.
+  reviews proposed outcomes, accepts or rejects recommendations, and is accountable
+  for changes that enter the repository.
+- **AI coding agents** perform bounded tasks such as research, implementation,
+  testing, review, and documentation under repository instructions. Agent output is
+  treated as a proposal to verify, not as independent authority.
 
-The human is involved at every phase of the development cycle.
+The amount and kind of review scale with the change. Substantive code and design
+changes receive more scrutiny than generated artifacts or routine configuration.
+
+---
+
+## What Users Can Rely On
+
+- The repository publishes its source, specifications, issue history, tests, CI
+  configuration, research, and review artifacts for inspection.
+- Automated tests cover unit, integration, and end-to-end behavior. CI measures line
+  coverage for each tested commit; consult the coverage result for the release commit
+  rather than treating a percentage in prose as permanent.
+- TCP access is unauthenticated and evaluation executes arbitrary Julia code. The
+  security guidance and documented resource limits are operational requirements, not
+  evidence of sandboxing.
+- Automated review can find defects, but it does not replace an independent audit or
+  guarantee correctness.
 
 ---
 
 ## The Development Pipeline
 
-Each feature or fix passes through a formal pipeline before reaching `main`:
+The project uses the following pipeline for substantive features and fixes. Small
+documentation or configuration changes may use a reduced path appropriate to their
+risk.
 
 ### 1. Research Phase
 
-Before implementing a significant feature or fix, an AI agent performs structured
-research:
+For a significant feature or fix, an AI agent may perform structured research:
 
 - Scopes the problem, identifies constraints, and surveys existing solutions
 - Records findings in a research document (stored in `.wai/` with full rationale)
-- The human reviews the research and either approves, redirects, or rejects
+- The maintainer can approve, redirect, or reject the resulting recommendation
 
 *Example:* The [replyc distribution research](https://github.com/sashakile/REPLy.jl/blob/main/.wai/projects/replyc-distribution/research/2026-07-15-reply-jl-replyc-distribution-research-2026.md)
 tested three approaches (juliac compilation, deps/build.jl, Comonicon.jl),
@@ -52,15 +70,16 @@ documented trade-offs, and the human selected the approach.
 
 ### 2. Design Phase
 
-Architectural decisions are made explicitly:
+Architectural decisions are recorded explicitly when a change requires them:
 
 - Designs are documented with rationale, alternatives considered, and non-goals
-- The human approves the design before implementation begins
+- The maintainer approves the design direction before implementation begins
 - Key decisions are captured in `.wai/` for future reference
 
 ### 3. Specification Phase
 
-All capabilities are defined in **OpenSpec** files before implementation:
+System capabilities are defined in **OpenSpec** files, and capability-changing work
+uses validated change proposals:
 
 - `openspec/specs/` contains the canonical capability definitions (protocol, middleware,
   session management, transport, security, etc.)
@@ -69,19 +88,18 @@ All capabilities are defined in **OpenSpec** files before implementation:
 
 ### 4. Implementation Phase (TDD)
 
-Code follows **test-driven development**:
+Behavioral changes follow **test-driven development**:
 
 1. **Red**: Write a failing test that defines the desired behaviour
 2. **Green**: Write the minimal code to make the test pass
 3. **Refactor**: Clean up without changing behaviour
 
-Each ticket in the issue tracker maps to a single red→green→refactor cycle.
-Refactoring tasks are separate tickets from feature tasks.
+Tickets are scoped around red→green→refactor cycles, with behavior-preserving
+refactoring kept separate from feature changes.
 
 ### 5. Review Phase
 
-Every implementation passes through **multiple automated review passes** before
-the human sees it:
+The project selects review passes according to the change's risk and scope:
 
 | Review Pass | What it Checks |
 |---|---|
@@ -91,34 +109,36 @@ the human sees it:
 | **Documentation Review** | Accuracy, completeness, discoverability, AI-readiness |
 | **UX/DX Review** | API ergonomics, CLI usability, documentation friction |
 
-Reviews are conducted by AI agents operating under structured prompts (skills)
-that enforce specific evaluation criteria. Findings are reported back to the
-human, who triages them into actionable tickets.
+Reviews are conducted by AI agents operating under structured prompts (skills) with
+specific evaluation criteria. Findings are reported to the maintainer, who decides
+whether they require fixes, follow-up tickets, or no action. Not every change uses
+every pass in the table.
 
-### 6. Human Approval Gate
+### 6. Maintainer Approval
 
-Nothing enters the repository without human review:
+The maintainer is responsible for deciding what lands and what is released:
 
-- The human reads review findings, decides which to act on, and assigns priorities
-- The human approves or rejects each change proposal
-- The human makes the final call on design trade-offs (the documented research
+- Review findings are triaged and prioritized
+- Change proposals are approved, revised, or rejected
+- The maintainer makes the final call on design trade-offs (the documented research
   contains examples of the human pushing back on AI recommendations)
 
 ### 7. Quality Gates
 
-Before any code is committed:
+The repository uses gates at different lifecycle points:
 
-- **Automated tests** run (`just test`) — approximately 95% coverage across unit,
-  integration, and end-to-end layers (as reported by the test suite)
-- **Linting** runs (`just lint`) — spelling (`typos`) and prose (`vale`) checks
-- **Smoke tests** run (`just smoke-test`) — end-to-end TCP server validation
-- **CI** runs on every push via GitHub Actions
+- **Pre-commit hooks** check repository hygiene, spelling, and selected prose
+- **Pre-push hooks** run the Julia test suite when Julia or TOML files changed
+- **`just check`** runs workflow linting, spelling and prose checks, tests, the TCP
+  smoke test, and line coverage
+- **GitHub Actions CI** runs on pushes and pull requests
+- **Documenter** builds the documentation on pushes to `main` and pull requests
 
 ---
 
 ## Tooling
 
-The development process is supported by a toolchain that enforces discipline:
+The development process is supported by this toolchain:
 
 | Tool | Purpose |
 |---|---|
@@ -127,64 +147,32 @@ The development process is supported by a toolchain that enforces discipline:
 | **[wai](https://github.com/charly-vibes/wai)** | Reasoning capture: research, design decisions, handoffs, session continuity |
 | **[beads (bd)](https://github.com/gastownhall/beads)** | Issue tracking: tasks, bugs, dependencies, status tracking |
 | **[dont](https://github.com/charly-vibes/dont)** | Claim tracking: epistemic discipline for grounded assertions, evidence lifecycle |
-| **[pi](https://github.com/earendil-works/pi)** | Coding agent (the tool generating this documentation under human supervision): executes research, implementation, and reviews |
+| **Coding agents** | Execute bounded research, implementation, documentation, and review tasks under repository instructions |
 | **Skill system** | Structured prompts for specific tasks: code review, TDD, design review, security audit, etc. |
 | **[pretender](https://github.com/charly-vibes/pretender)** | Structural quality checks: cyclomatic complexity, duplication detection, mutation testing |
 | **just** | Lightweight automation: test, lint, check, smoke test |
-| **GitHub Actions** | CI: automated testing, linting, coverage |
-| **prek** | Pre-push hooks: test gate, lint, formatting checks |
+| **GitHub Actions** | CI: automated testing, linting, coverage, and documentation builds |
+| **prek** | Pre-commit hygiene and lint checks; conditional pre-push test gate |
 
 ---
 
-## What This Means for Users
-
-### The code is tested but not manually audited
-
-The project has approximately 95% automated test coverage (as reported by the test
-suite), extensive CI, and multi-pass review by AI agents. However, it has **not**
-had a professional manual security audit or a human code review of every line.
-This is what the warning banner on the home page communicates.
-
-### The code is reviewable
-
-Every change is documented with research, design decisions, and review
-findings (all stored in `.wai/` and `openspec/`). A reader can trace the
-rationale behind any feature or fix by reading those artifacts. The project
-is transparent about how it was built.
-
-### Registration readiness
-
-Based on the project's current practices, the following best-practice criteria for
-responsible AI-assisted development are met:
-
-- A human maintainer has full understanding of the generated code
-- Code is tested and CI runs
-- LLM-generated contributions are disclosed (this page is that disclosure)
-- The human communicates their own thoughts, not LLM-generated ones
-
-The current warning banner in the README and docs is a conservative disclosure.
-
----
-
-## Limitations
+## Evidence and Limitations
 
 The pipeline is consistent but not infallible. Three caveats:
 
 - **The pipeline has produced code with known defects.** The April 2026 holistic
   review identified 43 open issues across several root-cause clusters —
   enforcement-deferred configuration, security-by-opt-in defaults, and shared
-  mutable state without lock discipline. These issues were found *by* the review
-  pipeline, which demonstrates the pipeline working (catching problems before they
-  reach users), but they also show that the pipeline does not prevent every defect.
-  Many of these issues have since been addressed; the open issues are tracked in
-  `.beads/issues.jsonl`.
+  mutable state without lock discipline. The review demonstrated that the process
+  can find problems, not that it prevents them. Many of those issues have since been
+  addressed; current work is visible in the published issue tracker.
 - **Automated reviews are not a human audit.** Multi-pass AI reviews catch
   structural and logical problems, but they do not substitute for a professional
   security audit conducted by a human expert.
 - **Not every file receives line-by-line human scrutiny.** Boilerplate artifacts
   (auto-generated handoff templates, CI scaffolding, configuration files) may
   enter the repository without individual human review. All substantive code and
-  design decisions are reviewed.
+  design changes remain the maintainer's responsibility.
 
 Publishing both the methodology and the known issues gives readers a more
 actionable basis for evaluating the project than a blanket LLM-generated-code
@@ -215,6 +203,6 @@ current project phase and `bd ready` to find available work items.
 | Claims & evidence | `.dont/` | Epistemic state: tracked assertions, doubts, verified claims |
 | Quality thresholds | `pretender.toml` | Complexity, duplication, and mutation benchmarks |
 | Ubiquitous language | `.wai/resources/ubiquitous-language/` | Project terminology and domain model |
-| Evaluations | `docs/evaluations/` | Independent QA, stress tests, UX reports |
+| Evaluations | [`docs/evaluations/`](https://github.com/sashakile/REPLy.jl/tree/main/docs/evaluations) | Maintainer-directed QA, stress tests, UX reports, and release-readiness assessments |
 | CI | `.github/workflows/ci.yml` | Automated quality gates |
 <!-- vale on -->

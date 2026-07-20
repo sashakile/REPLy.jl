@@ -2,10 +2,10 @@
 [![tracked with wai](https://img.shields.io/badge/tracked%20with-wai-blue)](https://github.com/charly-vibes/wai)
 
 > **⚠ AI-Assisted Development.** This project is built through a structured Human–AI
-> pair-programming workflow: specification-first design, test-driven implementation,
-> multi-pass automated review, and human approval at every decision point.
-> The code has ~95% automated test coverage but has **not** had a professional
-> manual security audit or human line-by-line code review.
+> pair-programming workflow. Substantive changes are tracked in specifications and
+> tickets, tested, reviewed with automated tools, and approved by the maintainer.
+> The project has **not** had a professional security audit or human line-by-line
+> review of the entire codebase.
 > [Learn more about the methodology.](docs/src/methodology.md)
 
 **REPLy.jl** is a network REPL server for Julia. It exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively — similar to [nREPL](https://nrepl.org/) for Clojure.
@@ -24,8 +24,11 @@
 
 ```julia
 using Pkg
-Pkg.add("REPLy")
+Pkg.add(url="https://github.com/sashakile/REPLy.jl")
 ```
+
+REPLy is not yet registered in Julia's General registry, so installation currently
+uses the repository URL.
 
 ## Quick Start
 
@@ -99,5 +102,6 @@ This repository uses `just` for lightweight automation:
 - `just bootstrap` — install git hooks with `prek`
 - `just hooks` — run git-hook checks on all files
 - `just lint` — run spelling and prose checks
-- `just check` — lint + test + smoke test + coverage
+- `just docs-build` — build the documentation in a reproducible local environment
+- `just check` — workflow lint + prose/spelling lint + test + smoke test + coverage
 - `just full-check` — `just check` plus OpenSpec and `wai` health checks

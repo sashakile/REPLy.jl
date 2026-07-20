@@ -2,10 +2,10 @@
 
 !!! warning "AI-Assisted Development"
     This project is built through a structured Human–AI pair-programming workflow:
-    specification-first design, test-driven implementation, multi-pass automated
-    review, and human approval at every decision point. The code has ~95%
-    automated test coverage but has **not** had a professional manual security
-    audit or human line-by-line code review.
+    substantive changes are tracked in specifications and tickets, tested, reviewed
+    with automated tools, and approved by the maintainer. The project has **not**
+    had a professional security audit or human line-by-line review of the entire
+    codebase.
     [See the methodology page](methodology.md) for full details.
 
 **REPLy.jl** is a network REPL server for Julia. It exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively — similar to [nREPL](https://nrepl.org/) for Clojure.
@@ -18,8 +18,11 @@ You can install REPLy.jl using Julia's package manager:
 
 ```julia
 using Pkg
-Pkg.add("REPLy")
+Pkg.add(url="https://github.com/sashakile/REPLy.jl")
 ```
+
+REPLy is not yet registered in Julia's General registry, so installation currently
+uses the repository URL.
 
 ## Quick Start
 
@@ -100,7 +103,7 @@ server = REPLy.serve(socket_path="/tmp/reply-$(getpid()).sock")
 Unix sockets are created with `chmod 600` (owner read/write only), so only your own processes can connect.
 
 !!! warning "No authentication over TCP"
-    Do not expose a REPLy TCP server on a network-facing interface without an external access-control layer (firewall rule, VPN, SSH tunnel). There is no password, token, or TLS support in v1.x.
+    Do not expose a REPLy TCP server on a network-facing interface without an external access-control layer (firewall rule, VPN, SSH tunnel). REPLy currently has no password, token, or TLS support.
 
 ## Resource Limits
 
@@ -120,7 +123,7 @@ Oversized messages produce a `MessageTooLargeError` internally; clients receive 
 
 ### Output truncation
 
-Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (10 KB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `REPLy.EvalMiddleware` to `serve`:
+Evaluation results larger than `DEFAULT_MAX_REPR_BYTES` (1 MiB) are truncated before being sent to the client. Truncated output is suffixed with `OUTPUT_TRUNCATION_MARKER` (`"…[truncated]"`). To change the limit, pass a custom `REPLy.EvalMiddleware` to `serve`:
 
 !!! warning "Passing `middleware=` replaces the full stack"
     The `middleware` keyword replaces the *entire* default stack, which includes session,
@@ -143,14 +146,14 @@ lower-level embedding APIs rather than part of the minimal exported API surface.
 
 ### Evaluation timeout
 
-Every `eval` is capped at `max_eval_time_ms` (default **30 000 ms**, i.e. 30 s) of wall-clock time. When an eval exceeds the cap, REPLy interrupts it and returns a terminal error whose `status` contains `"timeout"`. The response also carries the effective limit and a hint so the cap is discoverable:
+Every `eval` is capped at `max_eval_time_ms` (default **60 000 ms**, i.e. 60 s) of wall-clock time. When an eval exceeds the cap, REPLy interrupts it and returns a terminal error whose `status` contains `"timeout"`. The response also carries the effective limit and a hint so the cap is discoverable:
 
 ```json
 {
   "id": "slow-1",
   "status": ["done", "error", "timeout"],
-  "err": "eval timed out after 30000 ms",
-  "max-eval-time-ms": 30000,
+  "err": "eval timed out after 60000 ms",
+  "max-eval-time-ms": 60000,
   "hint": "eval exceeded max_eval_time_ms; raise the max_eval_time_ms resource limit to allow longer evaluations"
 }
 ```
@@ -167,7 +170,10 @@ A client may also request a shorter deadline per request with the `timeout-ms` f
 
 ### Concurrency backpressure
 
-At most `max_concurrent_evals` evals (default **10**) run at once server-wide. REPLy does **not** queue excess work: when the limit is reached, additional `eval` requests are rejected immediately with a terminal error whose `status` contains `"concurrency-limit-reached"`:
+At most `max_concurrent_evals` evals (default **10**) run at once server-wide.
+When all slots are occupied, REPLy queues requests in FIFO order up to twice that
+limit. Requests arriving after the queue is full are rejected with a terminal error
+whose `status` contains `"concurrency-limit-reached"`:
 
 ```json
 {
@@ -177,7 +183,9 @@ At most `max_concurrent_evals` evals (default **10**) run at once server-wide. R
 }
 ```
 
-Because rejected requests are shed rather than buffered, clients that issue bursts of concurrent evals should **retry with backoff** on this flag. Tune the ceiling to match your workload:
+Clients that receive this flag should **retry with backoff**. Tune the concurrency
+ceiling to match your workload; the queue capacity scales to twice the configured
+ceiling:
 
 ```julia
 using REPLy
@@ -188,6 +196,9 @@ server = REPLy.serve(port=5555, limits=REPLy.ResourceLimits(max_concurrent_evals
 ## Next Steps
 
 The `nc` example above is useful for exploration. For persistent editor integration — where you keep a connection open and eval code on demand — copy the ready-to-use client recipe from the [Tutorial: Building a Custom Client](tutorial-custom-client.md).
+
+For the evidence behind the project's readiness claims and known limitations, see
+the [evaluation reports](https://github.com/sashakile/REPLy.jl/tree/main/docs/evaluations).
 
 ## Development and Testing
 

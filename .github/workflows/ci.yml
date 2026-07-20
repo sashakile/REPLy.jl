@@ -38,7 +38,7 @@ jobs:
           sudo install /tmp/vale /usr/local/bin/vale
 
       - name: Check prose
-        run: vale README.md llm.txt openspec/project.md
+        run: vale README.md llm.txt openspec/project.md docs/src
 
   check:
     runs-on: ubuntu-latest
@@ -71,10 +71,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run repository checks
-        run: just check
-
-      - name: Run TCP smoke test
-        run: just smoke-test
+        run: just workflow-lint test smoke-test coverage
 
       - name: Upload coverage to Codecov
         if: ${{ hashFiles('Project.toml') != '' && hashFiles('test/runtests.jl') != '' }}

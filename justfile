@@ -13,8 +13,8 @@ hooks:
 typos-check:
     typos .
 
-lint:
-    vale README.md llm.txt openspec/project.md
+lint: typos-check
+    vale README.md llm.txt openspec/project.md docs/src
 
 workflow-lint:
     actionlint
@@ -34,9 +34,15 @@ smoke-test:
 coverage:
     ./scripts/coverage.sh
 
-docs:
+_docs-bootstrap:
+    julia --project=docs/ -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+
+docs-build: _docs-bootstrap
+    julia --project=docs/ docs/make.jl
+
+docs: _docs-bootstrap
     julia --project=docs/ -e 'using LiveServer; servedocs()'
 
-check: workflow-lint test smoke-test coverage
+check: workflow-lint lint test smoke-test coverage
 
 full-check: check specs doctor

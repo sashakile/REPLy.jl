@@ -8,41 +8,44 @@ only the `@autodocs` directive, not the symbols themselves.
 To view the rendered API reference locally:
 
 ```bash
-julia --project=docs docs/make.jl
-# then open docs/build/api/index.html
+just docs-build
+# then open docs/build/api.html
 ```
 
-## Exported surface (map)
+## Exported Surface
 
-Everything below is exported by `using REPLy` (call it unqualified). Grouped by concern:
+Everything below is exported by `using REPLy` and can be called unqualified. It is
+grouped by concern; the generated reference below remains authoritative for
+signatures, defaults, and return values.
 
 - **Protocol & transport**: `protocol_name`, `version_string`, `AbstractTransport`,
-  `JSONTransport`, `send!`, `receive`, `validate_request`, `response_message`,
+  `JSONTransport`, `send!`, `receive`, `close`, `validate_request`, `response_message`,
   `error_response`, `done_response`, `MessageTooLargeError`, `truncate_output`
 - **Server**: `serve`, `serve_multi`, `serve_mcp`, `build_handler`, `server_port`,
   `server_socket_path`, `AbstractServerHandle`, `MultiListenerServer`, `ServerState`,
-  `register_active_eval!`, `unregister_active_eval!`, `active_eval_tasks`
+  `EvalGate`, `acquire!`, `release!`, `active_count`, `register_active_eval!`,
+  `unregister_active_eval!`, `active_eval_tasks`
 - **Sessions**: `get_or_create_named_session!`, `session_id`, `is_trusted`, `SessionState`,
   `SessionIdle`, `SessionRunning`, `SessionClosed`, `session_state`, `session_eval_task`,
   `session_last_active_at`, `session_eval_count`, `session_eval_id`, `session_module_name`,
   `begin_eval!`, `end_eval!`, `try_begin_eval!`, `sweep_idle_sessions!`,
   `validate_session_name`, `MAX_SESSION_NAME_BYTES`, `MAX_SESSION_HISTORY_SIZE`,
-  `clamp_history!`
+  `clamp_history!`, `StdinFeeder`, `teardown_stdin_feeder!`
 - **Middleware (embedding & authoring)**: `RequestContext`, `HandlerContext`,
   `dispatch_middleware`, `shutdown_middleware!`, `mutable_copy`, `MiddlewareDescriptor`,
-  `descriptor`, `validate_stack`, `LoadFileMiddleware`, `CompleteMiddleware`,
-  `LookupMiddleware`, `LsBindingsMiddleware`
+  `descriptor`, `validate_stack`, `EvalRequest`, `parse_eval_request`,
+  `LoadFileMiddleware`, `CompleteMiddleware`, `LookupMiddleware`, `LsBindingsMiddleware`
 - **Resource limits & audit**: `ResourceLimits`, `AuditLog`, `AuditLogEntry`,
-  `audit_entries`, `record_audit!`, `AuditMiddleware`
+  `effective_limit`, `audit_entries`, `record_audit!`, `AuditMiddleware`
 - **CLI**: `replyc`
+- **Client**: `Client`, `disconnect`
 - **MCP adapter**: `serve_mcp`, `mcp_initialize_result`, `mcp_tools`, `mcp_call_tool`,
   `mcp_eval_request`, `mcp_ensure_default_session!`, `mcp_new_session_result`,
   `mcp_list_sessions_result`, `mcp_close_session_result`, `collect_reply_stream`,
   `reply_stream_to_mcp_result`
 - **Constants**: `DEFAULT_MAX_MESSAGE_BYTES`, `DEFAULT_MAX_REPR_BYTES`,
   `OUTPUT_TRUNCATION_MARKER`, `DEFAULT_COLLECT_TIMEOUT_SECONDS`,
-  `DEFAULT_CLOSE_GRACE_SECONDS`, `MCP_PROTOCOL_VERSION`, `MCP_DEFAULT_SESSION_NAME`,
-  `MCP_EPHEMERAL_SESSION`
+  `DEFAULT_CLOSE_GRACE_SECONDS`, `MCP_DEFAULT_SESSION_NAME`
 
 ## Middleware-authoring API (`REPLy.`-qualified)
 

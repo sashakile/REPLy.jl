@@ -5,10 +5,10 @@ This page tracks the implementation state of REPLy.jl against the canonical Open
 
 !!! warning "What \"verified\" means here"
     On this page **"verified" and "tested" mean covered by the automated test suite**
-    (~95% coverage across unit, integration, and end-to-end layers) and checked against the
-    OpenSpec definitions. It does **not** mean the project has had a manual security audit or
-    human line-by-line code review. Test coverage ≠ security audit; treat security-sensitive
-    deployments accordingly.
+    across unit, integration, and end-to-end layers and checked against the OpenSpec
+    definitions. It does **not** mean the project has had a manual security audit or
+    human line-by-line code review. Test coverage ≠ security audit; treat
+    security-sensitive deployments accordingly.
 
     See the [methodology page](methodology.md) for a full description of the project's
     development practices and what "AI-assisted" means in this context.
@@ -22,7 +22,9 @@ REPLy.jl has progressed significantly beyond its initial tracer-bullet state. Th
 - **Sessions**: Support for ephemeral and named sessions, binding isolation, FIFO serialization, and Revise.jl integration.
 - **Transports**: TCP and Unix domain sockets (with owner-only permissions) are both supported, including concurrent multi-listeners.
 - **Adapter**: A complete MCP (Model Context Protocol) reference adapter exists with tool mappings for the core REPLy operations.
-- **Security**: Resource limits (connections, sessions, message/output size, eval time) and audit logging are implemented.
+- **Security**: Core limits for connections, sessions, message/output size, and eval
+  time are enforced; some compatibility fields in `ResourceLimits` remain
+  configuration-only. Audit logging is implemented.
 
 ## Capability Status Matrix
 
@@ -36,7 +38,7 @@ REPLy.jl has progressed significantly beyond its initial tracer-bullet state. Th
 | TCP transport | ✅ | ✅ | ✅ | Fully supported with concurrent client handling. |
 | Unix socket and multi-listener transport | ✅ | ✅ | ✅ | Support for owner-only sockets, stale cleanup, and `serve_multi`. |
 | Error handling | ✅ | ✅ | ✅ | Structured exception metadata, safe `showerror` fallbacks, and comprehensive status flags. |
-| Security and resource limits | ✅ | ✅ | ✅ | Limits for connections/sessions/size/time and in-memory/on-disk audit logs are functional. |
+| Security and resource limits | ✅ | Partial | Partial | Core connection/session/size/time limits and audit logs are functional; several compatibility fields are not wired into runtime enforcement. |
 | MCP adapter | ✅ | ✅ | ✅ | Eight-tool catalog with status mapping and session routing logic is implemented. |
 
 ## Current Implementation Snapshot
@@ -54,12 +56,14 @@ REPLy.jl has progressed significantly beyond its initial tracer-bullet state. Th
 | concurrent clients | ✅ implemented | Tested across TCP and Unix socket transports. |
 | persistent named sessions | ✅ implemented | Full lifecycle management via RPC or Julia API. |
 | Revise.jl integration | ✅ implemented | Optional hook to call `revise()` before evals. |
-| resource limit enforcement | ✅ implemented | Rejects requests exceeding server-wide constraints. |
+| core resource-limit enforcement | Partial | Enforces active connection/session/size/time limits; compatibility-only fields are listed below. |
 | MCP tool catalog | ✅ implemented | Exposes core ops as standard MCP tools. |
 
 ## Coverage Map
 
-The project maintains high test coverage (~95%) across unit, integration, and end-to-end layers.
+The project measures line coverage in CI across unit, integration, and end-to-end
+tests. Consult the coverage result for the release commit rather than treating a
+percentage in this page as a permanent guarantee.
 
 ### Unit Coverage
 
@@ -99,12 +103,17 @@ The canonical capability definitions live in OpenSpec.
 - **Heavy Sessions**: Isolation via Malt.jl (planned for post-v1.0).
 - **Disconnect Policy**: Explicit connection closure after multiple consecutive malformed messages (currently disconnects on the first error).
 - **Editor/Tooling Extensions**: Higher-level client libraries beyond the wire protocol and MCP adapter.
+- **Resource-limit compatibility fields**: `max_memory_mb`,
+  `min_rate_limit_per_min`, `max_message_size`, and `max_stdin_buffer` are present
+  for specification compatibility but are not used as runtime enforcement controls.
+  Message size is enforced separately by `serve(...; max_message_bytes=...)`, and
+  stdin currently uses a fixed bounded channel.
 
 ## Commands
 
 ```bash
 just test        # run the full test suite
 just smoke-test  # run the TCP end-to-end smoke test
-just check       # run lint, tests, and coverage
+just check       # run workflow/prose lint, tests, smoke test, and coverage
 ```
 <!-- vale on -->

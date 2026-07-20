@@ -3,12 +3,12 @@
 `replyc` is a minimal TCP/JSON CLI client for REPLy. It sends `eval` and
 `session` requests over a socket and prints the structured JSON response.
 
-There are two ways to use `replyc` as a bare command:
+On Unix-like systems, there are two ways to use `replyc` as a bare command:
 
 - **Automatic** (recommended): `deps/build.jl` installs a `replyc` launcher
   into your Julia depot's `bin` directory.
-- **Manual**: Symlink the project's `bin/replyc` into your `PATH` when you
-  need a project-scoped, self-resolving version.
+- **Manual**: Symlink the project's `bin/replyc` into your `PATH` and select
+  the desired Julia environment when invoking it.
 
 Both assume Julia + REPLy are already present on your system. `replyc` is
 never distributed separately — it is a companion tool for REPLy users.
@@ -24,11 +24,11 @@ never distributed separately — it is a companion tool for REPLy users.
 When you add or develop REPLy, `deps/build.jl` runs automatically via
 `Pkg.build`. It:
 
-1. Creates a private scratch-space environment that freezes REPLy's
-   dependency snapshot at build time (for reference and troubleshooting).
+1. Creates and instantiates a private scratch-space environment containing
+   REPLy and its dependency closure.
 2. Writes a `replyc` launcher script to `<depot>/bin/replyc` (where
-   `<depot>` is `DEPOT_PATH[1]`, typically `~/.julia`), pinned to REPLy's
-   project directory via `--project`.
+   `<depot>` is `DEPOT_PATH[1]`, typically `~/.julia`), pinned to that scratch
+   environment via `--project`.
 
 To install:
 
@@ -55,19 +55,19 @@ The generated `replyc` launcher is a small bash script:
 ```bash
 #!/usr/bin/env bash
 # REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51
-exec julia --startup-file=no --project="/path/to/reply/project" \
+exec julia --startup-file=no --project="/path/to/reply/scratch/environment" \
     -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- "$@"
 ```
 
-It uses `--project` to point to REPLy's project directory at build time,
-which means it always resolves the same REPLy version and dependencies.
+It uses `--project` to point to the scratch environment created at build time,
+which means it resolves the REPLy version and dependency snapshot installed there.
 Because `--project` overrides any `JULIA_PROJECT` set in your outer shell,
 the launcher avoids surprises from accidental project-switching.
 
-!!! note "Path stays at build time"
-    The launcher caches the project path as it was when you last ran
-    `Pkg.build`. If you later garbage-collect or upgrade Julia, re-run
-    `Pkg.build("REPLy")` to regenerate the launcher.
+!!! note "Rebuild after changing REPLy"
+    The launcher continues to use the scratch environment created by the most
+    recent build. Re-run `Pkg.build("REPLy")` after upgrading, moving, or
+    removing the REPLy installation used to create it.
 
 ### Overwrite guard
 
@@ -102,19 +102,31 @@ This maps directly onto the wire protocol: `eval` sends an `eval` op,
 `new-session`/`ls-sessions`/`close`. See the [Protocol Reference](reference-protocol.md)
 for the underlying messages.
 
-## Manual Install (Project-Scoped)
+## Manual Install on Unix
 
-If you need `replyc` to resolve a specific project's REPLy version (e.g., a
-repo that pins an older REPLy commit), use the existing `bin/replyc` shebang
-wrapper instead of the global launcher:
+To use the checkout convenience wrapper instead of the global launcher, symlink
+`bin/replyc` into your path:
 
 ```bash
 ln -s "$(julia -e 'using REPLy; print(pkgdir(REPLy))')/bin/replyc" ~/.local/bin/replyc
 ```
 
-This version resolves REPLy from whichever Julia environment is **active at
-invocation time**, not from a frozen scratch space. Use this when different
-projects need different REPLy versions.
+This wrapper uses Julia's normal environment selection. Set `JULIA_PROJECT` when a
+specific project pins REPLy, for example:
+
+```bash
+JULIA_PROJECT=/path/to/project replyc eval '1 + 1'
+```
+
+## Direct Invocation (Including Windows)
+
+The generated and symlinked launchers rely on Unix shebang/Bash behavior. On
+Windows, or when you want to select an environment explicitly without installing a
+launcher, invoke the client through Julia:
+
+```bash
+julia --project=/path/to/environment -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- eval '1 + 1'
+```
 
 ## PATH Setup
 
@@ -153,16 +165,16 @@ julia -e 'using Pkg; Pkg.build("REPLy")'
 
 ### `ArgumentError: Package REPLy not found`
 
-The launcher is pinned to REPLy's project directory at build time. If REPLy
-was removed or moved since then, the path is stale. Re-run `Pkg.build` to
-regenerate the launcher:
+The launcher's scratch environment can become stale if its development path to
+REPLy was removed or moved. Re-run `Pkg.build` from an environment where REPLy
+is installed to recreate the scratch environment and launcher:
 
 ```bash
-julia -e 'using Pkg; Pkg.build("REPLy")
+julia -e 'using Pkg; Pkg.build("REPLy")'
 ```
 
-If you upgraded Julia or ran `Pkg.gc()` since installing REPLy, the package
-path may have changed. A fresh build always captures the current path.
+If you upgraded Julia or ran `Pkg.gc()` since installing REPLy, a fresh build
+recreates the environment from the current package path.
 
 ## Uninstall
 

@@ -1,10 +1,15 @@
 # REPLy.jl — Evaluation Reports
 
-Independent evaluation reports covering protocol correctness, sustained-load
-behavior, spec fidelity, UX/DX/AIX, and release readiness. Produced by dogfooding
-REPLy to drive real Julia projects.
+Maintainer-directed evaluation reports covering protocol correctness,
+sustained-load behavior, spec fidelity, UX/DX/AIX, and release readiness. They
+record separate test and review passes produced while dogfooding REPLy against
+real Julia projects; they are not third-party audits.
 
-## 2026-07-14 round (current)
+Each report is a historical snapshot of its stated date and version, branch, or
+commit. Findings may have been fixed after publication; consult the issue tracker
+and current documentation for present behavior.
+
+## 2026-07-14 round
 
 | Document | Scope | Key findings |
 |---|---|---|
