@@ -1,0 +1,19 @@
+[pretender]
+mode = "tiered"
+languages = ["julia"]
+exclude = ["deps/**", "docs/build/**", ".wai/**", "*.toml"]
+
+[roles.test]
+paths = ["test/**", "**/*_test.jl"]
+
+[roles.library]
+paths = ["src/**"]
+
+[roles.script]
+paths = ["scripts/**", "bin/**", "examples/**"]
+
+[roles.generated]
+paths = ["**/*.pb.jl", "deps/build.jl"]
+
+[roles.docs]
+paths = ["docs/**"]

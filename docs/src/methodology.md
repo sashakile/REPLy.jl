@@ -123,10 +123,13 @@ The development process is supported by a toolchain that enforces discipline:
 | Tool | Purpose |
 |---|---|
 | **[OpenSpec](https://openspec.dev/)** | Specification-driven development: capability specs, change proposals, validation |
+| **[espectacular (ah)](https://github.com/charly-vibes/espectacular)** | Behavioral verification: spec-test correspondence, scenario stubs, drift signals |
 | **[wai](https://github.com/charly-vibes/wai)** | Reasoning capture: research, design decisions, handoffs, session continuity |
 | **[beads (bd)](https://github.com/gastownhall/beads)** | Issue tracking: tasks, bugs, dependencies, status tracking |
+| **[dont](https://github.com/charly-vibes/dont)** | Claim tracking: epistemic discipline for grounded assertions, evidence lifecycle |
 | **[pi](https://github.com/earendil-works/pi)** | Coding agent (the tool generating this documentation under human supervision): executes research, implementation, and reviews |
 | **Skill system** | Structured prompts for specific tasks: code review, TDD, design review, security audit, etc. |
+| **[pretender](https://github.com/charly-vibes/pretender)** | Structural quality checks: cyclomatic complexity, duplication detection, mutation testing |
 | **just** | Lightweight automation: test, lint, check, smoke test |
 | **GitHub Actions** | CI: automated testing, linting, coverage |
 | **prek** | Pre-push hooks: test gate, lint, formatting checks |
@@ -204,10 +207,13 @@ current project phase and `bd ready` to find available work items.
 |---|---|---|
 | Capability specs | `openspec/specs/` | What the system should do, in detail |
 | Change proposals | `openspec/changes/` | How specific features were designed and approved |
+| Behavioral scenarios | `.espectacular/` | Spec-test correspondence stubs for each capability |
 | Research & reasoning | `.wai/projects/` (active), `.wai/archives/` (completed) | Why decisions were made, trade-offs considered |
 | Issue tracker | `.beads/issues.jsonl` | What work was done, what's pending |
 | Handoffs | `.wai/*/handoffs/` | Session continuity, decisions made during implementation |
 | Reviews | `.wai/*/research/` (review findings) | Multi-pass evaluation results |
+| Claims & evidence | `.dont/` | Epistemic state: tracked assertions, doubts, verified claims |
+| Quality thresholds | `pretender.toml` | Complexity, duplication, and mutation benchmarks |
 | Ubiquitous language | `.wai/resources/ubiquitous-language/` | Project terminology and domain model |
 | Evaluations | `docs/evaluations/` | Independent QA, stress tests, UX reports |
 | CI | `.github/workflows/ci.yml` | Automated quality gates |

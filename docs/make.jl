@@ -15,6 +15,8 @@ makedocs(
             "How-to: Manage Sessions" => "howto-sessions.md",
             "How-to: MCP Adapter" => "howto-mcp-adapter.md",
             "How-to: Unix Sockets" => "howto-unix-sockets.md",
+            "How-to: Install the `replyc` CLI" => "howto-cli-install.md",
+            "How-to: Use the `replyc` CLI" => "howto-replyc.md",
             "How-to: Custom Middleware" => "howto-custom-middleware.md",
             "Tutorial: Custom Client" => "tutorial-custom-client.md",
         ],

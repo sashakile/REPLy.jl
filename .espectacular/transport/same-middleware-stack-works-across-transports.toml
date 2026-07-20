@@ -1,0 +1,6 @@
+id = "same-middleware-stack-works-across-transports"
+description = ""
+archetype = "PF"
+status = "active"
+superseded_by = ""
+authored_with = "0.1.0"
