@@ -1,7 +1,8 @@
 # How-to: Use the `replyc` CLI Client
 
-`replyc` is a minimal command-line client for REPLy. It sends `eval` and
-`session` requests to a running server over TCP and prints the results.
+`replyc` is a minimal command-line client for REPLy. It sends `eval`,
+`session`, and `shutdown` requests to a running server over TCP and prints
+the results.
 
 If you haven't installed `replyc` yet, see [Install the `replyc` CLI Command](howto-cli-install.md)
 first. You need a running REPLy server to connect to — see [Quick Start](index.md#quick-start)
@@ -14,6 +15,7 @@ replyc eval    [--host H] [--port N] [--session NAME] 'CODE'
 replyc session new [--host H] [--port N] [NAME]
 replyc session ls  [--host H] [--port N]
 replyc session rm  [--host H] [--port N] NAME
+replyc shutdown [--host H] [--port N]
 ```
 
 Defaults: `--host 127.0.0.1`  `--port 5555`
@@ -137,6 +139,28 @@ printf '{"op":"eval","id":"1","code":"1+1"}\n' | ncat -U /tmp/reply.sock
 
 See [Unix Sockets](howto-unix-sockets.md) for more on socket-based servers.
 
+## Shutting Down the Server
+
+Send a graceful shutdown signal to the server. The server drains clients,
+interrupts active evaluations, cleans up OS resources (Unix domain sockets are
+removed), and stops accepting new connections:
+
+```bash
+replyc shutdown
+# → Shutdown signal sent.
+```
+
+All connections are closed with a 5-second grace period for in-flight
+requests. The command exits 0 once the shutdown signal is acknowledged (the
+server may still be running its cleanup tasks).
+
+### Custom host or port
+
+```bash
+replyc shutdown --port 9876
+replyc shutdown --host 192.168.1.10 --port 9876
+```
+
 ## Composing with Shell Scripts
 
 `replyc` exits 0 on success and non-zero on error, so it composes with shell
@@ -160,8 +184,8 @@ done
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | Runtime error in the eval (or session not found, connection refused) |
+| 0 | Success (eval returned, session created, shutdown signal sent) |
+| 1 | Runtime error in the eval (or session not found, connection refused, shutdown failed) |
 | 2 | Usage error (unknown command, missing argument) |
 
 ## Differences from Raw `nc`

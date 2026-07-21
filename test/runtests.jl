@@ -49,6 +49,7 @@ include("helpers/server.jl")
         include("unit/concurrent_eval_test.jl")
         include("unit/persistent_stdin_feeder_test.jl")
         include("unit/revise_hook_test.jl")
+        include("unit/shutdown_middleware_test.jl")
     end
 
     @testset "integration" begin

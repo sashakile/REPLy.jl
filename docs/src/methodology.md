@@ -183,8 +183,8 @@ warning ever could.
 ## Contributing
 
 If you'd like to contribute to REPLy.jl within this methodology, start by
-reading the workflow instructions in [`AGENTS.md`](https://github.com/sashakile/REPLy.jl/blob/main/AGENTS.md) (and the
-[`CLAUDE.md`](https://github.com/sashakile/REPLy.jl/blob/main/CLAUDE.md) for agent configuration). Run `wai status` to see the
+reading the workflow instructions in [`AGENTS.md`](https://github.com/sashakile/REPLy.jl/blob/main/AGENTS.md) and the
+[`CLAUDE.md`](https://github.com/sashakile/REPLy.jl/blob/main/CLAUDE.md) for agent configuration. Run `wai status` to see the
 current project phase and `bd ready` to find available work items.
 
 ---

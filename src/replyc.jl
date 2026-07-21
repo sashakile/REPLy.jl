@@ -9,6 +9,7 @@ Usage:
   replyc session new [--host H] [--port N] [NAME]
   replyc session ls  [--host H] [--port N]
   replyc session rm  [--host H] [--port N] NAME
+  replyc shutdown [--host H] [--port N]
 
 Defaults: --host $(REPLYC_DEFAULT_HOST)  --port $(REPLYC_DEFAULT_PORT)
 """
@@ -118,6 +119,19 @@ function replyc_session(args::Vector{String})
     end
 end
 
+function replyc_shutdown(args::Vector{String})
+    opts, _ = replyc_extract_options(args, ["--host", "--port"])
+    request = Dict{String, Any}("op" => "shutdown", "id" => replyc_next_id())
+    responses = replyc_send_and_collect(replyc_host(opts), replyc_port(opts), request)
+    status = replyc_terminal_status(responses)
+    if "error" in status
+        !isempty(responses) && haskey(responses[end], "err") && println(stderr, responses[end]["err"])
+        return 1
+    end
+    println("Shutdown signal sent.")
+    return 0
+end
+
 """Run the `replyc` command-line client and return its process exit code."""
 function replyc(args::Vector{String}=collect(ARGS))
     if isempty(args) || args[1] in ("-h", "--help", "help")
@@ -130,6 +144,8 @@ function replyc(args::Vector{String}=collect(ARGS))
             return replyc_eval(rest)
         elseif command == "session"
             return replyc_session(rest)
+        elseif command == "shutdown"
+            return replyc_shutdown(rest)
         else
             println(stderr, "unknown command: $(command)\n")
             print(stderr, REPLYC_USAGE)

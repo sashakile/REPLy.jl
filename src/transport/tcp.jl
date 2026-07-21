@@ -47,6 +47,7 @@ safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "
 function handle_client!(socket::IO, handler::Function;
     max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
     rate_limit_per_min::Int=0,
+    state::Union{Nothing, ServerState}=nothing,
 )
     transport = JSONTransport(socket, ReentrantLock())
 
@@ -58,6 +59,12 @@ function handle_client!(socket::IO, handler::Function;
 
     try
         while isopen(transport)
+            # Check if shutdown was requested (from ShutdownMiddleware)
+            if !isnothing(state) && state.shutdown_requested[]
+                _trigger_shutdown_callback()
+                return nothing
+            end
+
             msg = try
                 receive(transport; max_message_bytes=max_message_bytes)
             catch ex
@@ -195,6 +202,7 @@ function accept_loop!(listener, handle)
                 handle_client!(socket, handle.handler;
                     max_message_bytes  = handle.state.max_message_bytes,
                     rate_limit_per_min = handle.state.limits.rate_limit_per_min,
+                    state              = handle.state,
                 )
             finally
                 lock(handle.clients_lock) do

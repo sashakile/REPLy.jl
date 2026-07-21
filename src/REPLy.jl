@@ -29,7 +29,7 @@ export effective_limit
 export AuditLog, AuditLogEntry, audit_entries, record_audit!, AuditMiddleware
 export MiddlewareDescriptor, descriptor, validate_stack
 export EvalRequest, parse_eval_request
-export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware
+export LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware, ShutdownMiddleware
 export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     reply_stream_to_mcp_result, DEFAULT_COLLECT_TIMEOUT_SECONDS, DEFAULT_CLOSE_GRACE_SECONDS,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
@@ -61,6 +61,7 @@ include("middleware/ping.jl")
 include("middleware/stdin.jl")
 include("middleware/session.jl")
 include("middleware/session_ops.jl")
+include("middleware/shutdown.jl")
 include("middleware/unknown_op.jl")
 include("transport/tcp.jl")
 include("server.jl")

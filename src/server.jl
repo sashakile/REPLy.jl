@@ -1,6 +1,80 @@
 server_port(server::TCPServerHandle) = server.port
 server_socket_path(server::UnixServerHandle) = server.path
 
+# ── Server registry ─────────────────────────────────────────────────────────
+# Registered servers are closed gracefully on process exit (SIGTERM) via an
+# atexit handler. Servers deregister themselves when closed normally.
+
+const _REGISTERED_SERVERS = Set{Any}()
+const _REGISTERED_SERVERS_LOCK = ReentrantLock()
+const _REGISTERED_SERVERS_ATEXIT = Ref(false)
+
+function _register_server!(handle)
+    lock(_REGISTERED_SERVERS_LOCK) do
+        push!(_REGISTERED_SERVERS, handle)
+        if !_REGISTERED_SERVERS_ATEXIT[]
+            _REGISTERED_SERVERS_ATEXIT[] = true
+            atexit() do
+                handles = lock(_REGISTERED_SERVERS_LOCK) do
+                    copy(_REGISTERED_SERVERS)
+                end
+                for h in handles
+                    try
+                        Base.close(h)
+                    catch ex
+                        @error "Failed to close server during atexit" exception=(ex, catch_backtrace())
+                    end
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+function _deregister_server!(handle)
+    lock(_REGISTERED_SERVERS_LOCK) do
+        delete!(_REGISTERED_SERVERS, handle)
+    end
+    return nothing
+end
+
+# ── Shutdown callback ────────────────────────────────────────────────────────
+# The ShutdownMiddleware triggers this callback to close the server.
+# `serve()` / `serve_multi()` register a closure that calls close() on the handle.
+
+const _SHUTDOWN_CALLBACK = Ref{Union{Nothing, Function}}(nothing)
+const _SHUTDOWN_CALLBACK_LOCK = ReentrantLock()
+
+"""
+    _register_shutdown_callback(fn::Function)
+
+Register a zero-argument shutdown function (typically a closure that calls
+`Base.close(server_handle)`). The callback is overwritten each time a new
+server is started.
+"""
+function _register_shutdown_callback(fn::Function)
+    lock(_SHUTDOWN_CALLBACK_LOCK) do
+        _SHUTDOWN_CALLBACK[] = fn
+    end
+    return nothing
+end
+
+"""
+    _trigger_shutdown_callback()
+
+Invoke the currently registered shutdown callback (if any). Called by
+`ShutdownMiddleware` when it receives a shutdown request.
+"""
+function _trigger_shutdown_callback()
+    cb = lock(_SHUTDOWN_CALLBACK_LOCK) do
+        _SHUTDOWN_CALLBACK[]
+    end
+    if !isnothing(cb)
+        cb()
+    end
+    return nothing
+end
+
 # 127.0.0.0/8 (RFC 5735) and ::1 (RFC 4291) are loopback-only.
 _is_loopback(host::Sockets.IPv4) = (host.host >>> 24) == 127
 _is_loopback(host::Sockets.IPv6) = host == ip"::1"
@@ -104,6 +178,8 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         )
         server.accept_task = @async accept_loop!(listener, server)
         start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
+        _register_shutdown_callback(() -> Base.close(server))
+        _register_server!(server)
         return server
     end
 
@@ -124,6 +200,8 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
     )
     server.accept_task = @async accept_loop!(listener, server)
     start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
+    _register_shutdown_callback(() -> Base.close(server))
+    _register_server!(server)
     return server
 end
 
@@ -173,6 +251,7 @@ end
 function close_server!(server::AbstractServerHandle; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
     grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
     server.closing[] && return nothing
+    _deregister_server!(server)
     server.closing[] = true
 
     deadline = time() + Float64(grace_seconds)
@@ -246,12 +325,16 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
     end
 
     start_session_sweeper!(state, manager; interval_seconds=_sweep_interval_s)
-    return MultiListenerServer(listeners, closing, state, stack)
+    server = MultiListenerServer(listeners, closing, state, stack)
+    _register_shutdown_callback(() -> Base.close(server))
+    _register_server!(server)
+    return server
 end
 
 function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLOSE_GRACE_SECONDS)
     grace_seconds > 0 || throw(ArgumentError("grace_seconds must be positive, got $grace_seconds"))
     server.closing[] && return nothing
+    _deregister_server!(server)
     server.closing[] = true
 
     deadline = time() + Float64(grace_seconds)

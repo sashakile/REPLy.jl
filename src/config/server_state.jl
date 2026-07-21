@@ -20,6 +20,7 @@ mutable struct ServerState
     active_eval_lock::ReentrantLock
     active_eval_tasks::IdDict{Task, Nothing}
     session_sweeper::Union{Nothing, SessionSweeper}
+    shutdown_requested::Ref{Bool}
 end
 
 """
@@ -28,7 +29,7 @@ end
 Construct a `ServerState` with all counters initialised to zero.
 """
 ServerState(limits::ResourceLimits, max_message_bytes::Int) =
-    ServerState(limits, max_message_bytes, EvalGate(limits.max_concurrent_evals), ReentrantLock(), IdDict{Task, Nothing}(), nothing)
+    ServerState(limits, max_message_bytes, EvalGate(limits.max_concurrent_evals), ReentrantLock(), IdDict{Task, Nothing}(), nothing, Ref(false))
 
 """
     effective_limit(state, field, default)

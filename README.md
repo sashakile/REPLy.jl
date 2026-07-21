@@ -19,6 +19,7 @@
 - **MCP Integration**: Includes a reference adapter for the [Model Context Protocol](https://modelcontextprotocol.io/), exposing Julia as a tool-calling target for LLMs.
 - **Revise Hook**: Automatic integration with [Revise.jl](https://github.com/timholy/Revise.jl) to pick up code changes between evaluations.
 - **Security & Limits**: Configurable resource limits (message size, output size, timeouts) and audit logging.
+- **Graceful Shutdown**: Servers automatically shut down cleanly on `SIGTERM` (`kill`), or via the `shutdown` RPC command.
 
 ## Installation
 
@@ -86,6 +87,32 @@ convenience wrapper.
 
 `replyc` exits non-zero when the server reports an error, so it composes with
 shell scripts. Defaults: `--host 127.0.0.1`, `--port 5555`.
+
+### 5. Graceful Shutdown
+
+When running the server as a background process, send `SIGTERM` (`kill`) to
+trigger an orderly shutdown that drains clients, interrupts active evaluations,
+and cleans up OS resources (Unix domain sockets are removed):
+
+```bash
+kill %1  # or pkill -f "julia.*REPLy.serve"
+```
+
+To shut down the server from another process, use the `replyc shutdown` command:
+
+```bash
+julia -e 'using REPLy; exit(REPLy.replyc(ARGS))' -- shutdown --port 5555
+```
+
+The server responds with `status:["done","shutdown-started"]` and then closes
+gracefully. The `replyc` client exits with code 0 after the shutdown signal is
+sent.
+
+This is also available via the raw protocol:
+
+```bash
+printf '%s\n' '{"op":"shutdown","id":"bye"}' | nc 127.0.0.1 5555
+```
 
 ## Development and Testing
 
