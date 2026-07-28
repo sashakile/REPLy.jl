@@ -37,6 +37,10 @@ JuliaLocalPreferences.toml
 
 # Local reference material not tracked in this repo
 Reply_jl_Specification_v1_3_1.md
-.dont/
+.dont/*
+!.dont/AGENTS.md
+!.dont/config.toml
+!.dont/events.jsonl
+!.dont/db.cozo
 .fabbro/
 .pretender/

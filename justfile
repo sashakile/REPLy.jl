@@ -43,6 +43,10 @@ docs-build: _docs-bootstrap
 docs: _docs-bootstrap
     julia --project=docs/ -e 'using LiveServer; servedocs()'
 
-check: workflow-lint lint test smoke-test coverage
+check: dont-check workflow-lint lint test smoke-test coverage
+
+# Check all dont claims are grounded (verified)
+dont-check:
+    dont check
 
 full-check: check specs doctor
