@@ -157,7 +157,7 @@ The development process is supported by this toolchain:
 | **[pretender](https://github.com/charly-vibes/pretender)** | Structural quality checks: cyclomatic complexity, duplication detection, mutation testing |
 | **just** | Lightweight automation: test, lint, check, smoke test |
 | **GitHub Actions** | CI: automated testing, linting, coverage, and documentation builds |
-| **prek** | Pre-commit hygiene and lint checks; conditional pre-push test gate |
+| **lefthook** | Pre-commit hygiene and lint checks; conditional pre-push test gate |
 
 ---
 

@@ -132,7 +132,7 @@ The current implementation provides a solid TCP server foundation with request v
 ### Repository Hygiene
 
 This repository uses `just` for lightweight automation:
-- `just bootstrap` — install git hooks with `prek`
+- `just bootstrap` — install git hooks with `lefthook`
 - `just hooks` — run git-hook checks on all files
 - `just lint` — run spelling and prose checks
 - `just docs-build` — build the documentation in a reproducible local environment

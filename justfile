@@ -4,11 +4,11 @@ default:
     @just --list
 
 bootstrap:
-    @command -v prek >/dev/null || { echo "prek is required"; exit 1; }
-    prek install
+    @command -v lefthook >/dev/null || { echo "lefthook is required"; exit 1; }
+    lefthook install
 
 hooks:
-    prek run --all-files
+    lefthook run pre-commit --all-files
 
 typos-check:
     typos .

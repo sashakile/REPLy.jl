@@ -64,9 +64,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cargo just curl tar
 
-      - name: Install prek and actionlint
+      - name: Install lefthook and actionlint
         run: |
-          cargo install prek --locked
+          go install github.com/evilmartians/lefthook@latest
           GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@latest
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 

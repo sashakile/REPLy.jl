@@ -1,0 +1,56 @@
+# ── Git hooks managed by lefthook ──────────────────────────────
+#  Run `lefthook install` after changing this file.
+
+pre-commit:
+  parallel: true
+  commands:
+    trailing-whitespace:
+      run: git diff --check --cached
+      skip:
+        - merge
+        - rebase
+
+    end-of-file-fixer:
+      run: |
+        for f in $(git diff --cached --name-only --diff-filter=ACM); do
+          if [ -f "$f" ] && [ -n "$(tail -c1 "$f")" ]; then
+            echo "error: $f: no trailing newline"
+            exit 1
+          fi
+        done
+      skip:
+        - merge
+        - rebase
+
+    check-merge-conflict:
+      run: |
+        conflicts=$(git diff --cached --name-only --diff-filter=U 2>/dev/null)
+        if [ -n "$conflicts" ]; then
+          echo "error: unresolved merge conflicts"
+          exit 1
+        fi
+
+    beads:
+      run: bd hooks run pre-commit
+
+    typos:
+      run: typos .
+
+    vale:
+      run: vale README.md llm.txt openspec/project.md docs/src
+
+pre-push:
+  parallel: true
+  commands:
+    beads:
+      run: bd hooks run pre-push
+
+    test:
+      run: just test
+      tags: run_on_push
+      glob: "*.{jl,toml}"
+
+prepare-commit-msg:
+  commands:
+    beads:
+      run: bd hooks run prepare-commit-msg

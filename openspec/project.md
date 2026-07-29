@@ -136,4 +136,4 @@ baseline:
 ## External Dependencies
 - GitHub for source hosting and CI
 - `wai`, `bd`, and `openspec` CLIs in contributor environments
-- `prek`, `typos`, and `vale` for local hygiene automation
+- `lefthook`, `typos`, and `vale` for local hygiene automation
