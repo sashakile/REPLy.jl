@@ -1,10 +1,19 @@
 # Building Custom REPLy Middleware
 
-**TL;DR:** Extend REPLy by implementing `AbstractMiddleware` and overriding
-`handle_message`. Three non-negotiable rules apply before your first line of
-business logic: annotate `ctx::RequestContext`, understand that `next(msg)`
-advances the stack (not restarts it), and place middlewares that forward to
-other ops *before* the ops they delegate to.
+> **TL;DR** — Implement `AbstractMiddleware`, override `handle_message`, and insert your
+> middleware into the stack. Three must-know rules before you start: annotate
+> `ctx::RequestContext`, `next(msg)` advances the stack (does not restart it), and forwarders
+> must appear *before* the ops they delegate to. [Jump to pattern catalogue](#patterns-at-a-glance) for ready-made recipes.
+
+## What This Guide Covers
+
+This how-to shows you how to extend REPLy by writing custom middleware — adding new
+protocol operations, transforming requests transparently, or augmenting responses —
+without forking the library. It is a **how-to guide**, not a reference: start with one
+pattern that matches your use case and adapt it.
+
+> For the complete API reference (all exported symbols, signatures, and defaults)
+> see the [API Reference](api.md).
 
 ## Context and Prerequisites
 
@@ -229,7 +238,21 @@ incoming request. It exists because `msg` is an immutable `JSON3.Object` whose
 keys are `Symbol`-like, so you cannot mutate it in place or rely on `String` keys.
 Merge your changes onto the copy and forward it with `next`.
 
-## Pattern Catalogue
+## Patterns at a Glance
+
+The table below summarises the six middleware patterns. Pick the one that matches
+your use case and jump to it.
+
+| # | Pattern | What it does | Stack position | Complexity |
+|---|---------|-------------|----------------|------------|
+| 1 | [New Op — Ping](#pattern-1--new-op-short-circuit-no-session-needed) | Add a liveness probe (`ping`) | Before `UnknownOpMiddleware` | ★☆☆ |
+| 2 | [Request Transformer](#pattern-2--request-transformer-modifies-code-before-evalmiddleware) | Rewrite `include()` calls before eval | Immediately before `EvalMiddleware` | ★★☆ |
+| 3 | [Response Augmenter](#pattern-3--response-augmenter-wraps-all-ops-with-side-channel-data) | Inject timing/metadata into every response | Top of stack (before `SessionMiddleware`) | ★★☆ |
+| 4 | [Observability Op](#pattern-4--observability-op-new-op--passive-instrumentation) | Track per-op metrics, expose a `metrics` op | Top of stack | ★★★ |
+| 5 | [Op Delegation](#pattern-5--op-that-delegates-to-another-op) | Forward `reload-file` to `load-file` with pre-processing | Before `LoadFileMiddleware` | ★★☆ |
+| 6 | [Session Introspection](#pattern-6--session-introspection-op-reads-session-module-directly) | List bindings or macroexpand in a session | After `SessionMiddleware` | ★★☆ |
+
+## Pattern Implementation Details
 
 ### Pattern 1 — New Op (short-circuit, no session needed)
 

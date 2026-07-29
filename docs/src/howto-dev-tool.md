@@ -1,5 +1,9 @@
 # How-to: Use REPLy as a Global Dev Tool
 
+> **TL;DR** — Add `using REPLy; REPLy.serve()` inside an `atreplinit` block in
+> `~/.julia/config/startup.jl`. Each interactive Julia session then runs a REPLy
+> server alongside the REPL. Use a per-process Unix socket to avoid port collisions.
+
 !!! tip "Also see"
     If you use the REPLy CLI client (`replyc`), see
     [Install the `replyc` CLI Command](howto-cli-install.md) for automatic
@@ -16,8 +20,18 @@ First, add REPLy to your global (default) environment so it can be loaded from a
 ```julia
 # Press ']' to enter Pkg mode
 pkg> activate
-pkg> add REPLy
+pkg> add "https://github.com/sashakile/REPLy.jl"
 ```
+
+!!! warning "REPLy is not in the General registry"
+    REPLy is not yet registered in Julia's General registry, so `pkg> add REPLy`
+    will fail with a `Package REPLy not found in registry` error. Always use the
+    full repository URL as shown above.
+
+    Equivalent one-liner:
+    ```julia
+    julia -e 'using Pkg; Pkg.add(url="https://github.com/sashakile/REPLy.jl")'
+    ```
 
 ## 2. Configure `startup.jl`
 

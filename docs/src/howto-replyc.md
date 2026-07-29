@@ -1,5 +1,10 @@
 # How-to: Use the `replyc` CLI Client
 
+> **TL;DR** — Use `replyc eval '1+1'` to evaluate code on a running REPLy server.
+> `replyc session new NAME` creates a named session for persistent state.
+> `replyc shutdown` gracefully stops the server. All commands default to
+> `--host 127.0.0.1 --port 5555`.
+
 `replyc` is a minimal command-line client for REPLy. It sends `eval`,
 `session`, and `shutdown` requests to a running server over TCP and prints
 the results.
@@ -187,6 +192,12 @@ done
 | 0 | Success (eval returned, session created, shutdown signal sent) |
 | 1 | Runtime error in the eval (or session not found, connection refused, shutdown failed) |
 | 2 | Usage error (unknown command, missing argument) |
+
+!!! tip "Exit code 1 covers several failure modes — parse stderr to differentiate"
+    Exit code 1 is used for runtime errors, missing sessions, connection failures, and
+    shutdown failures. To distinguish them in scripts, parse the stderr output. For
+    example, `grep -q "connection refused"` detects a server-down scenario vs. a
+    runtime error. Alternatively, use `replyc eval '1+1'` as a connectivity check first.
 
 ## Differences from Raw `nc`
 

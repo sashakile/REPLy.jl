@@ -1,4 +1,8 @@
-# REPLy.jl
+# REPLy.jl — Network REPL Server for Julia
+
+> **TL;DR** — REPLy.jl is a socket-based REPL server for Julia. Start with
+> `REPLy.serve(port=5555)`, connect via `nc` or `replyc`, and use named sessions
+> for persistent state. See [Quick Start](#quick-start) below.
 
 !!! warning "AI-Assisted Development"
     This project is built through a structured Human–AI pair-programming workflow:
@@ -105,7 +109,7 @@ Unix sockets are created with `chmod 600` (owner read/write only), so only your 
 !!! warning "No authentication over TCP"
     Do not expose a REPLy TCP server on a network-facing interface without an external access-control layer (firewall rule, VPN, SSH tunnel). REPLy currently has no password, token, or TLS support.
 
-## Resource Limits
+## Resource Limits Reference
 
 REPLy enforces several configurable safety limits that protect against runaway clients or evaluations. Message size and output truncation are set on `serve`; the remaining limits live on a [`ResourceLimits`](api.md) value passed as `serve(...; limits=ResourceLimits(...))`.
 
@@ -193,9 +197,15 @@ using REPLy
 server = REPLy.serve(port=5555, limits=REPLy.ResourceLimits(max_concurrent_evals=32))
 ```
 
-## Next Steps
+## Next Steps for Common Workflows
 
 The `nc` example above is useful for exploration. For persistent editor integration — where you keep a connection open and eval code on demand — copy the ready-to-use client recipe from the [Tutorial: Building a Custom Client](tutorial-custom-client.md).
+
+- **[Tutorial: Building a Custom Client](tutorial-custom-client.md)** — write a Julia client from scratch
+- **[How-to: Manage Sessions](howto-sessions.md)** — use named sessions for persistent state
+- **[How-to: Use the `replyc` CLI](howto-replyc.md)** — shell-friendly CLI client
+- **[How-to: Use the MCP Adapter](howto-mcp-adapter.md)** — connect REPLy to Claude Desktop or any MCP host
+- **[How-to: Build Custom Middleware](howto-custom-middleware.md)** — extend REPLy with new protocol operations
 
 For the evidence behind the project's readiness claims and known limitations, see
 the [evaluation reports](https://github.com/sashakile/REPLy.jl/tree/main/docs/evaluations).

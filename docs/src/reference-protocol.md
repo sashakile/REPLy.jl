@@ -1,6 +1,17 @@
 # Protocol Reference
 
-REPLy uses a simple newline-delimited JSON protocol over TCP (or Unix socket). Each message is one JSON object per line. This page is the complete reference for the request/response contract.
+> **TL;DR** — REPLy speaks newline-delimited JSON over TCP (or Unix sockets).
+> Each request is a JSON object with `op` and `id` fields. Responses are a stream
+> of JSON objects (same `id`), terminated by a `{"status":["done"]}` message.
+> This page documents every operation, field, response shape, and status flag.
+
+REPLy uses a simple newline-delimited JSON protocol over TCP (or Unix socket).
+Each message is one JSON object per line. Clients open a socket, send requests,
+and read a stream of response messages until they see the `"done"` status flag.
+This page is the complete reference for the request/response contract.
+
+> For a quick hands-on introduction, see the [Quick Start](index.md#quick-start).
+> For a step-by-step client implementation, see the [Tutorial](tutorial-custom-client.md).
 
 ## Request Envelope
 
@@ -185,7 +196,7 @@ See [How-to: Manage Sessions](howto-sessions.md) for full examples. Quick refere
 
 ---
 
-## Core Operations
+## Protocol Operations (Core)
 
 Beyond `eval` and session management, REPLy provides several operations for introspection and code navigation.
 

@@ -1,0 +1,46 @@
+> Last updated: 2026-07-29
+
+# REPLy.jl — Documentation Index
+
+> A network REPL server for Julia. Exposes a Julia session over a socket-based protocol (newline-delimited JSON), allowing editors, IDEs, and other tooling to connect, evaluate code, and inspect results interactively.
+
+## Entry Points
+
+- **Landing / Quick Start** — docs/src/index.md
+- **API Reference** — docs/src/api.md (rendered via Documenter.jl; run `just docs-build` to generate)
+- **Protocol Reference** — docs/src/reference-protocol.md
+- **Development Methodology** — docs/src/methodology.md
+- **Status & Spec Conformance** — docs/src/status.md
+
+## How-to Guides
+
+- **Install the `replyc` CLI** — docs/src/howto-cli-install.md
+- **Use the `replyc` CLI Client** — docs/src/howto-replyc.md
+- **Build Custom Middleware** — docs/src/howto-custom-middleware.md
+- **Manage Persistent Sessions** — docs/src/howto-sessions.md
+- **Use REPLy as a Global Dev Tool** — docs/src/howto-dev-tool.md
+- **Connect via Unix Domain Sockets** — docs/src/howto-unix-sockets.md
+- **Use the MCP Adapter** — docs/src/howto-mcp-adapter.md
+
+## Tutorials
+
+- **Building a Custom Client** — docs/src/tutorial-custom-client.md
+
+## Evaluation Reports
+
+- **Overview** — docs/evaluations/README.md
+- **2026-07-14: Stress Report** — docs/evaluations/REPLY_STRESS_REPORT_2026-07-14.md
+- **2026-07-14: UX/DX/AIX Report** — docs/evaluations/REPLY_QA_UX_DX_AIX_REPORT_2026-07-14.md
+- **2026-07-14: Spec Fidelity Audit** — docs/evaluations/REPLY_SPEC_FIDELITY_AUDIT_2026-07-14.md
+- **2026-07-14: Release Readiness Verdict** — docs/evaluations/REPLY_RELEASE_READINESS_VERDICT_2026-07-14.md
+
+## Specifications
+
+- **Technical Specification v1.3.1** — Reply_jl_Specification_v1_3_1.md
+- **OpenSpec Capabilities** — openspec/specs/ (protocol, core-operations, error-handling, mcp-adapter, middleware, resource-limits, security, session-management, transport, cli-distribution)
+
+## Repository Files
+
+- **README** — README.md
+- **CLAUDE.md** — CLAUDE.md (agent configuration for AI coding agents)
+- **AGENTS.md** — AGENTS.md (project instructions for AI coding agents)

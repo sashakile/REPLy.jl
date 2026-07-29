@@ -1,5 +1,9 @@
 # How-to: Connect via Unix Domain Sockets
 
+> **TL;DR** — Pass `socket_path="/tmp/reply.sock"` to `REPLy.serve()` instead of
+> `host`/`port`. The socket is created with `chmod 600` (owner-only). Connect via
+> `nc -U /tmp/reply.sock`. Close the server to clean up the socket file.
+
 While REPLy defaults to a TCP server, you can also run it over Unix domain sockets. This is highly recommended for local editor integrations because it:
 1. Avoids port conflicts.
 2. Provides a file-based security boundary (only users with read/write access to the socket file can connect).

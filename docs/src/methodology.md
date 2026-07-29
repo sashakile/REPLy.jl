@@ -1,6 +1,11 @@
 <!-- vale off -->
 # Development Methodology
 
+> **TL;DR** — REPLy.jl is developed through a Human–AI pair-programming workflow.
+> The maintainer defines goals and approves all changes; AI agents handle bounded
+> tasks under repository instructions. The project has **not** had a professional
+> security audit. See the full methodology below.
+
 This page explains how REPLy.jl uses AI-assisted development, which controls are
 automated, and where the process has limits. It exists so users and contributors can
 evaluate the project using inspectable evidence rather than broad assurances.
@@ -11,11 +16,11 @@ refactorings are tracked as [published bead tickets](https://charly-vibes.github
 with supporting specifications, research, tests, and review artifacts stored in the
 repository when the scope warrants them.
 
-**TL;DR:** AI agents help research, design, implement, test, review, and document
-REPLy.jl. The maintainer directs the work, approves changes, and remains accountable
-for releases. The project uses tracked specifications, tickets, automated tests, CI,
-and structured review, but it has not received a professional security audit or a
-human line-by-line review of the entire codebase.
+> The bead-ticket viewer above is hosted on a third-party service. If the link is
+> unavailable, the raw ticket data is at
+> [`.beads/issues.jsonl`](https://github.com/sashakile/REPLy.jl/blob/main/.beads/issues.jsonl)
+> in the repo. See the
+> [Repository Tour](#repository-tour) below for all artifact locations.
 
 ---
 
@@ -136,7 +141,7 @@ The repository uses gates at different lifecycle points:
 
 ---
 
-## Tooling
+## Development Tooling Used by REPLy
 
 The development process is supported by this toolchain:
 

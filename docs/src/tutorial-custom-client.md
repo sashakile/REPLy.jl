@@ -1,5 +1,9 @@
 # Tutorial: Building a Custom Client
 
+> **TL;DR** — Copy the `client.jl` code below into your project for a working
+> REPLy client in Julia. It connects over TCP, sends `eval` requests, and streams
+> responses. For persistent sessions, keep one connection open and use named sessions.
+
 This tutorial gives you a copy-paste client recipe in Julia. REPLy has no published client package — the intended workflow is to copy this file into your project and adapt it as needed.
 
 !!! tip "Getting started fast"

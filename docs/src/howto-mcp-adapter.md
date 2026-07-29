@@ -1,6 +1,11 @@
 # How-to: Use the MCP Adapter
 
-REPLy ships with a built-in adapter layer for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). The adapter exposes Julia evaluation and session management as MCP tools, so any MCP-compatible client (Claude Desktop, VS Code MCP extensions, etc.) can use REPLy as a code-execution backend.
+> **TL;DR** — Connect any MCP client (Claude Desktop, VS Code, etc.) to REPLy via
+> a stdio-based MCP server. Run `REPLy.serve_mcp()` and configure your MCP client
+> to launch Julia with that command. Eight tools including `julia_eval`,
+> `julia_new_session`, and `julia_complete` are available out of the box.
+>
+> **Contents:** [Quick Start](#quick-start-recommended) • [MCP Tools Catalog](#mcp-tools-catalog) • [Programmatic Usage](#programmatic-usage) • [Evaluating Code](#evaluating-code) • [Timeouts](#timeouts) • [Session Management](#session-management-via-mcp) • [Constants Reference](#constants-reference)
 
 !!! danger "Security: this gives an AI agent arbitrary code execution"
     Any MCP client wired to REPLy can run **arbitrary Julia code in your process** — there is
@@ -17,39 +22,21 @@ REPLy ships with a built-in adapter layer for the [Model Context Protocol (MCP)]
     - Treat the agent as an untrusted caller: apply [resource
       limits](index.md#Resource-Limits) and a `load-file` allowlist as appropriate.
 
-## Quick Start (Recommended)
+### Quick Start (Recommended)
 
 The simplest way to use REPLy as an MCP server is via the `REPLy.serve_mcp()` entry point. This starts a stdio-based MCP server that handles the protocol handshake and tool dispatch automatically.
-
-### Configuring Claude Desktop
-
-Add the following to your `claude_desktop_config.json` (usually found in `~/Library/Application Support/Claude/` on macOS or `%APPDATA%\Claude\` on Windows):
-
-```json
-{
-  "mcpServers": {
-    "julia": {
-      "command": "julia",
-      "args": [
-        "--project=/path/to/REPLy.jl",
-        "-e",
-        "using REPLy; REPLy.serve_mcp()"
-      ]
-    }
-  }
-}
-```
-
-Replace `/path/to/REPLy.jl` with the actual path to the REPLy.jl repository. Once configured, restart Claude Desktop, and you will see the `julia_eval` and other tools available.
 
 !!! tip "You don't have to clone the repo"
     `--project=` just needs to point at **any Julia environment that has REPLy installed**.
     If you installed REPLy from its repository URL into an environment, point
-    `--project` at that environment's directory — for example, your default env
-    `--project=@v1.10`, or a dedicated environment created with
-    `Pkg.activate("/path/to/env")` followed by
-    `Pkg.add(url="https://github.com/sashakile/REPLy.jl")`. Cloning is only needed
-    for local development.
+    `--project` at that environment's directory. For example, with a dedicated environment:
+
+    ```bash
+    mkdir ~/reply-mcp-env && cd ~/reply-mcp-env
+    julia -e 'using Pkg; Pkg.add(url="https://github.com/sashakile/REPLy.jl")'
+    ```
+
+    Then set `--project=/home/you/reply-mcp-env` in the config below.
 
 ## Programmatic Usage
 

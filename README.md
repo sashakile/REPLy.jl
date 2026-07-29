@@ -1,4 +1,10 @@
 # REPLy.jl
+
+> **TL;DR** — REPLy.jl is a network REPL server for Julia. Start a server with
+> `REPLy.serve(port=5555)`, connect via `nc` or the `replyc` CLI client, and evaluate
+> Julia code interactively. Supports TCP and Unix sockets, persistent named sessions,
+> and MCP integration.
+
 [![tracked with wai](https://img.shields.io/badge/tracked%20with-wai-blue)](https://github.com/charly-vibes/wai)
 
 > **⚠ AI-Assisted Development.** This project is built through a structured Human–AI
@@ -16,7 +22,7 @@
 - **Persistent Sessions**: Maintain state across requests with named sessions and binding isolation.
 - **Rich Introspection**: Built-in support for tab-completion, documentation lookup, and file loading.
 - **Flexible Transports**: Supports both TCP and Unix domain sockets (with owner-only permissions).
-- **MCP Integration**: Includes a reference adapter for the [Model Context Protocol](https://modelcontextprotocol.io/), exposing Julia as a tool-calling target for LLMs.
+- **MCP Integration**: Includes a reference adapter for the [Model Context Protocol](https://modelcontextprotocol.io/), exposing Julia as a tool-calling target for LLMs. [See the MCP adapter guide](docs/src/howto-mcp-adapter.md).
 - **Revise Hook**: Automatic integration with [Revise.jl](https://github.com/timholy/Revise.jl) to pick up code changes between evaluations.
 - **Security & Limits**: Configurable resource limits (message size, output size, timeouts) and audit logging.
 - **Graceful Shutdown**: Servers automatically shut down cleanly on `SIGTERM` (`kill`), or via the `shutdown` RPC command.

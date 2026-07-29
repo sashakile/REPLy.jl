@@ -1,5 +1,9 @@
 # How-to: Install the `replyc` CLI Command
 
+> **TL;DR** — Run `julia -e 'using Pkg; Pkg.add(url="...REPLy.jl")'` then add
+> `<depot>/bin` to your `PATH`. The build script installs a `replyc` launcher
+> automatically. See [Automatic Install](#automatic-install-via-pkgbuild) below.
+
 `replyc` is a minimal TCP/JSON CLI client for REPLy. It sends `eval` and
 `session` requests over a socket and prints the structured JSON response.
 
@@ -73,8 +77,21 @@ the launcher avoids surprises from accidental project-switching.
 
 If a file already exists at `<depot>/bin/replyc` and does **not** appear to
 belong to REPLy (i.e., it lacks the UUID marker shown above), `Pkg.build`
-will refuse to overwrite it and print a warning. Remove the conflicting file
-manually and re-run `Pkg.build("REPLy")` to install the REPLy launcher.
+will refuse to overwrite it and print a warning:
+
+```text
+┌ Warning: Refusing to overwrite existing replyc at /home/user/.julia/bin/replyc
+│ (file does not appear to belong to REPLy)
+└ Remove the file manually or run with FORCE=1
+```
+
+Remove the conflicting file and re-run `Pkg.build("REPLy")` to install
+the REPLy launcher:
+
+```bash
+rm "$(julia -e 'println(joinpath(DEPOT_PATH[1], "bin", "replyc"))')"
+julia -e 'using Pkg; Pkg.build("REPLy")'
+```
 
 ## Using `replyc`
 
@@ -108,8 +125,15 @@ To use the checkout convenience wrapper instead of the global launcher, symlink
 `bin/replyc` into your path:
 
 ```bash
+# Requires REPLy to be loadable first (run Pkg.add or Pkg.develop first)
 ln -s "$(julia -e 'using REPLy; print(pkgdir(REPLy))')/bin/replyc" ~/.local/bin/replyc
 ```
+
+!!! warning "This command needs REPLy installed first"
+    `using REPLy` inside the substitution must succeed. If you haven't installed
+    REPLy yet, the command produces a "Package REPLy not found" error. Install
+    REPLy first (see [Automatic Install](#automatic-install-via-pkgbuild) above) or
+    use [Direct Invocation](#direct-invocation-including-windows) instead.
 
 This wrapper uses Julia's normal environment selection. Set `JULIA_PROJECT` when a
 specific project pins REPLy, for example:
@@ -131,16 +155,20 @@ julia --project=/path/to/environment -e 'using REPLy; exit(REPLy.replyc(ARGS))' 
 ## PATH Setup
 
 For the launcher to work as a bare command, Julia's depot `bin` directory
-must be on your `PATH`. Add one of the following to your shell configuration
-(`~/.bashrc`, `~/.zshrc`, etc.):
+must be on your `PATH`. Add the following to your shell configuration
+(`~/.bashrc`, `~/.zshrc`, etc.). The second, portable form is preferred:
 
 ```bash
-# Default depot — works for most setups
-export PATH="$HOME/.julia/bin:$PATH"
-
-# Custom depot — respects JULIA_DEPOT_PATH if set
+# Preferred — respects JULIA_DEPOT_PATH if set
 export PATH="$(julia -e 'print(joinpath(DEPOT_PATH[1], "bin"))'):$PATH"
+
+# Common-default fallback (works when JULIA_DEPOT_PATH is unset)
+export PATH="$HOME/.julia/bin:$PATH"
 ```
+
+The portable form uses `DEPOT_PATH[1]` which matches Julia's actual depot
+resolution. The `~/.julia/bin` shortcut works for most default installations
+but breaks under custom `JULIA_DEPOT_PATH`.
 
 ## Troubleshooting
 
@@ -155,13 +183,9 @@ julia --project=. -e 'using Pkg; Pkg.build("REPLy")'
 
 ### `Refusing to overwrite` warning
 
-Another file named `replyc` exists at `<depot>/bin/replyc`. If it is safe to
-replace, remove it and re-run `Pkg.build`:
-
-```bash
-rm "$(julia -e 'println(joinpath(DEPOT_PATH[1], "bin", "replyc"))')"
-julia -e 'using Pkg; Pkg.build("REPLy")'
-```
+Another file named `replyc` exists at `<depot>/bin/replyc`. See the
+[Overwrite guard](#overwrite-guard) section above for the warning text and
+resolution steps.
 
 ### `ArgumentError: Package REPLy not found`
 

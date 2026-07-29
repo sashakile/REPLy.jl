@@ -1,3 +1,11 @@
+# Status
+
+> **TL;DR** — All core protocol operations, session management, transports, middleware,
+> and the MCP adapter are implemented and covered by the test suite. Security and
+> resource limits are partially implemented (core limits work; some compatibility fields
+> are in spec but not wired). Heavy sessions (Malt.jl) and disconnect policy are
+> post-v1.0. See the capability matrix below for details.
+
 <!-- vale off -->
 # Status
 
@@ -106,6 +114,9 @@ The canonical capability definitions live in OpenSpec.
 - **Resource-limit compatibility fields**: `max_memory_mb`,
   `min_rate_limit_per_min`, `max_message_size`, and `max_stdin_buffer` are present
   for specification compatibility but are not used as runtime enforcement controls.
+  (Verify these field names against the current `ResourceLimits` struct in
+  `src/resource-limits.jl`; the canonical names in the spec may differ from the
+  struct field names.)
   Message size is enforced separately by `serve(...; max_message_bytes=...)`, and
   stdin currently uses a fixed bounded channel.
 

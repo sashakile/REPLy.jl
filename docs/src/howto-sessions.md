@@ -1,6 +1,14 @@
 # How-to: Manage Persistent Sessions
 
-By default, REPLy evaluates every `eval` request in a fresh, ephemeral session. If you want to maintain state across multiple requests (e.g., for an editor integration where variables persist between executions), you must use **Named Sessions**.
+> **TL;DR** — Use named sessions (`new-session` op) to keep state across evals.
+> Create a session with `{"op":"new-session","id":"n1","name":"main"}`,
+> then reference it via `"session":"main"` in subsequent eval requests.
+> Sessions can be listed (`ls-sessions`), cloned (`clone`), and closed (`close`).
+
+By default, REPLy evaluates every `eval` request in a fresh, ephemeral session. **Use Named Sessions** if you want to maintain state across multiple requests (e.g., for an editor integration where variables persist between executions).
+
+!!! tip "Need a server to connect to?"
+    If you need to start a REPLy server first, see the [Quick Start](index.md#quick-start).
 
 ## 1. Create a Session via RPC
 
