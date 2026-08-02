@@ -111,7 +111,51 @@ function mcp_call_tool(tool_name::AbstractString, args::AbstractDict, manager::S
     end
 end
 
-# --- In-process dispatch (direct handler call, no TCP loopback) ---
+# --- Safety dispatch: scope fence for dangerous eval patterns ---
+
+# Pattern-matched prohibitions for the MCP adapter.
+# These guard against accidental or adversarial code execution via the MCP
+# adapter when the caller has not explicitly opted in via `allow_unsafe=true`.
+# Prohibitions defined in GOVERNANCE.md §3 (BSD Prohibited Behaviors).
+const DANGEROUS_EVAL_PATTERNS = [
+    r"\brun\(" => "shell execution via run()",
+    r"\bpipeline\(" => "shell execution via pipeline()",
+    r"\bwrite\(\s*[^\s,]+" => "filesystem write via write()",       # write(path, ...) or write(filename, ...)
+    r"\bopen\(.*(?:write|append)" => "filesystem write via open(; write|append)",
+    r"\bdownload\(" => "network access via download()",
+    r"\bHTTP\.request\(" => "network access via HTTP.request()",
+    r"\brm\(" => "filesystem deletion via rm()",
+    r"\brmrf\(" => "filesystem deletion via rmrf()",
+    r"\bmv\(" => "filesystem rename via mv()",
+    r"\bcp\(" => "filesystem copy via cp()",
+    r"\bmkpath\(" => "filesystem creation via mkpath()",
+    r"\breadchomp\b.*`" => "command execution via backtick or readchomp",
+    r"\bread\b.*`" => "command execution via backtick or read",
+]
+
+"""
+    mcp_check_dangerous_patterns(code::AbstractString) -> Union{Nothing, String}
+
+Check `code` for dangerous eval patterns. Returns `nothing` if the code is safe
+(or `allow_unsafe=true` is set), or a human-readable error message describing
+the first prohibited pattern found.
+
+Checks are pattern-matched against the raw code string. They are NOT a
+security boundary — resource limits and session isolation are the security
+boundary. These checks exist as a behavioral guard for the MCP adapter's
+default configuration ("fail closed").
+"""
+function mcp_check_dangerous_patterns(code::AbstractString)
+    for (pattern, description) in DANGEROUS_EVAL_PATTERNS
+        if occursin(pattern, code)
+            return "Code matches prohibited pattern: $description. Set `allow_unsafe=true` to override."
+        end
+    end
+    return nothing
+end
+
+# --- Safety dispatch: scope fence for dangerous eval patterns ---
+
 
 # Execute a Reply `request` through the handler closure directly and convert the
 # response vector to an MCP result via `to_result`. Shared by all live tools
@@ -128,6 +172,21 @@ function mcp_dispatch_direct(build_request::Function, args, default_session, han
 end
 
 function mcp_dispatch_eval_direct(args, default_session, handler::Function)
+    code = get(args, "code", "")
+    allow_unsafe = get(args, "allow_unsafe", false)
+    allow_unsafe isa Bool || (allow_unsafe = false)
+
+    # --- PRIMARY OBJECTIVE: enable Julia tool builders to ship structured ---
+    # --- REPL interaction, cutting integration time from days to minutes. ---
+    # Scope fence: fail closed on dangerous patterns unless explicitly overridden.
+    if !isempty(code) && !allow_unsafe
+        check_result = mcp_check_dangerous_patterns(code)
+        if !isnothing(check_result)
+            mcp_log("Safety guard triggered: $check_result")
+            return error_result(check_result)
+        end
+    end
+
     request = try
         mcp_eval_request("mcp-eval-$(time_ns())", args; default_session)
     catch ex

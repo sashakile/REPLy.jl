@@ -19,10 +19,11 @@ it to this glossary before reasoning about it.
 | [contexts/intelligence.md](contexts/intelligence.md) | **Intelligence** | Completions, documentation lookup, symbol resolution |
 | [contexts/mcp.md](contexts/mcp.md) | **MCP Adapter** | Protocol bridge to Model Context Protocol clients |
 | [contexts/server.md](contexts/server.md) | **Server** | Lifecycle, connection management, shutdown |
+| [contexts/alignment.md](contexts/alignment.md) | **Alignment** | Value proposition, goal anchoring, scope fencing, drift detection, outcome verification |
 
 ## Overloaded Terms — Disambiguation
 
-Some words appear in multiple contexts with distinct meanings. This table is the authoritative disambiguation:
+Some words appear in multiple contexts with distinct meanings. This table is the authoritative disambiguation (see also [contexts/alignment.md](contexts/alignment.md) for alignment-specific disambiguation):
 
 | Word | Where | Meaning |
 |------|-------|---------|
@@ -48,3 +49,6 @@ These apply across all contexts:
 - **Atomic Transitions** — session state changes are protected by a lock; no partial states are ever visible.
 - **Graceful Degradation** — optional dependencies (Revise.jl, Malt.jl) are absent without crashing; behaviour degrades to a safe fallback.
 - **Safe Rendering** — exceptions during `repr()` / `show()` are caught and rendered with a fallback; they never propagate to the transport.
+- **Value Anchoring** — the primary objective (value proposition verbatim) appears at the top *and* bottom of every runtime instruction (Goal Sandwich pattern).
+- **Scope Enforcement** — prohibited behaviors are explicit negations, not implicit; escalation triggers are 7 named categories, not vague "when uncertain."
+- **Outcome Verification** — tests measure goal achievement, not just output correctness.

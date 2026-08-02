@@ -26,12 +26,14 @@ function mcp_tools()
     return Dict{String, Any}[
         mcp_tool(
             "julia_eval",
-            "Evaluate Julia code through REPLy.",
+            "Evaluate Julia code through REPLy. PRIMARY OBJECTIVE: enable Julia tool builders to ship structured REPL interaction, cutting integration time from days to minutes.
+MUST NOT execute code containing shell execution (`run(`, `pipeline(`), filesystem writes (`write(`, `open(...; write`), or network access (`download`, `HTTP.request`) unless `allow_unsafe=true`.",
             Dict(
                 "code" => string_schema("Julia code to evaluate."),
                 "session" => string_schema("Optional session id. Use 'ephemeral' for one-shot eval."),
                 "module" => string_schema("Optional module path to evaluate within."),
                 "timeout_ms" => integer_schema("Optional timeout in milliseconds."),
+                "allow_unsafe" => Dict("type" => "boolean", "description" => "Override safety guard: allow shell execution, filesystem writes, and network access. Use with caution."),
             );
             required=["code"],
         ),

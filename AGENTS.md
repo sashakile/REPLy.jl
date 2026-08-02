@@ -80,6 +80,15 @@ context before starting research or creating tickets.
 > check for known patterns. Do not rediscover what is already documented.
 <!-- WAI:REFLECT:REF:END -->
 
+## Governance
+
+This project has a value-alignment governance framework. Key documents:
+- **`GOVERNANCE.md`** — BSD (Behavioral Specification Document) + Agent Charter
+- **`docs/src/value-proposition.md`** — Falsifiable value proposition
+- **`docs/src/vrr-agenda.md`** — Quarterly Value Realization Review agenda
+- **`.wai/resources/ubiquitous-language/contexts/alignment.md`** — Alignment vocabulary
+
+Prohibited behaviors (BSD §3) are enforced in `src/mcp/server.jl` via `mcp_check_dangerous_patterns` and verified by `test/unit/mcp_adapter_test.jl`. Outcome-focused evals in `test/unit/mcp_value_alignment_test.jl`.
 
 
 

@@ -80,7 +80,16 @@ context before starting research or creating tickets.
 > check for known patterns. Do not rediscover what is already documented.
 <!-- WAI:REFLECT:REF:END -->
 
+## Governance
 
+This project has a value-alignment governance framework documented in:
+- **`GOVERNANCE.md`** — BSD (Behavioral Specification Document) + Agent Charter
+- **`docs/src/value-proposition.md`** — Falsifiable value proposition
+- **`docs/src/vrr-agenda.md`** — Quarterly Value Realization Review agenda
+- **`.wai/resources/ubiquitous-language/contexts/alignment.md`** — Alignment vocabulary
+
+Key binding: BSD prohibited behaviors (§3) → MCP dispatch safety code (`mcp_check_dangerous_patterns`)
+→ eval test cases (`safety dispatch blocks dangerous eval patterns`).
 
 
 

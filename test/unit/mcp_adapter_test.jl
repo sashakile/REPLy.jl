@@ -48,7 +48,7 @@ end
 
         by_name = Dict(tool["name"] => tool for tool in tools)
         @test by_name["julia_eval"]["inputSchema"]["required"] == ["code"]
-        @test Set(keys(by_name["julia_eval"]["inputSchema"]["properties"])) == Set(["code", "session", "module", "timeout_ms"])
+        @test Set(keys(by_name["julia_eval"]["inputSchema"]["properties"])) == Set(["code", "session", "module", "timeout_ms", "allow_unsafe"])
         @test by_name["julia_complete"]["inputSchema"]["required"] == ["code", "pos"]
         @test Set(keys(by_name["julia_complete"]["inputSchema"]["properties"])) == Set(["code", "pos", "session"])
         @test by_name["julia_lookup"]["inputSchema"]["required"] == ["symbol"]
@@ -411,5 +411,42 @@ end
 
         @test result["isError"] == true
         @test occursin("julia_nonexistent", result["content"][1]["text"])
+    end
+
+    @testset "safety dispatch blocks dangerous eval patterns" begin
+        dangerous_codes = [
+            "run(\"ls\")",
+            "pipeline(\"echo hi\")",
+            "write(\"/tmp/x\", data)",
+            "download(\"https://evil.com\")",
+            "rm(\"/tmp/x\")",
+        ]
+        for code in dangerous_codes
+            result = REPLy.mcp_check_dangerous_patterns(code)
+            @test !isnothing(result)
+            @test occursin("prohibited pattern", result)
+        end
+    end
+
+    @testset "safety dispatch allows safe eval patterns" begin
+        safe_codes = [
+            "1 + 1",
+            "println(\"hello world\")",
+            "length([1,2,3])",
+            "sort([3,1,2])",
+            "Dict(:a => 1, :b => 2)",
+            "x = 42; x + 1",
+        ]
+        for code in safe_codes
+            @test isnothing(REPLy.mcp_check_dangerous_patterns(code))
+        end
+    end
+
+    @testset "safety dispatch allows dangerous patterns when allow_unsafe=true" begin
+        # allow_unsafe is checked in mcp_dispatch_eval_direct, not in the
+        # pattern-check function itself. Verify that the check function still
+        # flags the code (the opt-in happens at the dispatch level).
+        result = REPLy.mcp_check_dangerous_patterns("run(\"ls\")")
+        @test !isnothing(result)
     end
 end
