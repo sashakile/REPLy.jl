@@ -35,13 +35,13 @@ phase: implement
 ### git_status
 
 ```
-M  .beads/issues.jsonl
+ M .wai/pipeline-runs/ticket-workflow-2026-08-05-reply-jl-4qqo.yml
+?? .wai/projects/replyc-distribution/research/2026-08-05-next-up-reply-jl-kz6c-implement-the-approved-re.md
 ```
 
 ### open_issues
 
 ```
-○ REPLy_jl-4qqo ● P0 Decide native-eval timeout and zombie-task accounting
 ○ REPLy_jl-kz6c ● P0 [bug] Keep timed-out native evals accounted without wedging sessions
 ○ REPLy_jl-mrc0 ● P1 [bug] Serialize session-close cancellation without an internal error
 ○ REPLy_jl-4s1 ● P2 Step 14a: Add Windows CLI launcher (.bat/.cmd) (A6 ⚖️)
@@ -55,7 +55,7 @@ M  .beads/issues.jsonl
 ○ REPLy_jl-zwe4 ● P3 Schedule quarterly Value Realization Review for REPLy.jl
 
 --------------------------------------------------------------------------------
-Total: 12 issues (12 open, 0 in progress)
+Total: 11 issues (11 open, 0 in progress)
 
 Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred
 ```
