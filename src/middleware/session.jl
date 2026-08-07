@@ -41,12 +41,17 @@ function handle_message(::SessionMiddleware, msg, next, ctx::RequestContext)
         if isnothing(named)
             return [session_not_found_response(request_id, session_id)]
         end
+        state = session_state(named)
+        if state === SessionQuarantined && !(op in ("interrupt", "close", "close-session"))
+            return [session_quarantined_response(request_id)]
+        end
         ctx.session = named
         return next(msg)
     end
 
-    # Ephemeral fallback: only for eval ops without existing session
-    if op != "eval" || !isnothing(ctx.session)
+    # Ephemeral fallback for every operation that executes Julia code through
+    # the shared lifecycle executor.
+    if !(op in ("eval", "load-file")) || !isnothing(ctx.session)
         return next(msg)
     end
 

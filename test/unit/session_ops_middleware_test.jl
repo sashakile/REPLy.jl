@@ -1123,4 +1123,22 @@ end
         session = REPLy.create_named_session!(manager, "modname-test")
         @test REPLy.session_module_name(session) == "<anonymous>"
     end
+
+    @testset "quarantined clone source wins over destination and limit errors" begin
+        for (op, source_field) in (("clone", "session"), ("clone", "source"), ("clone-session", "source"))
+            manager = REPLy.SessionManager()
+            source = REPLy.create_named_session!(manager, "quarantined-source")
+            REPLy.create_named_session!(manager, "existing-destination")
+            lock(source.lock) do; source.state = REPLy.SessionQuarantined; end
+            limits = REPLy.ResourceLimits(max_sessions=1)
+            handler = REPLy.build_handler(; manager,
+                state=REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES))
+            request = Dict("op" => op, "id" => "quarantine-$op-$source_field",
+                source_field => "quarantined-source", "name" => "existing-destination")
+
+            msgs = handler(request)
+
+            @test "session-quarantined" in last(msgs)["status"]
+        end
+    end
 end

@@ -39,7 +39,9 @@ function handle_message(::ShutdownMiddleware, msg, next, ctx::RequestContext)
     # shutdown callback. This ensures the response reaches the client before
     # the server closes the connection.
     if !isnothing(ctx.server_state)
-        ctx.server_state.shutdown_requested[] = true
+        for life in begin_shutdown!(ctx.server_state::ServerState)
+            request_eval_cancel!(life)
+        end
     end
     return [Dict{String, Any}(
         "id" => request_id,

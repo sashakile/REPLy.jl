@@ -1,0 +1,9 @@
+id = "close-is-bounded-and-idempotent"
+description = ""
+archetype = ""
+status = "active"
+superseded_by = ""
+authored_with = "0.3.0"
+
+[[tests.unit]]
+flags = "test/unit/session_registry_test.jl"

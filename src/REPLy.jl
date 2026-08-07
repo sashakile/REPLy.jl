@@ -14,15 +14,15 @@ export AbstractTransport, JSONTransport, MessageTooLargeError, close, done_respo
     truncate_output
 export build_handler, serve, serve_multi, serve_mcp, AbstractServerHandle,
     MultiListenerServer, server_port, server_socket_path, ServerState
-export EvalGate, acquire!, release!, active_count
+export EvalGate, acquire!, release!, active_count, mark_zombie!, release_zombie!
 export register_active_eval!, unregister_active_eval!, active_eval_tasks
 export get_or_create_named_session!
 export RequestContext, HandlerContext, dispatch_middleware, shutdown_middleware!, mutable_copy
 export validate_session_name, MAX_SESSION_NAME_BYTES
 export session_id, is_trusted
-export SessionState, SessionIdle, SessionRunning, SessionClosed
+export SessionState, SessionIdle, SessionRunning, SessionQuarantined, SessionDetached, SessionClosed
 export session_state, session_eval_task, session_last_active_at, session_eval_count, session_eval_id, session_module_name
-export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!
+export begin_eval!, end_eval!, try_begin_eval!, sweep_idle_sessions!, quarantine_session!
 export MAX_SESSION_HISTORY_SIZE, clamp_history!, StdinFeeder, teardown_stdin_feeder!
 export ResourceLimits
 export effective_limit

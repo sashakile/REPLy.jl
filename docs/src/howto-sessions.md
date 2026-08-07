@@ -234,6 +234,15 @@ end
 - [Protocol Reference](reference-protocol.md) — full request/response contract, all status flags
 - [How-to: Use the MCP Adapter](howto-mcp-adapter.md) — MCP lifecycle tools, `mcp_call_tool`, session routing
 
+!!! warning "In-process timeouts are cooperative"
+    A timeout or interrupt cannot forcibly reclaim Julia code blocked in
+    non-cooperative native code. REPLy quarantines that session and retains its
+    concurrency and session accounting until the native call returns; only
+    terminating the Julia process is a hard reclamation boundary. Work that
+    requires a hard execution-time or memory bound must run in a separate
+    process. The planned `heavy` process-isolated session type is intended for
+    that use case; it is not yet supported.
+
 !!! note "Cleanup on shutdown"
     Store the `@async` return value (as `sweep_task` above) so you can cancel it when the
     server shuts down. Unanchored background tasks are silently abandoned when the process

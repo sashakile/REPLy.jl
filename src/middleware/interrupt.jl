@@ -74,27 +74,17 @@ Attempt to interrupt the running eval in `session`.
   the eval ID that was interrupted (or `nothing` when no interrupt was sent).
 """
 function _interrupt_session_eval(session::NamedSession; interrupt_id::Union{Integer,Nothing}=nothing)
-    task, current_eval_id = lock(session.lock) do
-        if session.state === SessionRunning
-            (session.eval_task, session.eval_id)
-        else
-            (nothing, session.eval_id)
+    life = lock(session.lock) do
+        session.running_lifecycle
+    end
+    isnothing(life) && return (String[], nothing)
+    current_eval_id, eligible = lock(life.lock) do
+        if !isnothing(interrupt_id) && life.eval_id != interrupt_id
+            return (life.eval_id, false)
         end
+        (life.eval_id, true)
     end
-
-    isnothing(task) && return (String[], nothing)
-
-    # If a specific interrupt-id was requested, check it matches the running eval.
-    if !isnothing(interrupt_id) && current_eval_id != interrupt_id
-        return (String[], nothing)
-    end
-
-    try
-        schedule(task, InterruptException(); error=true)
-    catch
-        # schedule can fail if the task has already completed; treat as idempotent.
-        return (String[], nothing)
-    end
+    eligible && request_eval_cancel!(life) || return (String[], nothing)
 
     return ([session.name], current_eval_id)
 end

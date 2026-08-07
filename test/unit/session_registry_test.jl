@@ -315,10 +315,7 @@
         @test REPLy.session_state(session) === REPLy.SessionClosed
     end
 
-    @testset "destroy_named_session! waits for in-flight eval before closing" begin
-        # Regression: destroy used to set SessionClosed without acquiring eval_lock,
-        # so a concurrent eval could call end_eval! on an already-closed session,
-        # throwing ArgumentError in the finally block.
+    @testset "destroy_named_session! does not wait for eval_lock" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "eval-in-flight")
 
@@ -332,25 +329,76 @@
         end
         take!(eval_holding)  # wait until the simulated eval holds the lock
 
-        # destroy should now block — it must acquire eval_lock first.
         destroy_task = @async REPLy.destroy_named_session!(manager, "eval-in-flight")
 
-        # Give the destroy task a chance to reach the eval_lock acquisition.
-        yield()
-
-        # Session must still be in the registry — destroy has not completed.
-        @test !isnothing(REPLy.lookup_named_session(manager, "eval-in-flight"))
-        @test REPLy.session_state(session) !== REPLy.SessionClosed
+        @test timedwait(() -> istaskdone(destroy_task), 1.0) === :ok
+        @test isnothing(REPLy.lookup_named_session(manager, "eval-in-flight"))
+        @test REPLy.session_state(session) === REPLy.SessionClosed
 
         # Release the simulated eval; destroy should now proceed.
         put!(eval_release, nothing)
         wait(eval_task)
 
-        result = fetch(destroy_task)
-        @test result == true
+        @test fetch(destroy_task) == true
         @test isnothing(REPLy.lookup_named_session(manager, "eval-in-flight"))
         @test REPLy.session_state(session) === REPLy.SessionClosed
     end
+end
+
+@testset "detached zombie identity and alias reuse" begin
+    manager = REPLy.SessionManager()
+    old = REPLy.create_named_session!(manager, "reused-zombie")
+    release = Channel{Nothing}(1)
+    old_task = @async try
+        take!(release)
+    catch ex
+        ex isa InterruptException || rethrow()
+        take!(release)
+    end
+    life = REPLy.EvalLifecycle("old")
+    lock(life.lock) do
+        life.task = old_task
+        life.state = REPLy.EvalRunning
+        life.eval_id = 11
+    end
+    lock(old.lock) do
+        old.state = REPLy.SessionQuarantined
+        old.eval_task = old_task
+        old.running_lifecycle = life
+        old.eval_id = 11
+    end
+
+    @test REPLy.destroy_named_session!(manager, "reused-zombie")
+    @test REPLy.session_state(old) === REPLy.SessionDetached
+    @test isnothing(REPLy.lookup_named_session(manager, "reused-zombie"))
+    @test REPLy.total_session_count(manager) == 1
+
+    replacement = REPLy.create_named_session!(manager, "reused-zombie")
+    handler = REPLy.build_handler(; manager)
+    noop = handler(Dict("op" => "interrupt", "id" => "old-int",
+        "session" => "reused-zombie", "interrupt-id" => 11))
+    @test isempty(first(noop)["interrupted"])
+    @test REPLy.lookup_named_session(manager, "reused-zombie") === replacement
+
+    put!(release, nothing)
+    try
+        wait(old_task)
+    catch ex
+        ex isa TaskFailedException || rethrow()
+    end
+    REPLy.finish_detached_session!(manager, old)
+    @test REPLy.session_state(old) === REPLy.SessionClosed
+    @test REPLy.lookup_named_session(manager, "reused-zombie") === replacement
+    @test REPLy.total_session_count(manager) == 1
+
+    terminated = REPLy.create_named_session!(manager, "terminated-zombie")
+    lock(terminated.lock) do
+        terminated.state = REPLy.SessionQuarantined
+        terminated.eval_task = nothing
+    end
+    @test REPLy.destroy_named_session!(manager, "terminated-zombie")
+    @test REPLy.session_state(terminated) === REPLy.SessionClosed
+    @test all(s -> s !== terminated, manager.detached_sessions)
 end
 
 @testset "UUID session identity" begin

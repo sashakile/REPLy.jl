@@ -1,0 +1,9 @@
+id = "zombie-saturated-capacity-rejects-queued-and-new-evals"
+description = ""
+archetype = ""
+status = "active"
+superseded_by = ""
+authored_with = "0.3.0"
+
+[[tests.unit]]
+flags = "test/unit/resource_enforcement_test.jl test/unit/concurrent_eval_test.jl"

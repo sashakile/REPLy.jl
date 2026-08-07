@@ -20,9 +20,11 @@ mutable struct SessionManager
     ephemeral_sessions::Vector{ModuleSession}
     named_sessions::Dict{String,NamedSession}
     name_to_uuid::Dict{String,String}
+    detached_sessions::Vector{NamedSession}
+    retained_ephemeral::IdDict{ModuleSession,Nothing}
 end
 
-SessionManager() = SessionManager(ReentrantLock(), ModuleSession[], Dict{String,NamedSession}(), Dict{String,String}())
+SessionManager() = SessionManager(ReentrantLock(), ModuleSession[], Dict{String,NamedSession}(), Dict{String,String}(), NamedSession[], IdDict{ModuleSession,Nothing}())
 
 """
     create_ephemeral_session!(manager)
@@ -45,9 +47,25 @@ can call it safely from both success and error paths.
 """
 function destroy_session!(manager::SessionManager, session::ModuleSession)
     lock(manager.lock) do
+        haskey(manager.retained_ephemeral, session) && return nothing
         filter!(existing -> existing !== session, manager.ephemeral_sessions)
     end
     return nothing
+end
+
+
+function retain_ephemeral!(manager::SessionManager, session::ModuleSession)
+    lock(manager.lock) do
+        manager.retained_ephemeral[session] = nothing
+    end
+end
+
+
+function finish_retained_ephemeral!(manager::SessionManager, session::ModuleSession)
+    lock(manager.lock) do
+        delete!(manager.retained_ephemeral, session)
+        filter!(existing -> existing !== session, manager.ephemeral_sessions)
+    end
 end
 
 """
@@ -67,7 +85,7 @@ Return the total number of active sessions: ephemeral + named.
 Used for `max_sessions` enforcement.
 """
 total_session_count(manager::SessionManager) = lock(manager.lock) do
-    length(manager.ephemeral_sessions) + length(manager.named_sessions)
+    length(manager.ephemeral_sessions) + length(manager.named_sessions) + length(manager.detached_sessions)
 end
 
 """
@@ -128,7 +146,7 @@ Return total session count without acquiring the lock. Callers must hold
 `manager.lock`.
 """
 _total_session_count_unlocked(manager::SessionManager) =
-    length(manager.ephemeral_sessions) + length(manager.named_sessions)
+    length(manager.ephemeral_sessions) + length(manager.named_sessions) + length(manager.detached_sessions)
 
 """
     create_ephemeral_session_if_within_limit!(manager, max_sessions) -> Union{ModuleSession, Nothing}
@@ -207,40 +225,50 @@ Remove the named session identified by UUID or name alias. Returns `true` if a
 session was removed, `false` if no such session existed. This operation is
 idempotent — calling it when no such session exists is safe.
 
-Close blocks until any in-flight eval on the session completes: `eval_lock` is
-acquired before the state transition so that `end_eval!` can never race against
-a `SessionClosed` transition. The manager lock is released between the resolve
-and the eval drain to avoid holding it during a potentially long eval.
+Close never waits for an in-flight eval. Live sessions become detached and keep
+their accounting until object-identity-keyed completion cleanup destroys them.
 """
 function destroy_named_session!(manager::SessionManager, id_or_name::AbstractString)
     key = String(id_or_name)
-    # Phase 1: resolve the session while holding manager.lock.
-    session = lock(manager.lock) do
-        _, s = _resolve_to_uuid_and_session(manager, key)
-        s
-    end
-    isnothing(session) && return false
-    # Phase 2: drain any in-flight eval, then mark the session terminal.
-    # Acquiring eval_lock here ensures no eval is between try_begin_eval! and
-    # end_eval! when we transition to SessionClosed.
-    # Lock order: eval_lock → session.lock (consistent with eval path in eval.jl).
-    lock(session.eval_lock) do
-        lock(session.lock) do
-            session.state = SessionClosed
+    result = lock(manager.lock) do
+        _, session = _resolve_to_uuid_and_session(manager, key)
+        isnothing(session) && return nothing
+        live, lifecycles = lock(session.lock) do
+            lifecycles = EvalLifecycle[]
+            !isnothing(session.running_lifecycle) && push!(lifecycles, session.running_lifecycle)
+            append!(lifecycles, session.eval_queue)
+            live = !isempty(lifecycles)
+            session.state = live ? SessionDetached : SessionClosed
+            (live, lifecycles)
         end
-        teardown_stdin_feeder!(session)
-    end
-    # Phase 3: remove from registry. session.id is the canonical UUID, so removal
-    # is correct regardless of whether id_or_name was an alias or a UUID.
-    lock(manager.lock) do
         uuid = session.id
         delete!(manager.named_sessions, uuid)
         name = session.name
         if !isempty(name) && get(manager.name_to_uuid, name, nothing) == uuid
             delete!(manager.name_to_uuid, name)
         end
+        live && push!(manager.detached_sessions, session)
+        (session, live, lifecycles)
     end
+    isnothing(result) && return false
+    session, live, lifecycles = result
+    # Cancellation delivery may schedule tasks, so it is deliberately outside
+    # both manager and session locks. EvalLifecycle makes each request idempotent.
+    foreach(request_eval_cancel!, lifecycles)
+    live || teardown_stdin_feeder!(session)
     return true
+end
+
+
+function finish_detached_session!(manager::SessionManager, session::NamedSession)
+    lock(manager.lock) do
+        filter!(s -> s !== session, manager.detached_sessions)
+    end
+    lock(session.lock) do
+        session.state === SessionDetached && (session.state = SessionClosed)
+    end
+    teardown_stdin_feeder!(session)
+    return nothing
 end
 
 # Internal: resolve id_or_name to (uuid, session) under manager.lock.
@@ -376,11 +404,15 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
     # Phase 1: resolve source and pre-flight checks under lock.
     # The dest session is built privately — not registered yet.
     source, dest = lock(manager.lock) do
-        # Atomically enforce session limit before committing to the clone.
-        _total_session_count_unlocked(manager) >= max_sessions && throw(SessionLimitReachedError())
-
         _, src = _resolve_to_uuid_and_session(manager, String(source_id_or_name))
         isnothing(src) && return (nothing, nothing)
+        lock(src.lock) do
+            src.state === SessionQuarantined && throw(SessionQuarantinedError())
+        end
+
+        # Source quarantine is canonical and therefore precedes errors about
+        # destination state or capacity.
+        _total_session_count_unlocked(manager) >= max_sessions && throw(SessionLimitReachedError())
 
         # dest_name is always an alias; check for alias collision.
         if haskey(manager.name_to_uuid, String(dest_name))

@@ -75,49 +75,11 @@ function load_file_responses(ctx::RequestContext, request::AbstractDict; load_fi
         return [error_response(request_id, msg; status_flags=String["error", flag])]
     end
 
-    max_output_bytes = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))
-
-    with_session_eval(ctx, request_id) do session
-        _run_load_file_core(session_module(session), request_id, code, file; max_output_bytes, max_repr_bytes)
-    end
-end
-
-function _run_load_file_core(module_::Module, request_id::AbstractString, code::AbstractString, file::AbstractString; max_output_bytes::Int=typemax(Int), max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
-    ensure_io_capture_installed!()
-    stdout_cap = _STDOUT_CAPTURER[]::TaskCapturingIO
-    stderr_cap = _STDERR_CAPTURER[]::TaskCapturingIO
-
-    task = current_task()
-    stdout_buf = IOBuffer()
-    stderr_buf = IOBuffer()
-
-    register_task_capture!(stdout_cap, task, stdout_buf)
-    register_task_capture!(stderr_cap, task, stderr_buf)
-
-    try
-        eval_result = try
-            (:ok, Base.include_string(module_, code, file))
-        catch ex
-            (:error, ex, catch_backtrace())
-        end
-
-        stdout_text = truncate_output(String(take!(stdout_buf)), max_output_bytes)
-        stderr_text = truncate_output(String(take!(stderr_buf)), max_output_bytes)
-
-        if first(eval_result) === :error
-            _, ex, bt = eval_result
-            output_messages = buffered_output_messages(request_id, stdout_text, stderr_text)
-            append!(output_messages, [eval_error_response(request_id, ex; bt=bt)])
-            return output_messages
-        end
-
-        _, value = eval_result
-        responses = buffered_output_messages(request_id, stdout_text, stderr_text)
-        push!(responses, value_response(request_id, value, module_; max_repr_bytes=max_repr_bytes))
-        push!(responses, done_response(request_id))
-        return responses
-    finally
-        unregister_task_capture!(stdout_cap, task)
-        unregister_task_capture!(stderr_cap, task)
-    end
+    # Admission, FIFO ordering, active-task registration, gate ownership, and
+    # completion cleanup are intentionally identical to eval. Validation and
+    # reading remain above this boundary so denied paths consume no admission.
+    include_code = "Base.include_string(@__MODULE__, $(repr(code)), $(repr(String(file))))"
+    req = EvalRequest(request_id, include_code, nothing, nothing, nothing,
+                      false, false, false)
+    return eval_responses(ctx, req; max_repr_bytes)
 end

@@ -24,6 +24,58 @@ struct ModuleSession
     session_mod::Module
 end
 
+@enum EvalLifecycleState EvalQueued EvalRunning EvalCompleted EvalTimedOut
+@enum SessionAdmissionOutcome SessionAdmitted SessionNotFound SessionAdmissionQuarantined
+
+"""Per-evaluation lease. Its lock is the authority for deadline/completion,
+cancellation delivery, zombie classification, and cleanup ownership."""
+mutable struct EvalLifecycle
+    lock::ReentrantLock
+    request_id::String
+    eval_id::Int
+    state::EvalLifecycleState
+    task::Union{Task,Nothing}
+    outcome::Any
+    cancel_requested::Bool
+    ephemeral_retained::Bool
+    zombie_gate_marked::Bool
+    setup_ready::Bool
+end
+
+EvalLifecycle(request_id::AbstractString) = EvalLifecycle(
+    ReentrantLock(), String(request_id), 0, EvalQueued, nothing, nothing,
+    false, false, false, false)
+
+"""Request cancellation at most once, publishing ownership under the lifecycle
+lock and delivering the exception only after releasing that lock.
+
+Queued work observes `cancel_requested` itself and must not receive an async
+exception before it can return its typed admission error. A timeout may opt in
+to delivery after atomically changing a formerly-running lifecycle to
+`EvalTimedOut`.
+"""
+function request_eval_cancel!(life::EvalLifecycle; deliver_timed_out::Bool=false)
+    task = lock(life.lock) do
+        current = life.task
+        life.cancel_requested && return nothing
+        life.state === EvalTimedOut && !deliver_timed_out && return nothing
+        life.cancel_requested = true
+        deliver = life.state === EvalRunning ||
+                  (deliver_timed_out && life.state === EvalTimedOut)
+        if !deliver || isnothing(current) || istaskdone(current::Task)
+            return nothing
+        end
+        current
+    end
+    isnothing(task) && return false
+    try
+        schedule(task::Task, InterruptException(); error=true)
+        return true
+    catch
+        return false
+    end
+end
+
 """
     session_module(session)
 
@@ -45,6 +97,8 @@ No transition out of `SessionClosed` is possible.
 @enum SessionState begin
     SessionIdle
     SessionRunning
+    SessionQuarantined
+    SessionDetached
     SessionClosed
 end
 
@@ -77,8 +131,9 @@ output while ephemeral sessions never do.
 
 The fields `state`, `eval_task`, and `last_active_at` are protected by `session.lock`;
 use the provided accessor and transition functions rather than reading or writing them
-directly. The `eval_lock` field is a standalone serialization primitive — it is not
-governed by `session.lock` and must not be acquired while holding it. The
+directly. Evaluation admission is serialized by `eval_queue` and
+`running_lifecycle` under `session.lock`. The retained `eval_lock` field is not
+part of lifecycle serialization and must not be acquired while holding `session.lock`. The
 `stdin_channel` is a bounded `Channel{String}` (capacity `MAX_STDIN_BUFFER_SIZE`) that buffers stdin text across
 evals; it is thread-safe and must not be accessed under `session.lock`.
 
@@ -98,9 +153,9 @@ evals; it is thread-safe and must not be accessed under `session.lock`.
 | `eval_id` | `session.lock` | Incremented by `begin_eval!` |
 | `history` | unguarded (mutation in eval task only) | `_update_history!` runs inside the eval task; no concurrent access |
 | `stdin_channel` | thread-safe `Channel` | Not accessed under `session.lock` |
-| `stdin_feeder` | unguarded (created/cleared during eval_lock) | Created under `eval_lock` (see `_ensure_stdin_feeder!`); torn down in `teardown_stdin_feeder!` which acquires neither lock |
+| `stdin_feeder` | eval lifecycle | Created by the admitted eval; torn down after evaluation |
 | `lock` | N/A | The lock itself, not protected by anything |
-| `eval_lock` | N/A | Standalone serialization primitive, not under `session.lock` |
+| `eval_lock` | N/A | Compatibility field only; does not own lifecycle serialization |
 
 # Field documentation
 
@@ -117,6 +172,8 @@ mutable struct NamedSession
     created_at::Float64
     state::SessionState
     eval_task::Union{Task, Nothing}
+    running_lifecycle::Union{EvalLifecycle, Nothing}
+    eval_queue::Vector{EvalLifecycle}
     last_active_at::Float64
     lock::ReentrantLock
     eval_lock::ReentrantLock
@@ -129,7 +186,8 @@ end
 
 function NamedSession(id::String, name::String, mod::Module; trusted::Bool=false)
     now = time()
-    s = NamedSession(id, name, mod, trusted, now, SessionIdle, nothing, now,
+    s = NamedSession(id, name, mod, trusted, now, SessionIdle, nothing, nothing,
+                     EvalLifecycle[], now,
                      ReentrantLock(), ReentrantLock(),
                      Channel{String}(MAX_STDIN_BUFFER_SIZE),
                      Any[], 0, 0, nothing)
@@ -297,11 +355,22 @@ Prefer this over calling `transition_session_state!` and `_set_eval_task!` separ
 """
 function end_eval!(session::NamedSession)
     lock(session.lock) do
-        _transition_state_unlocked!(session, SessionIdle)
+        session.state === SessionRunning && (session.state = SessionIdle)
+        session.state in (SessionIdle, SessionQuarantined, SessionDetached) ||
+            throw(ArgumentError("invalid eval completion state: $(session.state)"))
         session.eval_task = nothing
         session.last_active_at = time()
         session.eval_count += 1
     end
+    return session
+end
+
+function quarantine_session!(session::NamedSession)
+    queued = lock(session.lock) do
+        session.state === SessionRunning && (session.state = SessionQuarantined)
+        copy(session.eval_queue)
+    end
+    foreach(request_eval_cancel!, queued)
     return session
 end
 

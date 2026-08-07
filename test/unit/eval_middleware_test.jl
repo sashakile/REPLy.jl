@@ -221,7 +221,7 @@
         @test REPLy.session_last_active_at(session) > before
     end
 
-    @testset "named session: eval_lock is held during eval and released after" begin
+    @testset "named session exposes the running lifecycle without taking eval_lock" begin
         manager = REPLy.SessionManager()
         session = REPLy.create_named_session!(manager, "lock-hold-test")
         mw = REPLy.EvalMiddleware()
@@ -241,17 +241,19 @@
             _ -> nothing, ctx,
         )
 
-        take!(eval_started)  # eval is now running inside eval_lock
-
-        held = !trylock(session.eval_lock)
-        @test held  # eval_lock is held while eval is running
+        take!(eval_started)
+        @test lock(session.lock) do
+            session.running_lifecycle !== nothing
+        end
+        @test trylock(session.eval_lock)
+        unlock(session.eval_lock)
 
         put!(eval_proceed, nothing)
         wait(t)
 
-        released = trylock(session.eval_lock)
-        @test released  # eval_lock is released after eval completes
-        released && unlock(session.eval_lock)
+        @test lock(session.lock) do
+            session.running_lifecycle === nothing
+        end
     end
 
     @testset "cross-session eval_locks are independent" begin
@@ -302,19 +304,22 @@ end
         @test occursin("max_eval_time_ms", terminal["hint"])
     end
 
-    @testset "a timed-out eval never bleeds an interrupt into the next request" begin
+    @testset "a timed-out eval quarantines without bleeding into a replacement" begin
         # Regression for the timer/connection-task race: the eval now runs on a
         # dedicated child task, so a late InterruptException cannot land on the
         # (shared) handler task and corrupt the following eval on that connection.
         manager = REPLy.SessionManager()
-        REPLy.create_named_session!(manager, "race-sess")
         handler = REPLy.build_handler(; manager=manager)
 
         for i in 1:40
+            REPLy.create_named_session!(manager, "race-sess")
             # First request: times out at the ~1ms boundary while the body sleeps.
             handler(Dict("op" => "eval", "id" => "race-a-$i", "session" => "race-sess",
                          "code" => "sleep(0.02)", "timeout-ms" => 1))
-            # Second request on the SAME handler must complete cleanly.
+            @test "session-quarantined" in last(handler(Dict("op" => "eval", "id" => "race-q-$i",
+                "session" => "race-sess", "code" => "1")))["status"]
+            handler(Dict("op" => "close", "id" => "race-close-$i", "session" => "race-sess"))
+            REPLy.create_named_session!(manager, "race-sess")
             msgs = handler(Dict("op" => "eval", "id" => "race-b-$i", "session" => "race-sess",
                                 "code" => "1 + 1"))
             value_msg = only(filter(m -> haskey(m, "value"), msgs))
@@ -323,6 +328,7 @@ end
             @test !("interrupted" in terminal["status"])
             @test !("timeout" in terminal["status"])
             @test !("error" in terminal["status"])
+            handler(Dict("op" => "close", "id" => "race-done-$i", "session" => "race-sess"))
         end
     end
 
@@ -354,63 +360,34 @@ end
         @test "timeout" in terminal["status"]
     end
 
-    @testset "after timeout the session is usable for new evals" begin
-        manager = REPLy.SessionManager()
-        REPLy.create_named_session!(manager, "ts1")
-        handler = REPLy.build_handler(; manager=manager)
-
-        # Timeout the named session
-        timeout_msgs = handler(Dict(
-            "op"         => "eval",
-            "id"         => "to5a",
-            "code"       => "sleep(600)",
-            "session"    => "ts1",
-            "timeout-ms" => 300,
-        ))
-        @test "timeout" in last(timeout_msgs)["status"]
-
-        # Follow-up eval should succeed
-        follow_msgs = handler(Dict(
-            "op"      => "eval",
-            "id"      => "to5b",
-            "code"    => "42",
-            "session" => "ts1",
-        ))
-        @test "done" in last(follow_msgs)["status"]
-        @test !("timeout" in last(follow_msgs)["status"])
-        @test any(get(m, "value", nothing) == "42" for m in follow_msgs)
-    end
-
-    @testset "bounded wait releases eval slot for non-interruptible eval" begin
-        # Regression: an eval that never observes InterruptException (e.g.
-        # stuck in non-interruptible code) must not hold the eval slot
-        # forever. The bounded wait should release the slot after timeout
-        # and allow subsequent evals to proceed.
-        limits  = REPLy.ResourceLimits(max_eval_time_ms=100, max_concurrent_evals=1)
+    @testset "live-at-deadline eval retains accounting and quarantines its session" begin
+        limits  = REPLy.ResourceLimits(max_eval_time_ms=50, max_concurrent_evals=1)
         manager = REPLy.SessionManager()
         state   = REPLy.ServerState(limits, REPLy.DEFAULT_MAX_MESSAGE_BYTES)
+        session = REPLy.create_named_session!(manager, "zombie")
+        release = Channel{Nothing}(1)
+        Core.eval(REPLy.session_module(session), :(release = $release))
         handler = REPLy.build_handler(; manager=manager, state=state)
 
-        # First eval: code that swallows InterruptException in a tight loop,
-        # simulating a non-interruptible operation (ccall, BLAS, etc.).
         stuck = handler(Dict(
             "op"         => "eval",
             "id"         => "ni1",
-            "code"       => "try; while true; sleep(1); end; catch; while true; sleep(1); end; end",
+            "session"    => "zombie",
+            "code"       => "try; take!(release); catch; take!(release); end",
             "timeout-ms" => 50,
         ))
         @test "timeout" in last(stuck)["status"]
+        @test REPLy.active_count(state.gate) == 1
+        @test length(REPLy.active_eval_tasks(state)) == 1
+        @test REPLy.session_state(session) == REPLy.SessionQuarantined
 
-        # After the bounded wait fires, the eval slot should be released
-        # (max_concurrent_evals=1, so this would deadlock if the slot
-        # were leaked).
-        follow = handler(Dict(
-            "op"   => "eval",
-            "id"   => "ni2",
-            "code" => "42",
-        ))
-        @test "done" in last(follow)["status"]
-        @test any(get(m, "value", nothing) == "42" for m in follow)
+        follow = handler(Dict("op" => "eval", "id" => "ni2", "session" => "zombie", "code" => "42"))
+        @test "session-quarantined" in last(follow)["status"]
+
+        put!(release, nothing)
+        @test timedwait(() -> REPLy.active_count(state.gate) == 0, 2.0) === :ok
+        @test isempty(REPLy.active_eval_tasks(state))
+        @test REPLy.session_state(session) == REPLy.SessionQuarantined
     end
 end
 
@@ -614,36 +591,6 @@ end
         # After rejection, both counters must be back to zero.
         @test REPLy.active_count(state.gate) == 0
         @test isempty(REPLy.active_eval_tasks(state))
-    end
-end
-
-@testset "with_session_eval helper" begin
-    @testset "returns session-closed error without calling f when named session is already closed" begin
-        manager = REPLy.SessionManager()
-        session = REPLy.create_named_session!(manager, "wse-closed")
-        REPLy.destroy_named_session!(manager, "wse-closed")
-        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], session)
-        called = Ref(false)
-        result = REPLy.with_session_eval(ctx, "req-1") do _s
-            called[] = true
-            []
-        end
-        @test !called[]
-        @test length(result) == 1
-        @test result[1]["err"] == "session was closed"
-        @test "error" in result[1]["status"]
-    end
-
-    @testset "calls f and destroys ephemeral session when ctx.session is nothing" begin
-        manager = REPLy.SessionManager()
-        ctx = REPLy.RequestContext(manager, Dict{String, Any}[], nothing)
-        f_session = Ref{Any}(nothing)
-        REPLy.with_session_eval(ctx, "req-2") do s
-            f_session[] = s
-            [REPLy.done_response("req-2")]
-        end
-        @test !isnothing(f_session[])
-        @test REPLy.session_count(manager) == 0
     end
 end
 

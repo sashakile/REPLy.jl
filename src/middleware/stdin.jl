@@ -61,6 +61,7 @@ function stdin_responses(ctx::RequestContext, request::AbstractDict)
     # Snapshot state under lock; put! outside the lock (Channel is thread-safe).
     state = lock(session.lock) do; session.state; end
 
+    state === SessionQuarantined && return [session_quarantined_response(request_id)]
     state === SessionClosed && return [error_response(request_id, "session is closed: $(session.name)")]
 
     put!(session.stdin_channel, String(input))

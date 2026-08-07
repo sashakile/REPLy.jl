@@ -125,6 +125,12 @@ function session_not_found_response(request_id::AbstractString, session_id::Abst
     )
 end
 
+session_quarantined_response(request_id::AbstractString) = error_response(
+    request_id, "Session quarantined after eval timeout";
+    status_flags=String["error", "session-quarantined"])
+
+struct SessionQuarantinedError <: Exception end
+
 """
     SessionLimitReachedError()
 

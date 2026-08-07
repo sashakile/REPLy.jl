@@ -5,6 +5,18 @@ end
 
 REPLy.shutdown_middleware!(mw::ShutdownProbe) = push!(mw.recorder, mw.name)
 
+struct BlockingResponseProbe <: REPLy.AbstractMiddleware
+    entered::Channel{Nothing}
+    release::Channel{Nothing}
+end
+
+function REPLy.handle_message(mw::BlockingResponseProbe, msg, next, ctx::REPLy.RequestContext)
+    get(msg, "op", nothing) == "blocking-response" || return next(msg)
+    put!(mw.entered, nothing)
+    take!(mw.release)
+    return [Dict{String, Any}("id" => String(msg["id"]), "status" => ["done"])]
+end
+
 @testset "integration: named session lifecycle" begin
     @testset "named session persists bindings across lookups" begin
         manager = REPLy.SessionManager()
@@ -194,6 +206,37 @@ REPLy.shutdown_middleware!(mw::ShutdownProbe) = push!(mw.recorder, mw.name)
             isopen(sock) && close(sock)
             close(server)
         end
+    end
+
+    @testset "close drains an active response before closing its socket" begin
+        entered = Channel{Nothing}(1); release = Channel{Nothing}(1)
+        server = REPLy.serve(; port=0, middleware=REPLy.AbstractMiddleware[
+            BlockingResponseProbe(entered, release), REPLy.UnknownOpMiddleware()])
+        sock = connect(REPLy.server_port(server))
+        send_request(sock, Dict("op" => "blocking-response", "id" => "drain"))
+        take!(entered)
+        closer = @async close(server; grace_seconds=1.0)
+        @test REPLy.active_request_count(server.state) == 1
+        put!(release, nothing)
+        msgs = collect_until_done(sock; timeout_s=1.0)
+        @test "done" in only(msgs)["status"]
+        @test timedwait(() -> istaskdone(closer), 1.0) === :ok
+        @test REPLy.active_request_count(server.state) == 0
+    end
+
+    @testset "close expires grace and closes a blocked response socket" begin
+        entered = Channel{Nothing}(1); release = Channel{Nothing}(1)
+        server = REPLy.serve(; port=0, middleware=REPLy.AbstractMiddleware[
+            BlockingResponseProbe(entered, release), REPLy.UnknownOpMiddleware()])
+        sock = connect(REPLy.server_port(server))
+        send_request(sock, Dict("op" => "blocking-response", "id" => "expire"))
+        take!(entered)
+        elapsed = @elapsed close(server; grace_seconds=0.1)
+        @test 0.05 <= elapsed < 0.75
+        @test !isopen(sock) || eof(sock)
+        put!(release, nothing)
+        @test timedwait(() -> REPLy.active_request_count(server.state) == 0, 1.0) === :ok
+        isopen(sock) && close(sock)
     end
 
     @testset "close_server! shuts down middleware in reverse order" begin

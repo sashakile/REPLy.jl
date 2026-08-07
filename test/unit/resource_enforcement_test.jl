@@ -117,6 +117,69 @@
         @test isempty(gate.queue)
     end
 
+    @testset "EvalGate cancellation races handoff without leaking or skipping survivors" begin
+        for iteration in 1:100
+            gate = REPLy.EvalGate(1)
+            @test REPLy.acquire!(gate)
+            cancelled_life = REPLy.EvalLifecycle("cancelled-$iteration")
+            survivor_life = REPLy.EvalLifecycle("survivor-$iteration")
+            cancelled = @async begin
+                acquired = REPLy.acquire!(gate, cancelled_life)
+                # If handoff wins before cancellation is published, this
+                # waiter legitimately owns the permit and must release it.
+                acquired && REPLy.release!(gate)
+                acquired
+            end
+            @test timedwait(() -> length(gate.queue) == 1, 1.0) === :ok
+            survivor = @async begin
+                acquired = REPLy.acquire!(gate, survivor_life)
+                acquired && REPLy.release!(gate)
+                acquired
+            end
+            @test timedwait(() -> length(gate.queue) == 2, 1.0) === :ok
+
+            releaser = Threads.@spawn REPLy.release!(gate)
+            canceller = Threads.@spawn REPLy.request_eval_cancel!(cancelled_life)
+            wait(releaser); wait(canceller)
+
+            @test timedwait(() -> istaskdone(cancelled) && istaskdone(survivor), 1.0) === :ok
+            @test fetch(cancelled) isa Bool
+            @test fetch(survivor)
+            @test REPLy.active_count(gate) == 0
+            @test isempty(gate.queue)
+        end
+    end
+
+    @testset "zombie saturation wakes and rejects queued acquisitions" begin
+        gate = REPLy.EvalGate(1)
+        @test REPLy.acquire!(gate)
+        waiter = @async REPLy.acquire!(gate)
+        @test timedwait(() -> length(gate.queue) == 1, 1.0) === :ok
+        REPLy.mark_zombie!(gate)
+        @test timedwait(() -> istaskdone(waiter), 1.0) === :ok
+        @test fetch(waiter) == false
+        @test REPLy.acquire!(gate) == false
+        REPLy.release_zombie!(gate)
+        @test REPLy.active_count(gate) == 0
+    end
+
+    @testset "EvalGate shutdown wakes queued waiters and rejects future acquisition" begin
+        gate = REPLy.EvalGate(1)
+        @test REPLy.acquire!(gate)
+        waiters = [@async REPLy.acquire!(gate) for _ in 1:2]
+        @test timedwait(() -> length(gate.queue) == 2, 1.0) === :ok
+
+        REPLy.shutdown!(gate)
+
+        @test timedwait(() -> all(istaskdone, waiters), 1.0) === :ok
+        @test fetch.(waiters) == [false, false]
+        @test isempty(gate.queue)
+        @test !gate.accepting
+        @test !REPLy.acquire!(gate)
+        REPLy.release!(gate)
+        @test REPLy.active_count(gate) == 0
+    end
+
     @testset "create_named_session! rejected when session limit reached" begin
         limits  = REPLy.ResourceLimits(max_sessions=1)
         manager = REPLy.SessionManager()

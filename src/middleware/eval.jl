@@ -10,9 +10,8 @@ active session module with captured stdout/stderr, truncates the `repr` of the
 return value at `max_repr_bytes`, and returns a sequence of response messages
 (out, err, value, done). Passes all other ops to the next middleware.
 
-Named sessions are serialized per session via `session.eval_lock` (FIFO within
-a session; independent across sessions). Ephemeral sessions have no cross-request
-state and need no serialization.
+Named sessions are serialized FIFO by their lifecycle queue. Ephemeral sessions
+have no cross-request state and need no serialization.
 """
 struct EvalMiddleware <: AbstractMiddleware
     max_repr_bytes::Int
@@ -243,7 +242,7 @@ function _stdin_feeder(channel::Channel{String}, pipe_in::IO)
 end
 
 # Create (or return existing) persistent stdin Pipe + feeder Task for `session`.
-# Must be called while holding session.eval_lock (serializes initialization).
+# Called only by the lifecycle admitted as the session's running eval.
 function _ensure_stdin_feeder!(session::NamedSession)
     isnothing(session.stdin_feeder) || return session.stdin_feeder::StdinFeeder
     pipe = Base.Pipe()
@@ -303,47 +302,6 @@ function _maybe_revise!()
         @warn "Revise.revise() failed; continuing eval" exception=(ex, catch_backtrace())
     end
     return nothing
-end
-
-"""
-    with_session_eval(f, ctx, request_id)
-
-Shared lifecycle wrapper used by `eval_responses` and `load_file_responses`.
-
-Creates an ephemeral session when `ctx.session` is `nothing`, resolves the
-active session, then dispatches based on type:
-
-- `NamedSession`: acquires `eval_lock`, guards with `try_begin_eval!` (returning a
-  "session was closed" error if the session was concurrently destroyed), runs `f(session)`
-  under a `try`/`finally` that calls `end_eval!`, then releases the lock.
-- `ModuleSession` (ephemeral): calls `f(session)` directly without locking.
-
-Destroys the ephemeral session in a `finally` block so cleanup is guaranteed
-on both success and error paths.
-
-`f` receives the active session and must return a `Vector{Dict{String,Any}}`.
-"""
-function with_session_eval(f::Function, ctx::RequestContext, request_id::AbstractString)
-    ephemeral = isnothing(ctx.session) ? create_ephemeral_session!(ctx.manager) : nothing
-    session = something(ephemeral, ctx.session)
-    try
-        if session isa NamedSession
-            lock(session.eval_lock) do
-                try_begin_eval!(session, current_task()) ||
-                    return [error_response(request_id, "session was closed";
-                        status_flags=String["error", "session-closed"])]
-                try
-                    f(session)
-                finally
-                    end_eval!(session)
-                end
-            end
-        else
-            f(session)
-        end
-    finally
-        !isnothing(ephemeral) && destroy_session!(ctx.manager, ephemeral)
-    end
 end
 
 """
@@ -510,6 +468,134 @@ function timeout_response(request_id::AbstractString, effective_timeout_ms)
     )
 end
 
+function _register_named_lifecycle!(session::NamedSession, life::EvalLifecycle)
+    lock(session.lock) do
+        session.state === SessionQuarantined && return SessionAdmissionQuarantined
+        session.state in (SessionClosed, SessionDetached) && return SessionNotFound
+        push!(session.eval_queue, life)
+        return SessionAdmitted
+    end
+end
+
+function _remove_named_lifecycle!(session::NamedSession, life::EvalLifecycle)
+    lock(session.lock) do
+        filter!(queued -> queued !== life, session.eval_queue)
+        return session.state === SessionDetached &&
+               isnothing(session.running_lifecycle) && isempty(session.eval_queue)
+    end
+end
+
+function _remove_and_finish_named_lifecycle!(manager::SessionManager,
+                                             session::NamedSession,
+                                             life::EvalLifecycle)
+    _remove_named_lifecycle!(session, life) && finish_detached_session!(manager, session)
+    return nothing
+end
+
+function _current_session_admission(session::NamedSession)
+    lock(session.lock) do
+        session.state === SessionQuarantined ? SessionAdmissionQuarantined :
+        session.state in (SessionClosed, SessionDetached) ? SessionNotFound : SessionAdmitted
+    end
+end
+
+function _enter_named_eval!(session::NamedSession, life::EvalLifecycle)
+    while true
+        admitted = lock(session.lock) do
+            lock(life.lock) do
+                if life.state === EvalTimedOut
+                    # The request handler already owns the timeout response. The
+                    # child must stop here rather than execute code after its deadline.
+                    return SessionNotFound
+                elseif session.state === SessionQuarantined
+                    return SessionAdmissionQuarantined
+                elseif life.cancel_requested || session.state in (SessionClosed, SessionDetached)
+                    return SessionNotFound
+                end
+                if isnothing(session.running_lifecycle) && first(session.eval_queue) === life
+                    popfirst!(session.eval_queue)
+                    session.eval_id += 1
+                    life.eval_id = session.eval_id
+                    session.running_lifecycle = life
+                    session.eval_task = life.task
+                    session.state = SessionRunning
+                    session.last_active_at = time()
+                    life.state = EvalRunning
+                    return SessionAdmitted
+                end
+                nothing
+            end
+        end
+        !isnothing(admitted) && return admitted
+        sleep(0.002)
+    end
+end
+
+function _session_admission_response(outcome::SessionAdmissionOutcome,
+                                     request_id::AbstractString, session::NamedSession)
+    outcome === SessionAdmissionQuarantined && return [session_quarantined_response(request_id)]
+    return [session_not_found_response(request_id, session.name)]
+end
+
+function _observe_eval_completion!(life::EvalLifecycle, session, manager, state)
+    task = life.task::Task
+    outcome = try
+        fetch(task)
+    catch ex
+        inner = ex isa TaskFailedException ? ex.task.exception : ex
+        inner isa InterruptException ? Interrupted("", "") : Errored(inner, catch_backtrace(), "", "")
+    end
+    lock(life.lock) do
+        life.outcome = outcome
+        life.state === EvalTimedOut || (life.state = EvalCompleted)
+    end
+    # A deadline winner owns timeout setup. Do not inspect zombie ownership
+    # until it has either installed accounting or published setup failure.
+    while lock(life.lock) do; life.state === EvalTimedOut && !life.setup_ready; end
+        # Poll retained lifecycle state rather than blocking on a wake token that
+        # may have been consumed by an earlier queue/admission transition.
+        yield()
+        sleep(0.001)
+    end
+    ephemeral_retained, zombie_gate_marked = lock(life.lock) do
+        (life.ephemeral_retained, life.zombie_gate_marked)
+    end
+    try
+        if session isa NamedSession
+            detached = lock(session.lock) do
+                # Completion owns identity cleanup even when interruption killed
+                # the task while it was still waiting in _enter_named_eval!.
+                filter!(queued -> queued !== life, session.eval_queue)
+                if session.running_lifecycle === life
+                    session.running_lifecycle = nothing
+                    session.eval_task = nothing
+                    if session.state === SessionRunning
+                        session.state = SessionIdle
+                        session.eval_count += 1
+                        session.last_active_at = time()
+                    end
+                end
+                session.state === SessionDetached &&
+                    isnothing(session.running_lifecycle) && isempty(session.eval_queue)
+            end
+            detached && try finish_detached_session!(manager, session) catch end
+        elseif ephemeral_retained
+            try finish_retained_ephemeral!(manager, session) catch end
+        end
+    finally
+        if !isnothing(state)
+            try unregister_active_eval!(state, task) finally
+                zombie_gate_marked ? release_zombie!(state.gate) : release!(state.gate)
+            end
+        end
+    end
+    nothing
+end
+
+# Narrow test seam for failures between registry admission and task startup.
+const _EVAL_TASK_SCHEDULER = Ref{Function}(schedule)
+const _TIMEOUT_SETUP_HOOK = Ref{Function}(() -> nothing)
+
 function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     request_id = req.id
     code = req.code
@@ -533,22 +619,42 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
     max_output_bytes    = effective_limit(ctx.server_state, :max_output_bytes, typemax(Int))
     max_session_history = effective_limit(ctx.server_state, :max_history_entries, MAX_SESSION_HISTORY_SIZE)
 
+    life = EvalLifecycle(request_id)
+    session = ctx.session
+    if session isa NamedSession
+        admission = _register_named_lifecycle!(session, life)
+        admission === SessionAdmitted ||
+            return _session_admission_response(admission, request_id, session)
+    end
+
     # Concurrent eval slot acquisition via EvalGate (spec REQ-RPL-047d).
     state = ctx.server_state
     if !isnothing(state)
-        acquire!(state.gate) ||
+        if !acquire!(state.gate, life)
+            if session isa NamedSession
+                _remove_and_finish_named_lifecycle!(ctx.manager, session, life)
+                admission = _current_session_admission(session)
+                admission === SessionAdmitted ||
+                    return _session_admission_response(admission, request_id, session)
+            end
+            if state.shutdown_requested[]
+                return [error_response(request_id, "server is shutting down";
+                    status_flags=String["error", "shutdown"])]
+            end
             return [error_response(request_id, "Too many concurrent evals";
-                        status_flags=String["error", "concurrency-limit-reached"])]
+                status_flags=String["error", "concurrency-limit-reached"])]
+        end
     end
 
-    # For named sessions, eval_id is captured after try_begin_eval! increments it.
     this_eval_id = Ref{Union{Int, Nothing}}(nothing)
-    # The eval module is captured inside the task; read back for serialize.
     eval_module_ref = Ref{Union{Module, Nothing}}(nothing)
 
     # Run the eval body on a DEDICATED child task.
     eval_task = @task begin
-        result = with_session_eval(ctx, request_id) do session
+        admission = session isa NamedSession ? _enter_named_eval!(session, life) : SessionAdmitted
+        if admission !== SessionAdmitted
+            admission
+        else
             eval_module = session_module(session)
             eval_module_ref[] = eval_module
             module_path = req.module_path
@@ -561,7 +667,7 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
             end
 
             if session isa NamedSession
-                this_eval_id[] = session_eval_id(session)
+                this_eval_id[] = life.eval_id
                 revise_enabled = effective_limit(ctx.server_state, :revise_hook_enabled, true)
                 revise_enabled && _maybe_revise!()
             end
@@ -582,20 +688,90 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
             session isa NamedSession && _update_history!(session, outcome, store_history, max_session_history)
             outcome
         end
-        # Normalize: with_session_eval may return Vector{Dict} for session-closed error.
-        result isa EvalOutcome ? result : Cancelled("session was closed")
     end
     eval_task.sticky = true
-    !isnothing(state) && register_active_eval!(state, eval_task)
-    schedule(eval_task)
-
+    lock(life.lock) do
+        life.task = eval_task
+        !(session isa NamedSession) && (life.state = EvalRunning)
+    end
+    permit_owned = !isnothing(state)
+    registered = false
+    observer_started = false
+    timeout_was_running = Ref(false)
     try
-        outcome = run_with_timeout(eval_task, effective_timeout_ms, request_id)
+        if !isnothing(state) && !register_active_eval!(state, eval_task, life)
+            return [error_response(request_id, "server is shutting down";
+                status_flags=String["error", "shutdown"])]
+        end
+        registered = !isnothing(state)
+        _EVAL_TASK_SCHEDULER[](eval_task)
+        @async _observe_eval_completion!(life, session, ctx.manager, state)
+        observer_started = true
+
+        deadline = isnothing(effective_timeout_ms) ? Inf : time() + effective_timeout_ms / 1000
+        outcome = nothing
+        while isnothing(outcome)
+            outcome = lock(life.lock) do
+                if life.state === EvalCompleted
+                    return life.outcome
+                elseif life.state === EvalTimedOut
+                    return TimedOut(something(effective_timeout_ms, typemax(Int)), "", "")
+                elseif time() >= deadline
+                    # Completion and deadline classify under this one lock. A running
+                    # task that is live at the winning deadline is quarantined first.
+                    if istaskdone(eval_task)
+                        return nothing # observer will publish the actual outcome
+                    end
+                    was_running = life.state === EvalRunning
+                    life.state = EvalTimedOut
+                    if was_running
+                        timeout_was_running[] = true
+                    end
+                    return TimedOut(something(effective_timeout_ms, typemax(Int)), "", "")
+                end
+                nothing
+            end
+            isnothing(outcome) || break
+            sleep(0.002)
+        end
+
+        if outcome isa TimedOut
+            try
+                try
+                    _TIMEOUT_SETUP_HOOK[]()
+                catch ex
+                    @warn "timeout setup hook failed; continuing lifecycle quarantine" exception=(ex, catch_backtrace())
+                end
+                if timeout_was_running[]
+                    if session isa NamedSession
+                        quarantine_session!(session)
+                    else
+                        if session isa ModuleSession
+                            retain_ephemeral!(ctx.manager, session)
+                            lock(life.lock) do; life.ephemeral_retained = true; end
+                        end
+                    end
+                    if !isnothing(state)
+                        mark_zombie!(state.gate)
+                        lock(life.lock) do; life.zombie_gate_marked = true; end
+                    end
+                end
+            finally
+                lock(life.lock) do
+                    life.setup_ready = true
+                end
+                request_eval_cancel!(life; deliver_timed_out=timeout_was_running[])
+            end
+        end
 
         # Serialize EvalOutcome to wire format at the edge.
-        eid = this_eval_id[]
+        if outcome isa SessionAdmissionOutcome
+            return _session_admission_response(outcome, request_id, session::NamedSession)
+        end
+        eid = life.eval_id == 0 ? nothing : life.eval_id
         ephemeral_flag = !(ctx.session isa NamedSession)
-        msgs = serialize(outcome, request_id, something(eval_module_ref[]);
+        response_module = something(eval_module_ref[], session_module(session))
+        msgs = serialize(outcome, request_id, response_module;
             max_repr_bytes=max_repr_bytes,
             silent=silent,
             eval_id=eid,
@@ -604,9 +780,16 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
 
         return msgs
     finally
-        if !isnothing(state)
-            unregister_active_eval!(state, eval_task)
-            release!(state.gate)
+        # Once started, the observer owns registry and permit cleanup. Before
+        # that handoff, this admission owns exactly the permit it acquired.
+        if !observer_started
+            lock(life.lock) do
+                life.setup_ready = true
+            end
+            session isa NamedSession &&
+                _remove_and_finish_named_lifecycle!(ctx.manager, session, life)
+            registered && unregister_active_eval!(state::ServerState, eval_task)
+            permit_owned && release!((state::ServerState).gate)
         end
     end
 end

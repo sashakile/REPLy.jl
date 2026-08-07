@@ -256,7 +256,13 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         # "light" or absent is accepted — no action needed.
     end
 
-    # Check if destination already exists before attempting clone
+    source = lookup_named_session(ctx.manager, source_str)
+    if !isnothing(source) && session_state(source) === SessionQuarantined
+        return [session_quarantined_response(request_id)]
+    end
+
+    # Check if destination already exists before attempting clone. Source
+    # quarantine intentionally wins over this compatibility pre-check.
     if !isnothing(lookup_named_session(ctx.manager, name))
         return [error_response(
             request_id,
@@ -270,6 +276,7 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
     try
         cloned = clone_named_session!(ctx.manager, source_str, name; max_sessions=ms)
     catch e
+        e isa SessionQuarantinedError && return [session_quarantined_response(request_id)]
         e isa SessionLimitReachedError && return [session_limit_response(request_id)]
         e isa ArgumentError || rethrow(e)
         return [error_response(

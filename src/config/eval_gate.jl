@@ -10,14 +10,21 @@ previously lived in `ServerState` and were managed by `_eval_acquire_slot` /
 `_eval_release_slot`. The gate encapsulates both the counter and the FIFO
 queue, making the invariant impossible to violate.
 """
+struct EvalGateWaiter
+    signal::Channel{Bool}
+    lifecycle::Union{EvalLifecycle,Nothing}
+end
+
 mutable struct EvalGate
     max::Int
     active::Threads.Atomic{Int}
-    queue::Vector{Channel{Nothing}}
+    zombies::Int
+    accepting::Bool
+    queue::Vector{EvalGateWaiter}
     lock::ReentrantLock
 end
 
-EvalGate(max::Int) = EvalGate(max, Threads.Atomic{Int}(0), Channel{Nothing}[], ReentrantLock())
+EvalGate(max::Int) = EvalGate(max, Threads.Atomic{Int}(0), 0, true, EvalGateWaiter[], ReentrantLock())
 
 """
     acquire!(gate::EvalGate) -> Bool
@@ -28,12 +35,14 @@ occupied. Blocks the calling task when queued until a slot opens.
 Returns `true` when a slot is acquired, `false` when the queue is full and
 the eval is rejected.
 """
-function acquire!(gate::EvalGate)
+function acquire!(gate::EvalGate, lifecycle::Union{EvalLifecycle,Nothing}=nothing)
     limit = gate.max
     waiter = nothing
     acquired = false
 
     rejected = lock(gate.lock) do
+        gate.accepting || return true
+        gate.zombies >= limit && return true
         if gate.active[] < limit
             Threads.atomic_add!(gate.active, 1)
             acquired = true
@@ -45,7 +54,7 @@ function acquire!(gate::EvalGate)
             return true
         end
 
-        waiter = Channel{Nothing}(1)
+        waiter = EvalGateWaiter(Channel{Bool}(1), lifecycle)
         push!(gate.queue, waiter)
         return false
     end
@@ -53,10 +62,48 @@ function acquire!(gate::EvalGate)
     rejected && return false
     acquired && return true
 
-    # A buffered channel retains a handoff even if release! runs before take!,
-    # avoiding the lost-notification window of a condition variable.
-    take!(waiter::Channel{Nothing})
-    return true
+    queued_waiter = waiter::EvalGateWaiter
+    while true
+        if isready(queued_waiter.signal)
+            handed_off = take!(queued_waiter.signal)
+            cancelled = !isnothing(lifecycle) && lock((lifecycle::EvalLifecycle).lock) do
+                lifecycle.cancel_requested
+            end
+            if handed_off && cancelled
+                release!(gate)
+                return false
+            end
+            return handed_off
+        end
+        cancelled = !isnothing(lifecycle) && lock((lifecycle::EvalLifecycle).lock) do
+            lifecycle.cancel_requested
+        end
+        if cancelled
+            removed = lock(gate.lock) do
+                index = findfirst(==(queued_waiter), gate.queue)
+                isnothing(index) ? false : (deleteat!(gate.queue, index); true)
+            end
+            removed && return false
+            # The waiter left the queue before cancellation acquired the gate
+            # lock. Consume the retained decision; a won permit is released
+            # exactly once so the next FIFO survivor can progress.
+            handed_off = take!(queued_waiter.signal)
+            handed_off && release!(gate)
+            return false
+        end
+        sleep(0.001)
+    end
+end
+
+"""Atomically reject future acquisitions and wake every queued waiter."""
+function shutdown!(gate::EvalGate)
+    waiters = lock(gate.lock) do
+        gate.accepting || return EvalGateWaiter[]
+        gate.accepting = false
+        splice!(gate.queue, eachindex(gate.queue))
+    end
+    foreach(waiter -> put!(waiter.signal, false), waiters)
+    return nothing
 end
 
 """
@@ -78,8 +125,24 @@ function release!(gate::EvalGate)
         return popfirst!(gate.queue)
     end
 
-    isnothing(waiter) || put!(waiter, nothing)
+    isnothing(waiter) || put!(waiter.signal, true)
     return nothing
+end
+
+function mark_zombie!(gate::EvalGate)
+    waiters = lock(gate.lock) do
+        gate.zombies += 1
+        gate.zombies >= gate.max ? splice!(gate.queue, eachindex(gate.queue)) : EvalGateWaiter[]
+    end
+    foreach(waiter -> put!(waiter.signal, false), waiters)
+    return nothing
+end
+
+function release_zombie!(gate::EvalGate)
+    lock(gate.lock) do
+        gate.zombies -= 1
+    end
+    release!(gate)
 end
 
 """

@@ -96,72 +96,87 @@ function handle_client!(socket::IO, handler::Function;
             consecutive_malformed = 0
             isnothing(msg) && return nothing
 
-            # Rate limiting: reset window when 60 s have elapsed.
-            if rate_limit_per_min > 0
-                now = time()
-                if now - rl_window_start >= 60.0
-                    rl_window_start = now
-                    rl_count        = 0
-                end
-                rl_count += 1
-                if rl_count > rate_limit_per_min
-                    request_id = safe_request_id(msg)
-                    try
-                        send!(transport, error_response(request_id, "Rate limit exceeded";
-                            status_flags=String["error", "rate-limited"]))
-                    catch
-                    end
-                    continue
-                end
-            end
+            admitted = isnothing(state) || begin_request!(state, socket)
+            admitted || return nothing
 
-            # Create a streaming channel for this request so eval can emit
-            # interim "out" messages during long-running evals.
-            stream = Channel{Dict{String, Any}}(32)
-
-            # Spawn a handler task that uses the stream channel.
-            handler_task = @async begin
-                try
-                    responses = handler(msg, stream)
-                    for response in responses
-                        put!(stream, response)
-                    end
-                finally
-                    close(stream)
-                end
-            end
-
-            # Read from the stream channel and send each message as it arrives.
-            # This allows the client to see partial stdout during long evals.
-            for response in stream
-                try
-                    send!(transport, response)
-                catch ex
-                    is_connection_closed(ex) && return nothing
-                    rethrow()
-                end
-            end
-
-            # Wait for the handler task to finish and handle any errors.
             try
-                fetch(handler_task)
-            catch ex
-                if is_connection_closed(ex)
-                    return nothing
+                # Rate limiting: reset window when 60 s have elapsed.
+                if rate_limit_per_min > 0
+                    now = time()
+                    if now - rl_window_start >= 60.0
+                        rl_window_start = now
+                        rl_count        = 0
+                    end
+                    rl_count += 1
+                    if rl_count > rate_limit_per_min
+                        request_id = safe_request_id(msg)
+                        try
+                            send!(transport, error_response(request_id, "Rate limit exceeded";
+                                status_flags=String["error", "rate-limited"]))
+                        catch
+                        end
+                        continue
+                    end
                 end
-                # Handler threw — return error response, then continue.
-                actual_ex = ex isa TaskFailedException ? ex.task.exception : ex
-                request_id = safe_request_id(msg)
-                error_resp = internal_error_response(
-                    request_id,
-                    actual_ex;
-                    bt=(ex isa TaskFailedException ? ex.task.backtrace : catch_backtrace()),
-                )
+
+                # Create a streaming channel for this request so eval can emit
+                # interim "out" messages during long-running evals.
+                stream = Channel{Dict{String, Any}}(32)
+
+                # Spawn a handler task that uses the stream channel.
+                handler_task = @async begin
+                    try
+                        responses = handler(msg, stream)
+                        for response in responses
+                            put!(stream, response)
+                        end
+                    finally
+                        close(stream)
+                    end
+                end
+
+                # Read from the stream channel and send each message as it arrives.
+                # This allows the client to see partial stdout during long evals.
+                for response in stream
+                    try
+                        send!(transport, response)
+                    catch ex
+                        is_connection_closed(ex) && return nothing
+                        rethrow()
+                    end
+                end
+
+                # Wait for the handler task to finish and handle any errors.
                 try
-                    send!(transport, error_resp)
-                catch
-                    return nothing
+                    fetch(handler_task)
+                catch ex
+                    if is_connection_closed(ex)
+                        return nothing
+                    end
+                    # Handler threw — return error response, then continue.
+                    actual_ex = ex isa TaskFailedException ? ex.task.exception : ex
+                    request_id = safe_request_id(msg)
+                    error_resp = internal_error_response(
+                        request_id,
+                        actual_ex;
+                        bt=(ex isa TaskFailedException ? ex.task.backtrace : catch_backtrace()),
+                    )
+                    try
+                        send!(transport, error_resp)
+                    catch
+                        return nothing
+                    end
                 end
+            finally
+                !isnothing(state) && end_request!(state, socket)
+            end
+
+            # Never run close recursively in the request task: it would wait
+            # for itself. The response is fully sent and request accounting is
+            # released before the asynchronous closer starts.
+            if !isnothing(state) && state.shutdown_requested[]
+                @async _trigger_shutdown_callback()
+                return nothing
             end
         end
     finally

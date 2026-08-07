@@ -484,9 +484,8 @@ Internal (not part of the supported surface — do not depend on):
 
 | Symbol | Why you might want it | Alternative |
 |--------|------------------------|-------------|
-| `_run_load_file_core` | Full I/O capture for file eval | Forward as `load-file` op via `next` |
 | `_run_eval_core` | Full I/O capture for arbitrary code | Forward as `eval` op |
-| `with_session_eval` | Session eval serialisation | Forward as `eval` op |
+| eval lifecycle executor | Session FIFO and execution accounting | Forward as `eval` or `load-file` op |
 
 ## Enabling the Built-in Audit Middleware
 

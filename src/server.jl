@@ -208,12 +208,8 @@ end
 const DEFAULT_CLOSE_GRACE_SECONDS = 5.0
 
 function interrupt_active_evals!(state::ServerState)
-    for task in active_eval_tasks(state)
-        istaskdone(task) && continue
-        try
-            schedule(task, InterruptException(); error=true)
-        catch
-        end
+    for life in begin_shutdown!(state)
+        request_eval_cancel!(life)
     end
     return nothing
 end
@@ -231,8 +227,18 @@ function _close_listener!(handle::AbstractServerHandle)
     wait_for_server_task(handle.accept_task)
 end
 
-# Close all connected clients and wait for their handler tasks to finish.
-function _drain_clients!(handle::AbstractServerHandle, deadline::Real)
+# Close idle clients immediately, preserve sockets currently sending a response,
+# then wait for active requests until the common shutdown deadline.
+function _close_idle_clients!(handle::AbstractServerHandle)
+    for client in lock(handle.clients_lock) do; copy(handle.clients); end
+        !request_socket_active(handle.state, client) && isopen(client) && close(client)
+    end
+    return nothing
+end
+
+function _finish_client_drain!(handle::AbstractServerHandle, deadline::Real)
+    remaining = deadline - time()
+    remaining > 0 && timedwait(() -> active_request_count(handle.state) == 0, remaining)
     for client in lock(handle.clients_lock) do; copy(handle.clients); end
         isopen(client) && close(client)
     end
@@ -240,6 +246,11 @@ function _drain_clients!(handle::AbstractServerHandle, deadline::Real)
         remaining = deadline - time()
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
+end
+
+function _drain_clients!(handle::AbstractServerHandle, deadline::Real)
+    _close_idle_clients!(handle)
+    _finish_client_drain!(handle, deadline)
 end
 
 # Remove listener-type-specific OS resources after shutdown.
@@ -256,9 +267,9 @@ function close_server!(server::AbstractServerHandle; grace_seconds::Real=DEFAULT
 
     deadline = time() + Float64(grace_seconds)
 
+    interrupt_active_evals!(server.state)
     stop_session_sweeper!(server.state)
     _close_listener!(server)
-    interrupt_active_evals!(server.state)
 
     for task in active_eval_tasks(server.state)
         remaining = deadline - time()
@@ -339,6 +350,7 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
 
     deadline = time() + Float64(grace_seconds)
 
+    interrupt_active_evals!(server.state)
     stop_session_sweeper!(server.state)
     # Batch-close all listeners, then wait for accept tasks — better parallelism
     # than sequential close+wait per listener (which close_server! does for single handles).
@@ -349,15 +361,17 @@ function Base.close(server::MultiListenerServer; grace_seconds::Real=DEFAULT_CLO
         wait_for_server_task(handle.accept_task)
     end
 
-    interrupt_active_evals!(server.state)
-
     for task in active_eval_tasks(server.state)
         remaining = deadline - time()
         remaining > 0 && timedwait(() -> istaskdone(task), remaining)
     end
 
+    # Close idle sockets on every listener before waiting on shared active work.
     for handle in server.listeners
-        _drain_clients!(handle, deadline)
+        _close_idle_clients!(handle)
+    end
+    for handle in server.listeners
+        _finish_client_drain!(handle, deadline)
     end
 
     shutdown_middleware_stack!(server.middleware)

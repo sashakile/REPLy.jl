@@ -1,0 +1,9 @@
+id = "close-timeout-and-interrupt-resolve-one-eval-response"
+description = ""
+archetype = ""
+status = "active"
+superseded_by = ""
+authored_with = "0.3.0"
+
+[[tests.unit]]
+flags = "test/unit/concurrent_eval_test.jl"
