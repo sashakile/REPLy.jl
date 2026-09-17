@@ -2,15 +2,27 @@
     depot_bin = joinpath(DEPOT_PATH[1], "bin")
     launcher = joinpath(depot_bin, "replyc")
 
-    @test isfile(launcher) || begin
-        # If the launcher doesn't exist yet (e.g., first test run after clean),
-        # run Pkg.build to create it
+    # Rebuild when the launcher is missing OR stale — e.g. built by a different
+    # Julia version than the one running the tests (multi-version dev setups),
+    # or its pinned scratch environment was deleted out from under it — which
+    # would otherwise pin checks against an old interpreter path and a
+    # possibly missing scratch env.
+    julia_exe = Base.julia_cmd()[1]
+    launcher_is_current = false
+    if isfile(launcher)
+        prior = read(launcher, String)
+        pin = match(r"--project=\"?([^\"\s]+)", prior)
+        launcher_is_current = occursin(julia_exe, prior) &&
+            (pin === nothing || isdir(only(pin.captures)))
+    end
+    if !launcher_is_current
         Pkg.build("REPLy")
-        isfile(launcher)
     end
 
     @test isfile(launcher)
     @test isexecutable(launcher)
+
+    content = read(launcher, String)
 
     # Verify the launcher has the UUID marker (second line, exact prefix match)
     lines = readlines(launcher)
@@ -19,14 +31,12 @@
 
     # Verify the launcher pins to the scratch environment, not to REPLy's own
     # install directory (see the regression testset below for why).
-    content = read(launcher, String)
     @test occursin("--project", content)
 
     # Verify the launcher uses the captured Julia binary path, not bare `julia`.
     # Base.julia_cmd()[1] returns the full path to the Julia executable (e.g.
     # /usr/bin/julia), and the build script must embed this at compile time so
     # the launcher works regardless of PATH or runtime julia resolution.
-    julia_exe = Base.julia_cmd()[1]
     @test occursin(julia_exe, content)
     @test !occursin("exec julia ", content)
 
