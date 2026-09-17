@@ -21,8 +21,8 @@ struct LsBindingsMiddleware <: AbstractMiddleware end
 
 descriptor(::LsBindingsMiddleware) = MiddlewareDescriptor(
     provides = Set(["ls-bindings"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set{String}(),
     op_info  = Dict{String, Dict{String, Any}}(
         "ls-bindings" => Dict{String, Any}(
             "doc"      => "List the user-defined bindings (name and type) in a session module.",

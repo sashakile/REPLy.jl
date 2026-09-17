@@ -38,8 +38,8 @@ ReloadFileMiddleware(::ResourceLimits; load_file_allowlist=nothing) = ReloadFile
 
 descriptor(::ReloadFileMiddleware) = MiddlewareDescriptor(
     provides = Set(["reload-file"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware", "must appear before LoadFileMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set(["load-file"]),   # "must appear before LoadFileMiddleware" (forward ref)
     op_info  = Dict{String, Dict{String, Any}}(
         "reload-file" => Dict{String, Any}(
             "doc"      => "Re-include a Julia source file into a named session, first clearing the stale top-level module binding it defines so a subsequent 'using .Mod' is unambiguous. Requires an existing named session. Does not fix world-age issues for already-compiled methods.",

@@ -2,7 +2,10 @@ struct UnknownOpMiddleware <: AbstractMiddleware end
 
 descriptor(::UnknownOpMiddleware) = MiddlewareDescriptor(
     provides = Set(["unknown-op"]),
-    expects  = ["must appear last in stack as the final catch-all"],
+    # Positional "must appear last as the final catch-all" is not forward-expressible;
+    # middlewares placed after it would be unreachable. Positional constraints are
+    # documented here and in the stack-order spec, not encoded in expects.
+    expects  = Set{String}(),
 )
 
 function handle_message(::UnknownOpMiddleware, msg, next, ctx::RequestContext)

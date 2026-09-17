@@ -6,38 +6,50 @@
     struct RequiresBoth <: REPLy.AbstractMiddleware end
     struct NoClaims <: REPLy.AbstractMiddleware end
     struct DuplicateEval <: REPLy.AbstractMiddleware end
+    struct ExpectsEval <: REPLy.AbstractMiddleware end
+    struct ExpectsBoth <: REPLy.AbstractMiddleware end
 
     REPLy.descriptor(::ProvidesEval) = REPLy.MiddlewareDescriptor(
         provides=Set(["eval"]),
         requires=Set{String}(),
-        expects=String[],
+        expects=Set{String}(),
     )
     REPLy.descriptor(::ProvidesDescribe) = REPLy.MiddlewareDescriptor(
         provides=Set(["describe"]),
         requires=Set{String}(),
-        expects=String[],
+        expects=Set{String}(),
     )
     REPLy.descriptor(::RequiresEval) = REPLy.MiddlewareDescriptor(
         provides=Set{String}(),
         requires=Set(["eval"]),
-        expects=String[],
+        expects=Set{String}(),
     )
     REPLy.descriptor(::RequiresBoth) = REPLy.MiddlewareDescriptor(
         provides=Set{String}(),
         requires=Set(["eval", "describe"]),
-        expects=String[],
+        expects=Set{String}(),
     )
     REPLy.descriptor(::DuplicateEval) = REPLy.MiddlewareDescriptor(
         provides=Set(["eval"]),
         requires=Set{String}(),
-        expects=String[],
+        expects=Set{String}(),
+    )
+    REPLy.descriptor(::ExpectsEval) = REPLy.MiddlewareDescriptor(
+        provides=Set{String}(),
+        requires=Set{String}(),
+        expects=Set(["eval"]),
+    )
+    REPLy.descriptor(::ExpectsBoth) = REPLy.MiddlewareDescriptor(
+        provides=Set{String}(),
+        requires=Set{String}(),
+        expects=Set(["eval", "describe"]),
     )
 
     @testset "MiddlewareDescriptor keyword construction" begin
         desc = REPLy.MiddlewareDescriptor(
             provides=Set(["eval"]),
             requires=Set(["session"]),
-            expects=["session must precede eval"],
+            expects=Set(["describe"]),
         )
         @test "eval" in desc.provides
         @test "session" in desc.requires
@@ -103,14 +115,57 @@
         @test isempty(REPLy.validate_stack(REPLy.AbstractMiddleware[]))
     end
 
-    @testset "validate_stack: expects strings are accessible but not error-checked" begin
-        desc = REPLy.MiddlewareDescriptor(
-            provides=Set{String}(),
-            requires=Set{String}(),
-            expects=["some ordering constraint"],
-        )
-        @test length(desc.expects) == 1
-        @test desc.expects[1] == "some ordering constraint"
+    @testset "validate_stack: expects satisfied by a later middleware returns no errors" begin
+        stack = REPLy.AbstractMiddleware[ExpectsEval(), ProvidesEval()]
+        @test isempty(REPLy.validate_stack(stack))
+    end
+
+    @testset "validate_stack: violated expects is an error naming the op" begin
+        stack = REPLy.AbstractMiddleware[ExpectsEval()]
+        errors = REPLy.validate_stack(stack)
+        @test length(errors) == 1
+        @test occursin("eval", errors[1])
+    end
+
+    @testset "validate_stack: expects is forward-looking — satisfied only by an earlier middleware is a violation" begin
+        stack = REPLy.AbstractMiddleware[ProvidesEval(), ExpectsEval()]
+        errors = REPLy.validate_stack(stack)
+        @test length(errors) == 1
+        @test occursin("eval", errors[1])
+    end
+
+    @testset "validate_stack: multiple violated expects are each reported" begin
+        stack = REPLy.AbstractMiddleware[ExpectsBoth()]
+        errors = REPLy.validate_stack(stack)
+        @test length(errors) == 2
+        @test any(e -> occursin("eval", e), errors)
+        @test any(e -> occursin("describe", e), errors)
+    end
+
+    @testset "validate_stack: aggregates expects, requires, and duplicate errors together" begin
+        stack = REPLy.AbstractMiddleware[ProvidesEval(), DuplicateEval(), RequiresBoth(), ExpectsBoth()]
+        errors = REPLy.validate_stack(stack)
+        # duplicate eval + missing describe (requires) + violated expects for eval and describe
+        @test length(errors) == 4
+    end
+
+    @testset "validate_stack: expects_enforcement=:warn downgrades violations to warnings" begin
+        stack = REPLy.AbstractMiddleware[ExpectsEval()]
+        @test isempty(REPLy.validate_stack(stack; expects_enforcement=:warn))
+        @test_throws ArgumentError("unsupported expects_enforcement mode: :loud") (
+            REPLy.validate_stack(stack; expects_enforcement=:loud))
+    end
+
+    @testset "build_handler throws on violated expects by default" begin
+        @test_throws ArgumentError REPLy.build_handler(
+            middleware=REPLy.AbstractMiddleware[ExpectsEval()])
+    end
+
+    @testset "build_handler honors expects_enforcement=:warn" begin
+        handler = REPLy.build_handler(
+            middleware=REPLy.AbstractMiddleware[ExpectsEval(), ProvidesEval()],
+            expects_enforcement=:warn)
+        @test handler isa Function
     end
 end
 
@@ -130,6 +185,7 @@ end
         @test "close"          in desc.provides
         @test "clone"          in desc.provides
         @test "session"        in desc.requires
+        @test "unknown-op"     in desc.expects  # must appear before UnknownOpMiddleware
     end
 
     @testset "DescribeMiddleware provides describe" begin
@@ -175,7 +231,7 @@ end
     end
 
     @testset "MiddlewareDescriptor op_info field is empty by default" begin
-        desc = REPLy.MiddlewareDescriptor(provides=Set(["eval"]), requires=Set(["session"]), expects=["session must precede eval"])
+        desc = REPLy.MiddlewareDescriptor(provides=Set(["eval"]), requires=Set(["session"]), expects=Set(["eval"]))
         @test isempty(desc.op_info)
     end
 
@@ -207,5 +263,19 @@ end
         desc = REPLy.descriptor(REPLy.LoadFileMiddleware())
         @test "load-file" in desc.provides
         @test haskey(desc.op_info, "load-file")
+    end
+
+    @testset "ReloadFileMiddleware expects load-file later in the stack" begin
+        desc = REPLy.descriptor(REPLy.ReloadFileMiddleware())
+        @test "load-file" in desc.expects
+    end
+
+    @testset "backward positional constraints live in requires, not expects" begin
+        # "must appear after SessionMiddleware" is enforced via requires = ["session"];
+        # expects is reserved for forward-looking constraints.
+        for mw in (REPLy.EvalMiddleware(), REPLy.StdinMiddleware(),
+                   REPLy.InterruptMiddleware(), REPLy.LsBindingsMiddleware())
+            @test isempty(REPLy.descriptor(mw).expects)
+        end
     end
 end

@@ -2,7 +2,9 @@ struct SessionMiddleware <: AbstractMiddleware end
 
 descriptor(::SessionMiddleware) = MiddlewareDescriptor(
     provides = Set(["session"]),
-    expects  = ["must appear first in stack to provide named-session routing for downstream middleware"],
+    # Positional "must appear first" is not forward-expressible; downstream
+    # middlewares declare `requires = Set(["session"])`, which validate_stack enforces.
+    expects  = Set{String}(),
 )
 
 const MAX_SESSION_NAME_BYTES = 256

@@ -21,8 +21,8 @@ struct StdinMiddleware <: AbstractMiddleware end
 
 descriptor(::StdinMiddleware) = MiddlewareDescriptor(
     provides = Set(["stdin"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set{String}(),
     op_info  = Dict{String, Dict{String, Any}}(
         "stdin" => Dict{String, Any}(
             "doc"      => "Send input to a running eval waiting on stdin.",

@@ -20,8 +20,8 @@ struct InterruptMiddleware <: AbstractMiddleware end
 
 descriptor(::InterruptMiddleware) = MiddlewareDescriptor(
     provides = Set(["interrupt"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set{String}(),
     op_info  = Dict{String, Dict{String, Any}}(
         "interrupt" => Dict{String, Any}(
             "doc"      => "Interrupt an in-flight evaluation.",

@@ -18,8 +18,8 @@ struct SessionOpsMiddleware <: AbstractMiddleware end
 
 descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
     provides = Set(["new-session", "ls-sessions", "close-session", "clone-session", "close", "clone"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware", "must appear before UnknownOpMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set(["unknown-op"]),  # "must appear before UnknownOpMiddleware" (forward ref)
     op_info  = Dict{String, Dict{String, Any}}(
         "new-session" => Dict{String, Any}(
             "doc"      => "Create a new named session. Returns a UUID and optional name alias. Optional 'if-exists' field: 'error' (default) fails if a session with 'name' already exists; 'reuse' returns the existing session UUID instead, making repeated calls idempotent. Optional 'trusted' field: when true, backs the session by Main instead of an anonymous module — include, bare using, and Main.eval work as in an interactive REPL, at the cost of cross-session isolation. Default: false.",

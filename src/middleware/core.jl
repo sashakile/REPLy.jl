@@ -8,13 +8,13 @@ and dynamic describe responses.
 
 - `provides::Set{String}` — operation names (e.g. `"eval"`) this middleware handles.
 - `requires::Set{String}` — names that must be provided by some *earlier* middleware in the stack.
-- `expects::Vector{String}` — human-readable ordering constraints (informational; not enforced by `validate_stack`).
+- `expects::Set{String}` — op names that must be provided by some *later* middleware in the stack (forward-looking ordering constraint; e.g. a middleware that must run before the catch-all). Enforced by `validate_stack`.
 - `op_info::Dict{String, Dict{String, Any}}` — per-op metadata (doc, requires, optional, returns) used to build describe responses dynamically.
 """
 @kwdef struct MiddlewareDescriptor
     provides::Set{String}  = Set{String}()
     requires::Set{String}  = Set{String}()
-    expects::Vector{String} = String[]
+    expects::Set{String}   = Set{String}()
     op_info::Dict{String, Dict{String, Any}} = Dict{String, Dict{String, Any}}()
 end
 
@@ -28,18 +28,28 @@ descriptor(::AbstractMiddleware) = MiddlewareDescriptor()
 shutdown_middleware!(::AbstractMiddleware) = nothing
 
 """
-    validate_stack(stack) -> Vector{String}
+    validate_stack(stack; expects_enforcement=:error) -> Vector{String}
 
 Validate a middleware stack and return a (possibly empty) list of error strings.
 
 Checks:
 - **Duplicate provides**: two or more middlewares claiming the same op name.
 - **Unsatisfied requires**: a middleware requiring a name not provided by any *earlier* middleware.
+- **Unsatisfied expects**: a middleware expecting an op name not provided by any *later* middleware
+  (forward-looking, per REQ-RPL-052).
 
-Note: `validate_stack` is not called automatically by `build_handler`. Call it explicitly
-at server startup (or in tests) to verify a custom stack before use.
+All violations are collected and reported together — validation does not fail fast.
+
+`expects_enforcement` controls how violated `expects` constraints are handled:
+- `:error` (default) — violated expects are reported as errors.
+- `:warn` — violated expects are logged as warnings and excluded from the returned errors.
+
+Note: `build_handler` calls this automatically at startup; it is also exported for direct use
+in tests and custom server wiring.
 """
-function validate_stack(stack::Vector{<:AbstractMiddleware})
+function validate_stack(stack::Vector{<:AbstractMiddleware}; expects_enforcement::Symbol=:error)
+    expects_enforcement in (:error, :warn) ||
+        throw(ArgumentError("unsupported expects_enforcement mode: $(repr(expects_enforcement))"))
     errors = String[]
     seen_provides = Dict{String, Int}()   # op name → first-seen stack index
     accumulated   = Set{String}()         # all ops provided up to (not incl.) current mw
@@ -62,6 +72,25 @@ function validate_stack(stack::Vector{<:AbstractMiddleware})
         end
 
         union!(accumulated, desc.provides)
+    end
+
+    # Check expects forward: each expected op must be provided by some LATER middleware.
+    # Walk the stack backwards accumulating provides of middlewares after index i.
+    later_provides = Set{String}()
+    for i in length(stack):-1:1
+        desc = descriptor(stack[i])
+        for expected in sort!(collect(desc.expects))
+            if expected in later_provides
+                continue
+            end
+            msg = "Middleware at index $i expects '$expected' but no later middleware provides it"
+            if expects_enforcement == :error
+                push!(errors, msg)
+            else
+                @warn "middleware expects constraint violated" expected_index=i expected=expected
+            end
+        end
+        union!(later_provides, desc.provides)
     end
 
     return errors
@@ -183,11 +212,11 @@ function materialize_middleware_stack(middleware::Vector{<:AbstractMiddleware})
     return AbstractMiddleware[mw isa DescribeMiddleware ? DescribeMiddleware(ops_catalog) : mw for mw in middleware]
 end
 
-function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing)
+function build_handler(; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), state::Union{ServerState, Nothing}=nothing, expects_enforcement::Symbol=:error)
     # Validate middleware stack at startup — catches misconfigured stacks early
     # rather than failing at request time.
     materialized = materialize_middleware_stack(middleware)
-    validation_errors = validate_stack(materialized)
+    validation_errors = validate_stack(materialized; expects_enforcement)
     if !isempty(validation_errors)
         throw(ArgumentError("middleware stack validation failed:\n  - " * join(validation_errors, "\n  - ")))
     end

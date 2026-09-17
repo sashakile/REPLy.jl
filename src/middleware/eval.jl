@@ -21,8 +21,8 @@ EvalMiddleware(limits::ResourceLimits) = EvalMiddleware(limits.max_value_repr_by
 
 descriptor(::EvalMiddleware) = MiddlewareDescriptor(
     provides = Set(["eval"]),
-    requires = Set(["session"]),
-    expects  = ["must appear after SessionMiddleware"],
+    requires = Set(["session"]),   # "must appear after SessionMiddleware", enforced via requires
+    expects  = Set{String}(),
     op_info  = Dict{String, Dict{String, Any}}(
         "eval" => Dict{String, Any}(
             "doc"      => "Evaluate Julia code in a session module.",
