@@ -69,9 +69,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cargo just curl tar
 
-      - name: Install lefthook and actionlint
+      - name: Install actionlint
         run: |
-          go install github.com/evilmartians/lefthook@latest
           # Pinned: @latest (main) depends on go-json-experiment, which does
           # not compile against current stable Go (json.SkipFunc removed).
           GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
