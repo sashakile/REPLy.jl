@@ -12,7 +12,7 @@
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
         prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
         Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
-        Core.eval(Main, :(const Revise = $mock_revise))
+        Core.eval(Main, :(Revise = $mock_revise))
 
         try
             manager = REPLy.SessionManager()
@@ -58,7 +58,7 @@
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
         prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
         Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
-        Core.eval(Main, :(const Revise = $mock_revise))
+        Core.eval(Main, :(Revise = $mock_revise))
 
         try
             with_server(port=0) do handle
@@ -97,7 +97,7 @@
         Core.eval(mock_revise, :(revise() = (call_count[] += 1; nothing)))
         prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
         Base.loaded_modules[REPLy._REVISE_PKG_ID] = mock_revise
-        Core.eval(Main, :(const Revise = $mock_revise))
+        Core.eval(Main, :(Revise = $mock_revise))
 
         try
             limits  = REPLy.ResourceLimits(revise_hook_enabled=false)

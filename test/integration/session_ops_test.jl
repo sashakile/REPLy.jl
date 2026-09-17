@@ -42,7 +42,14 @@
             "code" => "state = :forked",
             "session" => "workspace-fork",
         ))
-        @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+        # Julia >= 1.11 enforces const-ness of eval'd globals; on 1.10 the check
+        # was omitted upstream (see #56933) — the reassignment is silently
+        # ignored and the session still returns done. Assert per-version.
+        if VERSION >= v"1.11"
+            @test "error" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+        else
+            @test "done" in filter(m -> haskey(m, "status"), msgs)[end]["status"]
+        end
         # Session recovers: a subsequent eval in the clone succeeds.
         msgs = handler(Dict(
             "op" => "eval",

@@ -130,7 +130,14 @@
         # Cloned scalar bindings are const (Julia >= 1.11 global-assignment
         # semantics): the binding is copied and readable, but reassignment throws.
         @test Core.eval(REPLy.session_module(clone), :counter) == 10
-        @test_throws ErrorException Core.eval(REPLy.session_module(clone), :(counter = 999))
+        # Julia >= 1.11 enforces const-ness of eval'd globals; on 1.10 the check
+        # was omitted upstream (see #56933) — the reassignment is silently
+        # ignored and the binding keeps its cloned value. Assert per-version.
+        if VERSION >= v"1.11"
+            @test_throws ErrorException Core.eval(REPLy.session_module(clone), :(counter = 999))
+        else
+            @test Core.eval(REPLy.session_module(clone), :counter) == 10
+        end
 
         # Original is unchanged and remains usable.
         @test Core.eval(REPLy.session_module(source), :counter) == 10

@@ -32,7 +32,11 @@ function with_mock_revise(f; fail::Bool=false)
     # entry so we can restore it on teardown.
     prior_loaded = get(Base.loaded_modules, REPLy._REVISE_PKG_ID, nothing)
     Base.loaded_modules[REPLy._REVISE_PKG_ID] = mod
-    Core.eval(Main, :(const Revise = $mod))
+    # Inject as a plain (non-const) global: on Julia 1.10 re-defining a const
+    # global throws ("invalid redefinition of constant"), and 1.10 has no
+    # Base.delete_binding to clean it up between tests. A plain binding works
+    # on every supported version and is still visible to the hook's lookup.
+    Core.eval(Main, :(Revise = $mod))
     try
         f(call_count)
     finally
@@ -164,7 +168,9 @@ end
         shadow = Module(:Revise)
         Core.eval(shadow, :(call_count = $(call_count)))
         Core.eval(shadow, :(revise() = (call_count[] += 1; nothing)))
-        Core.eval(Main, :(const Revise = $shadow))
+        # Plain binding, not const: this testset runs after others that may
+        # have bound Revise, and Julia 1.10 forbids re-defining const globals.
+        Core.eval(Main, :(Revise = $shadow))
         # Ensure the shadow is NOT in Base.loaded_modules.
         delete!(Base.loaded_modules, REPLy._REVISE_PKG_ID)
         try
