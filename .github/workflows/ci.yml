@@ -72,7 +72,9 @@ jobs:
       - name: Install lefthook and actionlint
         run: |
           go install github.com/evilmartians/lefthook@latest
-          GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          # Pinned: @latest (main) depends on go-json-experiment, which does
+          # not compile against current stable Go (json.SkipFunc removed).
+          GOBIN=$HOME/.local/bin go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run repository checks
