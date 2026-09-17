@@ -6,20 +6,26 @@
         handler(Dict("op" => "eval", "id" => "w0", "code" => "1+1"))
 
         n = 3
-        sleep_s = 0.15
+        sleep_s = 0.5
 
-        start = time()
-        tasks = map(1:n) do i
-            @async handler(Dict("op" => "eval", "id" => "par-$i",
-                                "code" => "sleep($sleep_s); $i"))
+        # Serial would take n * sleep_s (1.5s); concurrent ~sleep_s + handler
+        # overhead. Use a threshold with real margin below the serial time and
+        # retry to absorb transient shared-runner load — only genuinely serial
+        # execution fails consistently.
+        results = nothing
+        elapsed_ok = false
+        for attempt in 1:3
+            start = time()
+            tasks = map(1:n) do i
+                @async handler(Dict("op" => "eval", "id" => "par-$attempt-$i",
+                                    "code" => "sleep($sleep_s); $i"))
+            end
+            results = fetch.(tasks)
+            elapsed = time() - start
+            elapsed_ok = elapsed < 2 * sleep_s
+            elapsed_ok && break
         end
-        results = fetch.(tasks)
-        elapsed = time() - start
-
-        # Serial: n * sleep_s ≈ 0.45s. Concurrent: ~sleep_s ≈ 0.15s.
-        # Accept anything under 3 * sleep_s as evidence of concurrency
-        # (generous margin for system load / scheduler overhead).
-        @test elapsed < 3 * sleep_s
+        @test elapsed_ok
 
         for i in 1:n
             @test any(get(msg, "value", nothing) == string(i) for msg in results[i])
