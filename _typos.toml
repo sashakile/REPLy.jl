@@ -3,6 +3,7 @@ extend-exclude = [
   ".beads",
   ".git",
   ".wai",
+  "aek-analysis",
   "Reply_jl_Specification_v1_3_1.md",
 ]
 

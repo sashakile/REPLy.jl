@@ -42,6 +42,11 @@ jobs:
 
   check:
     runs-on: ubuntu-latest
+    name: Check (Julia ${{ matrix.julia-version }})
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.12', '1.13']
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,7 +54,7 @@ jobs:
       - name: Set up Julia
         uses: julia-actions/setup-julia@v2
         with:
-          version: '1.12'
+          version: ${{ matrix.julia-version }}
 
       - name: Cache Julia artifacts
         uses: julia-actions/cache@v1
@@ -71,10 +76,14 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run repository checks
-        run: just workflow-lint test smoke-test coverage
+        run: just workflow-lint test smoke-test
+
+      - name: Run coverage
+        if: matrix.julia-version == '1.12'
+        run: just coverage
 
       - name: Upload coverage to Codecov
-        if: ${{ hashFiles('Project.toml') != '' && hashFiles('test/runtests.jl') != '' }}
+        if: matrix.julia-version == '1.12' && hashFiles('Project.toml') != '' && hashFiles('test/runtests.jl') != ''
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: false
