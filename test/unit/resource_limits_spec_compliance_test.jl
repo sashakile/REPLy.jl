@@ -1,79 +1,72 @@
+# Purpose: Map the resource-limits capability spec
+#   (openspec/specs/resource-limits/spec.md, REQ-RPL-047) to executable
+#   assertions — espectacular contracts for the "Default limits applied when
+#   unconfigured" and "Individual fields overridable" scenarios include this
+#   file directly (ah check --run-tests), so it must stay standalone.
+# Responsibilities:
+#   - Assert every field in the spec's ResourceLimits table exists.
+#   - Assert each field's spec-table default value.
+#   - Assert individual-field overrides retain the other spec-table defaults.
+#   - Document struct fields beyond the spec table (max_output_bytes,
+#     max_connections, revise_hook_enabled) so the table stays reconciled.
+# Rationale: The spec is the single source of truth for field names, types,
+#   and defaults; this test is the enforcement point that keeps the code and
+#   the spec table reconciled (REPLy_jl-zsx, REPLy_jl-c80s).
 @testset "ResourceLimits spec compliance (REPLy_jl-zsx)" begin
-    # Spec-defined fields and defaults from openspec/specs/resource-limits/spec.md
-    # This test diffs fieldnames(ResourceLimits) against the spec table.
-    # Fields that are intentionally separate from ResourceLimits (e.g. max_message_bytes
-    # as a serve() kwarg) are documented in the test but not enforced here.
 
-    @testset "all spec fields exist on ResourceLimits" begin
+    @testset "all spec-table fields exist on ResourceLimits" begin
         limits = REPLy.ResourceLimits()
         spec_fields = [
             :max_eval_time_ms,
             :max_memory_mb,
             :max_sessions,
             :max_concurrent_evals,
+            :max_message_size,
             :rate_limit_per_min,
             :session_idle_timeout_s,
             :max_history_entries,
             :max_value_repr_bytes,
+            :max_id_length,
             :min_rate_limit_per_min,
+            :max_stdin_buffer,
         ]
         for field in spec_fields
-            @test hasproperty(limits, field) ||
-                @warn "Missing spec field: $field" maxlog=1
+            @test hasproperty(limits, field)
         end
     end
 
     @testset "defaults match spec table" begin
         limits = REPLy.ResourceLimits()
+        @test limits.max_eval_time_ms      == 60_000      # REQ-RPL-047a
+        @test limits.max_memory_mb         == 2_048       # REQ-RPL-047b
+        @test limits.max_sessions          == 100         # REQ-RPL-047c
+        @test limits.max_concurrent_evals  == 10          # REQ-RPL-047d
+        @test limits.max_message_size      == 10_485_760  # REQ-RPL-047e
+        @test limits.rate_limit_per_min    == 600         # REQ-RPL-047f
+        @test limits.session_idle_timeout_s == 3_600      # REQ-RPL-034
+        @test limits.max_history_entries   == 10_000      # REQ-RPL-047h
+        @test limits.max_value_repr_bytes  == 1_048_576   # REQ-RPL-047i
+        @test limits.max_id_length         == 256         # REQ-RPL-001b
+        @test limits.min_rate_limit_per_min == 10         # MATH-007
+        @test limits.max_stdin_buffer      == 16          # REQ-RPL-017b
+    end
+
+    @testset "struct has documented extra fields beyond the spec table" begin
+        # Fields in code but not in the spec table — listed here so the
+        # spec table and the struct stay visibly reconciled.
+        limits = REPLy.ResourceLimits()
+        @test limits.max_output_bytes == 1_000_000
+        @test limits.max_connections == 100
+        @test limits.revise_hook_enabled == true
+    end
+
+    @testset "individual fields overridable" begin
+        # Spec scenario: ResourceLimits(max_sessions=128) overrides one field,
+        # all other fields retain their spec-table defaults.
+        limits = REPLy.ResourceLimits(max_sessions=128)
+        @test limits.max_sessions == 128
         @test limits.max_eval_time_ms == 60_000
-        @test limits.max_sessions == 100
-        @test limits.max_concurrent_evals == 10
         @test limits.rate_limit_per_min == 600
         @test limits.session_idle_timeout_s == 3_600
-    end
-
-    @testset "max_memory_mb is present and defaults to 2048" begin
-        limits = REPLy.ResourceLimits()
-        @test hasproperty(limits, :max_memory_mb)
-        @test limits.max_memory_mb == 2048
-    end
-
-    @testset "min_rate_limit_per_min is present and defaults to 10" begin
-        limits = REPLy.ResourceLimits()
-        @test hasproperty(limits, :min_rate_limit_per_min)
-        @test limits.min_rate_limit_per_min == 10
-    end
-
-    @testset "max_history_entries (spec name) matches max_session_history (code name)" begin
-        # The spec calls it max_history_entries; the code calls it max_session_history.
-        # Both map to the same field — verify the alias / rename.
-        limits = REPLy.ResourceLimits()
-        @test hasproperty(limits, :max_history_entries) ||
-              hasproperty(limits, :max_session_history)
-        @test getfield(limits, :max_history_entries) == 10_000 ||
-              getfield(limits, :max_session_history) == 10_000
-    end
-
-    @testset "max_value_repr_bytes (spec name) matches max_repr_bytes (code name)" begin
-        limits = REPLy.ResourceLimits()
-        @test hasproperty(limits, :max_value_repr_bytes) ||
-              hasproperty(limits, :max_repr_bytes)
-        val = hasproperty(limits, :max_value_repr_bytes) ?
-              limits.max_value_repr_bytes : limits.max_repr_bytes
-        @test val == 1_048_576
-    end
-
-    @testset "max_message_size is documented as separate serve() kwarg" begin
-        # max_message_size is a serve() kwarg (max_message_bytes), not a ResourceLimits field.
-        # This test documents the design choice and verifies it's mentioned in the docstring.
-        limits = REPLy.ResourceLimits()
-        @test !hasproperty(limits, :max_message_size)
-        @test_broken false  # Placeholder: docstring should mention max_message_bytes
-    end
-
-    @testset "max_id_length and max_stdin_buffer are fixed constants" begin
-        # These are not in ResourceLimits — they're hardcoded constants.
-        # Document the current values for spec compliance awareness.
-        @test REPLy.MAX_SESSION_NAME_BYTES == 256
     end
 end

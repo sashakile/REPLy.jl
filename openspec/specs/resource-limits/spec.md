@@ -1,32 +1,38 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN the server is constructed, THE server SHALL instantiate ResourceLimits with every spec-table field at its spec-table default unless an individual field is explicitly overridden."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
-|----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+|----|------|------|------------|
+| SPEC_TABLE_FIELDS | invariant | every field in the REQ-RPL-047 table exists on `ResourceLimits` | [[spec]] |
+| SPEC_TABLE_DEFAULTS | invariant | `ResourceLimits()` sets each table field to exactly its table default | [[spec]] |
+| FIELD_OVERRIDABLE | invariant | an individual kwarg override sets only the named field; every other field retains its table default | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `unconfigured`
+- `configured`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| apply_defaults | unconfigured | configured | [[spec.SPEC_TABLE_DEFAULTS]] |
+| override_field | configured | configured | [[spec.FIELD_OVERRIDABLE]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
-|----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+|----|------|--------------|-----------|------------|
+| fields_match_table | unit | [[spec.SPEC_TABLE_FIELDS]] | `test/unit/resource_limits_spec_compliance_test.jl` | every REQ-RPL-047 table field resolves on `ResourceLimits()` (identity: the table's field list equals `propertynames` ∩ table) |
+| defaults_match_table | unit | [[spec.SPEC_TABLE_DEFAULTS]] | `test/unit/resource_limits_spec_compliance_test.jl` | all 12 table defaults hold on `ResourceLimits()` (identity: each field equals itself at construction; associativity: field set is closed under construction) |
+| override_retains_defaults | unit | [[spec.FIELD_OVERRIDABLE]] | `test/unit/resource_limits_spec_compliance_test.jl` | `ResourceLimits(max_sessions=128)` yields max_sessions=128 with all other table defaults intact (identity: unoverridden fields equal their defaults) |
 
 # Resource Limits
 
