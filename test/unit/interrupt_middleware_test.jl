@@ -86,6 +86,8 @@
         terminal = only(filter(m -> haskey(m, "status"), eval_msgs))
         @test "interrupted" in terminal["status"]
         @test "done" in terminal["status"]
+        # Scenario: eval-interrupted-has-no-error-flag — an interrupt is not an error.
+        @test !("error" in terminal["status"])
     end
 
     @testset "non-interrupt ops are forwarded" begin

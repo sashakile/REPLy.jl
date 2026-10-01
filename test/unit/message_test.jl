@@ -35,10 +35,12 @@ using JSON3
             @test get(result, "id", nothing) == "1"
         end
 
-        @testset "receive treats malformed JSON as a closed boundary" begin
+        @testset "receive throws MalformedJSONError (counted protocol event, REQ-RPL-020)" begin
             transport = REPLy.JSONTransport(IOBuffer("{\"op\":\"eval\",\"id\":}\n"), ReentrantLock())
-            @test isnothing(REPLy.receive(transport))
-            @test isnothing(REPLy.receive(transport))
+            @test_throws REPLy.MalformedJSONError REPLy.receive(transport)
+            # The transport stays usable — the boundary is per-message, not
+            # a closed connection; disconnect policy lives in the connection
+            # loop (error-handling REQ-RPL-020).
         end
 
         @testset "receive returns nothing on partial reads and disconnects" begin
@@ -70,8 +72,8 @@ using JSON3
 
         @testset "read_bounded_line returns correct string up to newline" begin
             io = IOBuffer("hello\nworld\n")
-            @test REPLy.read_bounded_line(io, 100) == "hello"
-            @test REPLy.read_bounded_line(io, 100) == "world"
+            @test REPLy.read_bounded_line(io, 100) == ("hello", true)
+            @test REPLy.read_bounded_line(io, 100) == ("world", true)
         end
 
         @testset "read_bounded_line throws MessageTooLargeError before reading full line" begin
@@ -81,7 +83,7 @@ using JSON3
 
         @testset "read_bounded_line returns empty string for blank line" begin
             io = IOBuffer("\nhello\n")
-            @test REPLy.read_bounded_line(io, 100) == ""
+            @test REPLy.read_bounded_line(io, 100) == ("", true)
         end
 
         @testset "handle_client! sends error and disconnects on oversized message" begin

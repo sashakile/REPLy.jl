@@ -33,18 +33,23 @@ than `max_bytes` bytes are read before a newline is found.
 Unlike `readline()`, memory use is proportional to `min(actual_bytes, max_bytes)`
 rather than the full payload size.
 """
+# Returns `(line, terminated)` where `terminated` is true when the line was
+# newline-terminated — i.e. a complete wire message frame. A `false` return
+# means the stream ended mid-line (partial read / abrupt disconnect), which
+# callers must treat as REQ-RPL-040b's closed boundary rather than a
+# REQ-RPL-020 malformed message.
 function read_bounded_line(io::IO, max_bytes::Int)
     buf = Vector{UInt8}()
     sizehint!(buf, min(4096, max_bytes))
     count = 0
     while !eof(io)
         b = read(io, UInt8)
-        b == UInt8('\n') && return String(buf)
+        b == UInt8('\n') && return String(buf), true
         count += 1
         count > max_bytes && throw(MessageTooLargeError(max_bytes))
         push!(buf, b)
     end
-    return String(buf)
+    return String(buf), false
 end
 
 function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES)::Union{JSON3.Object, Nothing}
@@ -52,7 +57,7 @@ function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_ME
     # Wrap the entire loop so IOError from eof() (e.g. ECONNRESET) is also caught.
     try
         while !eof(transport.io)
-            line = try
+            line, terminated = try
                 read_bounded_line(transport.io, max_message_bytes)
             catch ex
                 ex isa MessageTooLargeError && rethrow()
@@ -64,6 +69,10 @@ function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_ME
             msg = try
                 JSON3.read(line)
             catch
+                # A line truncated at EOF is a partial read (REQ-RPL-040b —
+                # must not escape); a complete line with invalid JSON is a
+                # counted malformed event (REQ-RPL-020).
+                terminated || return nothing
                 throw(MalformedJSONError())
             end
 
@@ -72,6 +81,11 @@ function receive(transport::JSONTransport; max_message_bytes::Int=DEFAULT_MAX_ME
         end
     catch ex
         ex isa MessageTooLargeError && rethrow()
+        # MalformedJSONError is a counted protocol event (REQ-RPL-020), not a
+        # disconnect: it must propagate so the connection loop can apply the
+        # consecutive-malformed counter. Only IO errors are REQ-RPL-040b's
+        # "must not escape" concern.
+        ex isa MalformedJSONError && rethrow()
         return nothing
     end
 

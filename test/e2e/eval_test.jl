@@ -137,18 +137,25 @@ end
         end
     end
 
-    @testset "malformed json closes the connection without a protocol response" begin
+    @testset "malformed json is counted silently — no response, no disconnect before threshold" begin
+        # Spec (core-operations REQ-RPL-020): malformed input is logged and
+        # counted; the server sends no response (no trusted request id) and
+        # does not disconnect until 10 consecutive malformed messages
+        # (error-handling REQ-RPL-020 — counter covered in
+        # e2e/malformed_counter_test.jl).
         with_server(port=0) do handle
             sock = connect(handle.port)
-
             try
                 write(sock, "{\"op\":\"eval\",\"id\":}\n")
                 flush(sock)
 
-                reader = @async read(sock, String)
-                status = timedwait(() -> istaskdone(reader), 5.0)
-                @test status == :ok
-                @test fetch(reader) == ""
+                # No response bytes arrive, and the connection stays open —
+                # a subsequent valid request still gets served.
+                write(sock, "{\"id\":\"after-malformed\",\"op\":\"no-such-op\"}\n")
+                flush(sock)
+                msgs = collect_until_done(sock; timeout_s=5.0)
+                @test length(msgs) == 1
+                @test "unknown-op" in msgs[1]["status"]
             finally
                 isopen(sock) && close(sock)
             end

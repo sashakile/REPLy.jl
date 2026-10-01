@@ -1,32 +1,47 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN a request fails, THE server SHALL respond with a shape-stable error frame carrying a category status flag, SHALL terminate interrupted evals without the error flag, and SHALL disconnect a connection only after 10 consecutive malformed messages."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
-|----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+|----|------|------|------------|
+| ERROR_RESPONSE_SHAPE | invariant | every error response carries id, status with done+error, err, and optional ex/stacktrace/cause | [[spec]] |
+| SAFE_EXTRACT | invariant | ex.message is extracted via hasfield(:msg) with sprint(showerror) fallback | [[spec]] |
+| CATEGORY_FLAGS | invariant | each error category maps to its canonical status flag (session-not-found, session-already-exists, timeout, rate-limited, session-limit-reached, concurrency-limit-reached, path-not-allowed, unknown-op) | [[spec]] |
+| INTERRUPT_NOT_ERROR | invariant | interrupted evals terminate with status done+interrupted and no error flag | [[spec]] |
+| MALFORMED_THRESHOLD | invariant | a connection is closed only after the 10th consecutive malformed message; a valid request resets the counter; malformed messages produce no response | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `healthy`
+- `error_responded`
+- `interrupted`
+- `disconnected`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| respond_error | healthy | error_responded | [[spec.ERROR_RESPONSE_SHAPE]] |
+| recover | error_responded | healthy | [[spec.CATEGORY_FLAGS]] |
+| terminate_interrupted | healthy | interrupted | [[spec.INTERRUPT_NOT_ERROR]] |
+| count_malformed | healthy | healthy | [[spec.MALFORMED_THRESHOLD]] |
+| disconnect | healthy | disconnected | [[spec.MALFORMED_THRESHOLD]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
-|----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+|----|------|--------------|-----------|------------|
+| shape_holds_for_runtime_and_parse | unit | [[spec.ERROR_RESPONSE_SHAPE]] | `test/unit/error_test.jl` | UndefVarError and Base.Meta.ParseError responses both carry done+error status with err/ex structure (identity: same keys on both failure modes) |
+| msgless_exceptions_extracted | unit | [[spec.SAFE_EXTRACT]] | `test/unit/error_test.jl` | exception without .msg yields non-empty ex.message via showerror fallback |
+| every_category_has_flag | unit | [[spec.CATEGORY_FLAGS]] | `test/unit/resource_enforcement_test.jl`, `test/unit/session_ops_middleware_test.jl`, `test/unit/interrupt_middleware_test.jl`, `test/unit/load_file_middleware_test.jl`, `test/unit/eval_middleware_test.jl`, `test/unit/error_test.jl` | each canonical flag appears in the terminal status of its triggering scenario |
+| interrupt_carries_no_error | unit | [[spec.INTERRUPT_NOT_ERROR]] | `test/unit/interrupt_middleware_test.jl` | terminal status of an interrupted eval contains done+interrupted and not error |
+| disconnect_only_at_threshold | unit | [[spec.MALFORMED_THRESHOLD]] | `test/e2e/malformed_counter_test.jl` | 9 malformed + 1 valid + more malformed keeps the connection; 10 consecutive close it with zero response bytes |
 
 # Error Handling
 

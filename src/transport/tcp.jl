@@ -76,19 +76,14 @@ function handle_client!(socket::IO, handler::Function;
                     return nothing
                 end
                 if ex isa MalformedJSONError
+                    # REQ-RPL-020 (core-operations): log the parse failure and
+                    # count it — no response is sent because no request id can
+                    # be trusted for correlation. Connection closes only after
+                    # 10 consecutive malformed messages (REQ-RPL-020,
+                    # error-handling).
+                    @debug "malformed JSON from client" counter = consecutive_malformed + 1
                     consecutive_malformed += 1
-                    if consecutive_malformed >= 10
-                        try
-                            send!(transport, error_response("", "too many consecutive malformed requests"))
-                        catch
-                        end
-                        return nothing
-                    end
-                    try
-                        send!(transport, error_response("", "malformed JSON"; status_flags=String["error", "malformed-request"]))
-                    catch
-                        return nothing
-                    end
+                    consecutive_malformed >= 10 && return nothing
                     continue
                 end
                 rethrow()

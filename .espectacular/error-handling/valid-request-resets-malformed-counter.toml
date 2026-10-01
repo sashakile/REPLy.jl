@@ -1,6 +1,9 @@
 id = "valid-request-resets-malformed-counter"
-description = ""
-archetype = "PF"
+description = "9 malformed + 1 valid + more malformed -> no disconnect; counter reset by the valid request"
+archetype = "CE"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/e2e/malformed_counter_test.jl\")'" } ]
