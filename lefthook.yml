@@ -1,9 +1,30 @@
 # ── Git hooks managed by lefthook ──────────────────────────────
 #  Run `lefthook install` after changing this file.
+#
+#  Hard gates (blocking):
+#   - specodelic-gates: spk lint openspec   (dual-format spec gate)
+#   - ah-check:         ah check            (spec↔test correspondence)
+#   - pretender-gate:   pretender check --staged (complexity thresholds)
+#
+#  NOTE: do NOT re-run `ah init` against this file — its lefthook
+#  writer glues managed-block markers to adjacent lines (0.8.0 bug).
+#  This block is maintained by hand in ah's marker format.
 
 pre-commit:
-  parallel: true
   commands:
+    # <!-- SPK:START -->
+    specodelic-gates:
+      run: spk lint openspec
+    # <!-- SPK:END -->
+
+    # ah:managed:start
+    ah-check:
+      run: ah check
+    # ah:managed:end
+
+    pretender-gate:
+      run: pretender check --staged
+
     trailing-whitespace:
       run: git diff --check --cached
       skip:
@@ -40,8 +61,12 @@ pre-commit:
       run: vale README.md llm.txt openspec/project.md docs/src
 
 pre-push:
-  parallel: true
   commands:
+    # ah:managed:start
+    ah-check:
+      run: ah check
+    # ah:managed:end
+
     beads:
       run: bd hooks run pre-push
 

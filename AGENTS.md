@@ -1,3 +1,58 @@
+<!-- SPECODELIC:START -->
+## Specodelic — spec format rules (managed block)
+
+This repo's `specs/`-style markdown spec files (YAML frontmatter +
+fixed-schema tables) are linted by `spk` (crates.io: specodelic).
+Write specs so `spk lint` passes; embedded format revision: specodelic.md Revision 13
+
+### Lint rules (every violation names its `rule_id`)
+
+- `linter.frontmatter_valid` — frontmatter `kind` must be `intent` — the only top-level intent kind
+- `linter.id_matches_file` — frontmatter `id` must equal the filename stem with `-` mapped to `.` (`_` is literal)
+- `linter.unique_id` — every row id in a file must be unique across all of the file's tables
+- `linter.guard_required` — every transition must carry a non-null guard (a guard may be prose, or cite an invariant Constraint or a State — target typing is `ref_kind_compatible`'s beat)
+- `linter.model_present` — the Model section must contain both a States list and a Transitions table (empty-but-present beats absent)
+- `linter.ears_syntax` — the intent statement must contain an imperative `SHALL` and match one of the five EARS patterns
+- `linter.no_conjoined_id` — an id must not encode two capabilities joined by `and`/`or`
+- `linter.no_universal_in_id` — an id must not contain a universal token (all/every/any/always/never)
+- `linter.total_refs` — every structured-field [[link]] must resolve to a definition somewhere in the corpus — dual-format `id: spec` files are self-contained: their refs must resolve within the file itself
+- `linter.coverage` — every constraint must have a deriving property (`∃ property.derives_from == <constraint>`)
+- `linter.no_orphan_property` — every property must derive from at least one constraint
+- `linter.law_cases` — every law-kind property must enumerate its required cases as **name:** labels in its own predicate — the identity and associativity floor is mandatory, extra named cases are checkable declarations
+- `linter.requirement_drift` — a dual-format file's ## Requirements mirror must hold every delta requirement (ADDED and MODIFIED sections alike) with identical requirement text, compared per requirement so mixed-delta files are satisfiable (blank lines and trailing space ignored)
+- `linter.dual_format_valid` — a file carrying `## ADDED Requirements` must be a dual-format file — declare `id: spec` and pair it with a sibling `## Requirements` section
+- `linter.terminal_states_emit` — every failure terminal state must emit exactly one file-owned effect Constraint — a mute failure terminal is a finding (specs/linter-failure_shape.md; timed_out/exploration_only are the stated v1 non-goal)
+- `linter.error_labels_unique` — within one file, no two error Constraints may share a variant head — the label is file-id-namespaced (errors.md error_expr_shape), so collisions are a per-file property
+- `linter.guard_negation_total` — every failure transition must cite exactly the union of its success siblings' citation sets, or be on the recorded carve-out list (orchestrate.md's stage-fail transitions) — a zero-citation failure guard off the list is a finding
+- `linter.every_state_used` — every declared state must appear as from or to in at least one transition — a state no transition reaches is machinery the model can never enter or leave
+- `linter.every_transition_valid` — every transition's from and to must name states declared in the same file's States section
+- `linter.no_self_ref` — a row must not reference itself via traces_to or derives_from — a self-tracing row has no owning purpose
+- `linter.acyclic` — the directed graph formed by constraint-traces_to ∪ property-derives_from ∪ guard-as-edge must contain no cycle (derives_from edges are property-sourced — the Reference Typing Appears-on column is normative, so a Constraint-row derives_from is typing's beat, never an edge)
+- `linter.single_root_reachable` — every constraint/property/state/transition row must be connected to some intent row through the reference graph (traces_to, derives_from, guard, from/to, emits) — no orphaned islands
+- `linter.observability` — every effect Constraint must be the target of ≥1 `observes` reference from a different row — advisory: warned on the warnings channel (exit 0), never a failure
+- `linter.checklist_well_formed` — a declared checklist manifest (`*.checklist.md`) must be a flat item list with stable ids plus a mapping table with exactly item/status/mapped_ids/rationale columns — a manifest the linter cannot read is a checklist going silently unconsulted
+- `linter.every_item_accounted` — every checklist item must have exactly one mapping row with status `covered` or `waived` — an unconsulted item is the failure this checker exists to prevent
+- `linter.covered_maps_resolve` — a `covered` mapping row must name a non-empty mapped_ids list whose ids resolve to real constraint or property rows — a claim resting on nothing is not a claim
+- `linter.waiver_has_rationale` — a `waived` mapping row must carry non-empty rationale prose — an unexplained waiver is an unconsulted item with extra steps
+- `linter.no_duplicate_claim` — no two mapping rows may target the same checklist item — one claim per item, on the record
+- `linter.constraint_kind_closed` — every Constraint row's kind must be in {invariant, advisory, effect, extension_point} — an unreadable kind cell is outside the closed set (specs/linter-schema_shape.md)
+- `linter.property_kind_closed` — every Property row's kind must be in {unit, law} — an unreadable kind cell is outside the closed set (specs/linter-schema_shape.md)
+
+### Commands
+
+- `spk lint <dir>` — check the invariants (fails with a hint on zero files)
+- `spk graph <dir>` — typed reference graph (state edges, typing
+  violations, supersedes cycles; blast-radius lands later)
+- `spk compile <files>` — emit TOML / proptest / TLA+ artifacts
+- `spk model-check <files>` — run the model checker against compiled
+  output (stateright; reports land as `*.check.json`)
+- `spk explain [topic]` — the embedded format primer (works offline)
+- `spk doctor` — diagnose workspace + block currency
+- `spk feedback bug --dry-run` — file an issue against upstream
+
+Refresh this block after upgrading: `spk init --force`.
+<!-- SPECODELIC:END -->
+
 <!-- DONT:START -->
 # DONT MANAGED BLOCK — DO NOT EDIT
 
@@ -29,8 +84,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 <!-- OPENSPEC:END -->
 
-<!-- WAI:START -->
-# Workflow Tools
+<!-- WAI:START --># Workflow Tools
 
 This project uses **wai** to track the *why* behind decisions — research,
 reasoning, and design choices that shaped the code. Run `wai status` first
@@ -59,6 +113,25 @@ When context reaches ~40%: stop and tell the user — responses degrade past
 this point. Recommend `wai close` then `/clear` to resume cleanly.
 Do NOT skip `wai close` — it enables resume detection.
 
+## Ubiquitous Language
+
+If `.wai/resources/ubiquitous-language/README.md` exists, read it first as the
+navigation index, then open only the bounded-context files relevant to the task.
+Avoid loading every terminology file unless the work truly spans multiple contexts.
+
+## Autonomous Work Policy
+
+Proceed without routine confirmation when the next step is clear.
+Do not ask to continue, fix, or commit — just do it.
+
+**Stop and ask** only when:
+- Conflicting requirements or ambiguous intent
+- Destructive actions (data loss, force-push, drop table)
+- Credentials, secrets, or external services not yet authorized
+- Unresolved test failures after two attempts
+- Push, deploy, or release — always get explicit authorization
+- Context approaching 40% — recommend `wai close` then `/clear`
+
 ## Detailed Instructions
 
 Full workflow reference — session lifecycle, capturing work, command cheat
@@ -78,6 +151,7 @@ context before starting research or creating tickets.
 
 > **Before research or ticket creation**: always run `wai search "<topic>"` to
 > check for known patterns. Do not rediscover what is already documented.
+
 <!-- WAI:REFLECT:REF:END -->
 
 ## Governance
