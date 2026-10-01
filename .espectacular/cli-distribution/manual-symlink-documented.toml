@@ -1,6 +1,9 @@
 id = "manual-symlink-documented"
-description = ""
-archetype = "PF"
+description = "docs describe both automatic install and the bin/replyc symlink fallback"
+archetype = "BP"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "test -s docs/src/howto-cli-install.md && grep -q \"ln -s\" docs/src/howto-cli-install.md && grep -q \"bin/replyc\" docs/src/howto-cli-install.md" } ]

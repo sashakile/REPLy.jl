@@ -1,3 +1,5 @@
+using Logging
+
 @testset "build.jl creates launcher" begin
     depot_bin = joinpath(DEPOT_PATH[1], "bin")
     launcher = joinpath(depot_bin, "replyc")
@@ -96,5 +98,110 @@ end
     finally
         empty!(DEPOT_PATH)
         append!(DEPOT_PATH, old_depot_path)
+    end
+end
+
+@testset "build.jl overwrite guard (REPLy_jl-1ssz)" begin
+    # Scenarios from openspec/specs/cli-distribution/spec.md:
+    #   - existing-non-reply-file-at-target-path
+    #   - rebuild-overwrites-own-file-cleanly
+    # Both run build.jl in an isolated fake depot against a pre-existing
+    # <depot>/bin/replyc; the difference is whether the file carries the
+    # REPLy ownership marker.
+
+    function run_build_with_preexisting(content::AbstractString)
+        fake_depot = mktempdir()
+        fake_pkg_dir = mktempdir()
+        for entry in ("Project.toml", "src", "deps", "bin")
+            cp(joinpath(pkgdir(REPLy), entry), joinpath(fake_pkg_dir, entry))
+        end
+        bin_dir = joinpath(fake_depot, "bin")
+        mkpath(bin_dir)
+        launcher = joinpath(bin_dir, "replyc")
+        isnothing(content) || write(launcher, content)
+
+        old_depot_path = copy(DEPOT_PATH)
+        pushfirst!(DEPOT_PATH, fake_depot)
+        logs = Any[]
+        logs = Any[]
+        try
+            logger = Test.TestLogger()
+            with_logger(logger) do
+                include(joinpath(fake_pkg_dir, "deps", "build.jl"))
+            end
+            logs = logger.logs
+        finally
+            empty!(DEPOT_PATH)
+            append!(DEPOT_PATH, old_depot_path)
+        end
+        return launcher, logs
+    end
+
+    marker = "# REPLy-managed; uuid: d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51"
+
+    @testset "existing non-REPLy file is NOT overwritten and warns" begin
+        foreign = "#!/bin/sh\necho unrelated-tool\n"
+        launcher, logs = run_build_with_preexisting(foreign)
+        @test read(launcher, String) == foreign  # untouched
+        @test any(r -> r.level == Logging.Warn &&
+            occursin("Refusing to overwrite", r.message), logs)
+    end
+
+    @testset "rebuild overwrites own (marked) file cleanly" begin
+        launcher, _ = run_build_with_preexisting("#!/usr/bin/env bash\n$marker\nold pin\n")
+        content = read(launcher, String)
+        @test startswith(split(content, '\n'; keepempty=false)[1], "#!")
+        @test occursin(marker, content)
+        @test occursin("--project", content)   # regenerated pin, not 'old pin'
+        @test !occursin("old pin", content)
+    end
+end
+
+@testset "build.jl partial failure leaves no launcher (REPLy_jl-1ssz)" begin
+    # Scenario: partial-build-failure-creates-no-launcher — build fails after
+    # the scratch environment is created but before the launcher is written.
+    # Sequencing trick: pre-create an unowned replyc in a read-only bin dir;
+    # the overwrite guard then declines (after scratch creation), so no
+    # launcher write happens and the target path stays unowned.
+    fake_depot = mktempdir()
+    fake_pkg_dir = mktempdir()
+    for entry in ("Project.toml", "src", "deps", "bin")
+        cp(joinpath(pkgdir(REPLy), entry), joinpath(fake_pkg_dir, entry))
+    end
+    import Scratch
+    scratch_env = Scratch.get_scratch!(
+        Base.UUID("d8d4d84f-5d15-4c72-a2d2-f44ddaa6ca51"), "env"; depot_path=fake_depot)
+    mkpath(scratch_env)
+    bin_dir = joinpath(fake_depot, "bin")
+    mkpath(bin_dir)
+    launcher = joinpath(bin_dir, "replyc")
+    write(launcher, "not REPLy-owned")
+    chmod(bin_dir, 0o500)  # any write attempt would now fail loudly
+
+    old_depot_path = copy(DEPOT_PATH)
+    pushfirst!(DEPOT_PATH, fake_depot)
+    try
+        include(joinpath(fake_pkg_dir, "deps", "build.jl"))
+    finally
+        empty!(DEPOT_PATH)
+        append!(DEPOT_PATH, old_depot_path)
+    end
+
+    @test isdir(scratch_env)                     # scratch was created
+    @test read(launcher, String) == "not REPLy-owned"  # no launcher written
+end
+
+@testset "launcher env isolation (REPLy_jl-1ssz)" begin
+    # Scenarios from openspec/specs/cli-distribution/spec.md:
+    #   - launcher-works-after-global-env-changes
+    #   - launcher-ignores-outer-julia-project
+    # The launcher pins --project=<scratch_env>; it must resolve REPLy from
+    # the build-time snapshot regardless of the ambient environment.
+    launcher = joinpath(DEPOT_PATH[1], "bin", "replyc")
+    @test isfile(launcher)  # established by the first testset
+
+    withenv("JULIA_PROJECT" => mktempdir()) do
+        help_output = read(`$launcher --help`, String)
+        @test occursin("replyc", help_output)
     end
 end

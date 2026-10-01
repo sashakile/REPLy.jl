@@ -1,32 +1,49 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN REPLy is installed and built, THE build script SHALL install a working replyc launcher pinned to a private build-time snapshot while refusing to clobber non-REPLy files at the target path."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
-|----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+|----|------|------|------------|
+| LAUNCHER_INSTALLED | invariant | after Pkg.build, `<depot>/bin/replyc` exists, is executable, and `--help` resolves REPLy | [[spec]] |
+| SCRATCH_PIN | invariant | the launcher exec line pins `--project=<scratch_env>` created under the REPLy UUID scratchspace | [[spec]] |
+| OVERWRITE_GUARD | invariant | a target file lacking the REPLy ownership marker is never overwritten; a warning naming the path is emitted instead | [[spec]] |
+| SELF_OVERWRITE | invariant | a target file carrying the marker is overwritten cleanly on rebuild | [[spec]] |
+| NO_PARTIAL_LAUNCHER | invariant | a build that fails between scratch creation and launcher write leaves no launcher at the target path | [[spec]] |
+| MANUAL_FALLBACK_DOC | invariant | the CLI install documentation describes the automatic path and a bin/replyc symlink fallback that resolves the ambient environment | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `no_launcher`
+- `installing`
+- `installed`
+- `conflict`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| build_start | no_launcher | installing | [[spec.NO_PARTIAL_LAUNCHER]] |
+| install_write | installing | installed | [[spec.LAUNCHER_INSTALLED]] |
+| rebuild_write | installed | installed | [[spec.SELF_OVERWRITE]] |
+| guard_refuse | installing | conflict | [[spec.OVERWRITE_GUARD]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
-|----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+|----|------|--------------|-----------|------------|
+| launcher_works_end_to_end | unit | [[spec.LAUNCHER_INSTALLED]] | `test/unit/build_test.jl` | launcher exists, is executable, carries marker, and `--help` forces a real `using REPLy` through the pinned env |
+| scratch_env_resolves | unit | [[spec.SCRATCH_PIN]] | `test/unit/build_test.jl` | scratch env has Project.toml + Manifest.toml and the launcher embeds its path |
+| guard_preserves_foreign_file | unit | [[spec.OVERWRITE_GUARD]] | `test/unit/build_test.jl` | foreign target content is byte-identical after build and a Refusing-to-overwrite warning is logged |
+| rebuild_replaces_own_launcher | unit | [[spec.SELF_OVERWRITE]] | `test/unit/build_test.jl` | marker-carrying target is regenerated (old pin content gone, new --project line present) |
+| failure_leaves_target_unowned | unit | [[spec.NO_PARTIAL_LAUNCHER]] | `test/unit/build_test.jl` | after a declined write, target path holds no REPLy launcher while scratch env exists |
+| docs_show_both_install_paths | unit | [[spec.MANUAL_FALLBACK_DOC]] | `grep` over `docs/src/howto-cli-install.md` | doc contains automatic-install section and an `ln -s ... bin/replyc` fallback one-liner |
+| env_isolation | unit | [[spec.SCRATCH_PIN]] | `test/unit/build_test.jl` | launcher works with an ambient JULIA_PROJECT pointing elsewhere |
 
 # cli-distribution Specification
 

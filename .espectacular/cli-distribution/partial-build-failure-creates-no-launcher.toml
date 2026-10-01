@@ -1,6 +1,9 @@
 id = "partial-build-failure-creates-no-launcher"
-description = ""
-archetype = "PF"
+description = "build failure after scratch creation but before launcher write leaves no launcher at <depot>/bin/replyc"
+archetype = "BP"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/build_test.jl\")'" } ]

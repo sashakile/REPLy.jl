@@ -1,6 +1,9 @@
 id = "launcher-installed-after-pkg-add-url-form"
-description = ""
-archetype = "PF"
+description = "deps/build.jl runs on Pkg.build with no Manifest.toml (Pkg.add(url=...) layout) and installs an executable replyc that resolves REPLy"
+archetype = "BP"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/build_test.jl\")'" } ]

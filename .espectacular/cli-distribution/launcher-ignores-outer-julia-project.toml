@@ -1,6 +1,9 @@
 id = "launcher-ignores-outer-julia-project"
-description = ""
-archetype = "PF"
+description = "launcher resolves REPLy from its scratch env even with JULIA_PROJECT set"
+archetype = "BP"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/build_test.jl\")'" } ]
