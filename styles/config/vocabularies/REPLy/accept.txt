@@ -4,6 +4,8 @@ repo
 devcontainer
 (?i)middlewares?
 CLIs
+IDEs
+PRs
 composable
 REPLy
 OpenSpec

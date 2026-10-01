@@ -1,3 +1,33 @@
+---
+id: spec
+kind: intent
+statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+---
+
+## Constraints
+
+| id | kind | expr | traces_to |
+|----|------|------|-----------|
+| scaffold_constraint | invariant | `true` | [[spec]] |
+
+## Model
+
+### States
+
+- `draft`
+
+### Transitions
+
+| id | from | to | guard |
+|----|------|----|-------|
+| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+
+## Properties
+
+| id | kind | derives_from | generator | predicate |
+|----|------|--------------|-----------|-----------|
+| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+
 # Security Model
 
 _Version: 1.1 — 2026-04-17_
