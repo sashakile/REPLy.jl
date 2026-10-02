@@ -1,32 +1,57 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN a client creates or addresses a session, THE server SHALL isolate bindings per anonymous module, serialize same-session evals FIFO, bound and reuse ephemeral session modules, close idle and ephemeral sessions automatically, and transition lifecycle states atomically."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
 |----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+| SESSION_BINDING_ISOLATION | invariant | every light session is backed by its own anonymous `Module`, so two concurrent evals against different sessions cannot observe each other's bindings | [[spec]] |
+| SAME_SESSION_EVAL_FIFO | invariant | at most one `Core.eval` is in flight per light session at any time and concurrent eval requests within a session execute in submission order | [[spec]] |
+| EVAL_TASK_VISIBILITY | invariant | `session.eval_task` is assigned to the running task before any eval code begins executing and remains non-nothing while the eval executes, so concurrent interrupt reads observe it | [[spec]] |
+| SESSION_CREATION_LATENCY | invariant | a new light session is created within 10 ms p99 on reference hardware on an otherwise idle server | [[spec]] |
+| SESSION_TYPE_SELECTION | invariant | a Heavy session is created only when `clone` includes `"type":"heavy"` AND Malt.jl is loaded; every other request creates a Light session, and a heavy request without Malt.jl is rejected with `{"status":["done","error"],"err":"Heavy sessions require Malt.jl"}` | [[spec]] |
+| IDLE_SWEEP | invariant | the background sweep closes sessions idle longer than `session_idle_timeout_s` (subsequent requests receive `session-not-found`) and skips sessions with an in-flight eval until the eval completes | [[spec]] |
+| EPHEMERAL_LIFECYCLE | invariant | session-bearing execution operations omitting the `session` field (v1.0: `eval`, `load-file`) run in a transient light session that is destroyed after the response stream terminates, whose ID is never returned to the client, and whose creation is rejected with `session-limit-reached` when `max_sessions` is hit and its eval is rejected with `concurrency-limit-reached` when `max_concurrent_evals` is hit and the bounded queue is full; ephemeral evals are not interruptible because no client-visible handle exists | [[spec]] |
+| MODULE_POOL | invariant | after an ephemeral eval completes its bindings are cleared and the module is returned to a bounded reuse pool (bounded at `max_concurrent_evals`), so memory growth from module creation is bounded and cleared bindings raise `UndefVarError` again | [[spec]] |
+| LIFECYCLE_ATOMICITY | invariant | every session occupies exactly one of `CREATED`, `ACTIVE`, `EVAL_RUNNING`, or `DESTROYED`; all transitions are atomic under `SessionManager.lock`; the first atomic transition out of `EVAL_RUNNING` wins against competing close/timeout/interrupt terminals and later termination attempts are no-ops; a `close` that destroys a session makes queued evals observe `session-not-found` | [[spec]] |
+| REVISE_PREEVAL_HOOK | invariant | a `PreEvalHook` calls `Revise.revise()` before every named-session eval when Revise.jl is loaded | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `active`
+- `eval_running`
+- `destroyed`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| begin_eval | active | eval_running | [[spec.SAME_SESSION_EVAL_FIFO]] |
+| end_eval | eval_running | active | [[spec.LIFECYCLE_ATOMICITY]] |
+| terminate_eval | eval_running | active | [[spec.LIFECYCLE_ATOMICITY]] |
+| sweep_close | active | destroyed | [[spec.IDLE_SWEEP]] |
+| close_session | active | destroyed | [[spec.LIFECYCLE_ATOMICITY]] |
+| destroy_ephemeral | active | destroyed | [[spec.EPHEMERAL_LIFECYCLE]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
 |----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+| binding_isolation_holds | unit | [[spec.SESSION_BINDING_ISOLATION]] | `test/unit/session_management_spec_test.jl` | an eval of `x` in session B raises UndefVarError after session A evaluated `x = 42`, and concurrent sessions run in parallel so B's fast eval completes while A's 2-second eval is still in flight |
+| fifo_serialization_holds | unit | [[spec.SAME_SESSION_EVAL_FIFO]] | `test/unit/session_management_spec_test.jl` | two evals submitted concurrently to one session log their execution markers in submission order: the queued eval cannot overtake the sleeping one |
+| eval_task_visible_during_eval | unit | [[spec.EVAL_TASK_VISIBILITY]] | `test/unit/session_management_spec_test.jl` | a concurrent poll observes a non-nothing `session.eval_task` during a running eval and the interrupt lands on it, returning `interrupted` naming the session |
+| session_creation_p99_under_10ms | unit | [[spec.SESSION_CREATION_LATENCY]] | `test/unit/session_management_spec_test.jl` | the p99 latency of 300 ephemeral session creations is below 10 ms |
+| session_type_selection_holds | unit | [[spec.SESSION_TYPE_SELECTION]] | `test/unit/session_management_spec_test.jl` | `new-session` without a type creates a light non-trusted anonymous-module session, and `clone` with `type":"heavy"` returns exactly `{"status":["done","error"],"err":"Heavy sessions require Malt.jl"}` without creating the destination |
+| idle_sweep_skips_running | unit | [[spec.IDLE_SWEEP]] | `test/unit/session_management_spec_test.jl` | the sweep removes an idle session (later requests get session-not-found), skips a session in EVAL_RUNNING regardless of age, and sweeps it after the eval ends |
+| ephemeral_not_persistent | unit | [[spec.EPHEMERAL_LIFECYCLE]] | `test/unit/session_management_spec_test.jl` | an ephemeral eval returns its value without a session field, `ls-sessions` stays empty, over-limit ephemeral requests carry the specified status flags, and an interrupt without a session field errors instead of reaching any eval |
+| module_pool_bounded_and_cleared | unit | [[spec.MODULE_POOL]] | `test/unit/session_management_spec_test.jl` | a destroyed ephemeral module is cleared (old bindings raise UndefVarError), returned to the pool, reused verbatim by the next ephemeral session, and the pool never exceeds its capacity |
+| racing_terminals_resolve_once | unit | [[spec.LIFECYCLE_ATOMICITY]] | `test/unit/session_management_spec_test.jl` | close and clone racing on one session resolve exactly once across repeated trials, a queued eval reports session-not-found after close, and interrupt/close racing a running eval both complete with a later interrupt a no-op session-not-found |
+| revise_hook_runs_before_eval | unit | [[spec.REVISE_PREEVAL_HOOK]] | `test/unit/session_management_spec_test.jl` | a mocked Revise.revise() registered under the authentic PkgId runs exactly once before each named-session eval executes |
 
 # Session Management
 

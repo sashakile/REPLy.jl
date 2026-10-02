@@ -46,7 +46,7 @@ descriptor(::SessionOpsMiddleware) = MiddlewareDescriptor(
             "returns"  => String[],
         ),
         "clone" => Dict{String, Any}(
-            "doc"      => "Clone a named session to a new name. Source is identified by 'session' (spec) or 'source' (compat). Optional 'type' field: 'light' (default) or 'heavy' (post-v1.0, returns not-supported). Copied bindings are const (reassignment throws ConstAssignmentError; mutable values are deep-copied so in-place mutation still works and stays isolated from the source).",
+            "doc"      => "Clone a named session to a new name. Source is identified by 'session' (spec) or 'source' (compat). Optional 'type' field: 'light' (default) or 'heavy' (requires Malt.jl, which is not loaded in v1.0 — rejected). Copied bindings are const (reassignment throws ConstAssignmentError; mutable values are deep-copied so in-place mutation still works and stays isolated from the source).",
             "requires" => ["name"],
             "optional" => ["session", "source", "type"],
             "returns"  => ["new-session", "name"],
@@ -243,13 +243,12 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         return [error_response(request_id, "$(op) \"name\": $(name_err)")]
     end
 
-    # Type field: only "light" (or absent) is supported; "heavy" is post-v1.0.
-    # Any unrecognized type is rejected to keep the contract strict.
+    # Type field: only "light" (or absent) is supported; "heavy" requires
+    # Malt.jl, which is not loaded in v1.0 (REQ-RPL-033).
     if op == "clone"
         clone_type = get(msg, "type", nothing)
         if clone_type == "heavy"
-            return [error_response(request_id, "heavy sessions are post-v1.0";
-                        status_flags=String["not-supported"])]
+            return [error_response(request_id, "Heavy sessions require Malt.jl")]
         elseif !isnothing(clone_type) && clone_type != "light"
             return [error_response(request_id, "clone \"type\": unknown value $(repr(clone_type)); accepted values are \"light\" or absent")]
         end

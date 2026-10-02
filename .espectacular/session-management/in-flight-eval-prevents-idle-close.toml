@@ -1,6 +1,9 @@
 id = "in-flight-eval-prevents-idle-close"
-description = ""
+description = "the idle sweep skips a session in EVAL_RUNNING but sweeps it after end_eval!"
 archetype = "PF"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/session_management_spec_test.jl\")'" } ]

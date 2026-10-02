@@ -768,7 +768,7 @@ end
         @test clone !== nothing
     end
 
-    @testset "clone with type='heavy' returns not-supported error" begin
+    @testset "clone with type='heavy' rejected (REQ-RPL-033)" begin
         manager = REPLy.SessionManager()
         REPLy.create_named_session!(manager, "heavy-src")
         handler = REPLy.build_handler(; manager=manager)
@@ -784,8 +784,8 @@ end
         assert_conformance(msgs, "spec-clone-heavy")
         terminal = filter(m -> haskey(m, "status"), msgs)
         @test !isempty(terminal)
-        @test "not-supported" in terminal[end]["status"]
-        @test occursin("post-v1.0", get(terminal[end], "err", ""))
+        @test terminal[end]["status"] == ["done", "error"]
+        @test get(terminal[end], "err", "") == "Heavy sessions require Malt.jl"
         # Session should NOT have been created
         @test REPLy.lookup_named_session(manager, "heavy-dst") === nothing
     end

@@ -11,6 +11,8 @@ Track ephemeral `ModuleSession`s and persistent `NamedSession`s separately.
   that appear in `ls-sessions` output.
 - `name_to_uuid` — optional alias-to-UUID index; allows callers to look up
   sessions by human-readable name in addition to canonical UUID.
+- `module_pool` — bounded pool of cleared anonymous modules reused for new
+  ephemeral sessions (REQ-RPL-035d); bounded at `module_pool_capacity`.
 
 The invariant that ephemeral sessions never appear in `list_named_sessions`
 is enforced by keeping the two registries strictly separate.
@@ -22,21 +24,90 @@ mutable struct SessionManager
     name_to_uuid::Dict{String,String}
     detached_sessions::Vector{NamedSession}
     retained_ephemeral::IdDict{ModuleSession,Nothing}
+    module_pool::Vector{Module}
+    module_pool_capacity::Int
 end
 
-SessionManager() = SessionManager(ReentrantLock(), ModuleSession[], Dict{String,NamedSession}(), Dict{String,String}(), NamedSession[], IdDict{ModuleSession,Nothing}())
+const DEFAULT_MODULE_POOL_CAPACITY = 64
+
+function SessionManager(; module_pool_capacity::Int=DEFAULT_MODULE_POOL_CAPACITY)
+    module_pool_capacity >= 0 ||
+        throw(ArgumentError("module_pool_capacity must be non-negative, got $(module_pool_capacity)"))
+    SessionManager(ReentrantLock(), ModuleSession[], Dict{String,NamedSession}(),
+                   Dict{String,String}(), NamedSession[],
+                   IdDict{ModuleSession,Nothing}(), Module[], module_pool_capacity)
+end
 
 """
     create_ephemeral_session!(manager)
 
 Create and register a new ephemeral session backed by an anonymous module.
+The module comes from the bounded reuse pool when one is available
+(REQ-RPL-035d); a fresh anonymous module is created only when the pool is
+empty.
 """
 function create_ephemeral_session!(manager::SessionManager)
     lock(manager.lock) do
-        session = ModuleSession(new_session_module(:REPLySession))
+        session = ModuleSession(_acquire_session_module(manager))
         push!(manager.ephemeral_sessions, session)
         return session
     end
+end
+
+"""
+    _acquire_session_module(manager) -> Module
+
+Return a session module for a new ephemeral session: popped from the reuse
+pool when available, freshly created otherwise. Caller must hold `manager.lock`.
+"""
+function _acquire_session_module(manager::SessionManager)
+    isempty(manager.module_pool) && return new_session_module(:REPLySession)
+    return pop!(manager.module_pool)
+end
+
+"""
+    _clear_session_module!(mod::Module) -> Bool
+
+Remove all user-visible bindings from a session module so it can be reused
+without leaking state (REQ-RPL-035d "bindings are cleared"). The session
+machinery (`include` wrapper) and internal `#`-prefixed names are preserved.
+
+Requires `Base.delete_binding` (Julia 1.11+) to preserve non-persistence
+semantics (`UndefVarError` for cleared names). Returns `false` when the module
+cannot be fully cleared (pre-1.11 Julia, const bindings) — callers then drop
+the module instead of pooling it, matching the no-pool memory behavior.
+"""
+function _clear_session_module!(mod::Module)
+    isdefined(Base, :delete_binding) || return false
+    for name in names(mod; all=true, imported=false)
+        name === :include && continue
+        startswith(String(name), "#") && continue
+        isdefined(mod, name) || continue
+        isconst(mod, name) && return false
+        try
+            Base.delete_binding(mod, name)
+        catch
+            return false
+        end
+    end
+    return true
+end
+
+"""
+    _recycle_session_module!(manager, mod)
+
+Return a cleared session module to the reuse pool, bounded at
+`module_pool_capacity`. Modules that cannot be fully cleared are dropped.
+Caller must hold `manager.lock`.
+"""
+function _recycle_session_module!(manager::SessionManager, mod::Module)
+    length(manager.module_pool) >= manager.module_pool_capacity && return
+    # Clear in the latest world age: the destroying task's world snapshot can
+    # predate globals created by the (now-finished) eval's child task, which
+    # would make names/isdefined miss them and leak bindings across reuse.
+    Base.invokelatest(_clear_session_module!, mod) || return
+    push!(manager.module_pool, mod)
+    return
 end
 
 """
@@ -49,6 +120,7 @@ function destroy_session!(manager::SessionManager, session::ModuleSession)
     lock(manager.lock) do
         haskey(manager.retained_ephemeral, session) && return nothing
         filter!(existing -> existing !== session, manager.ephemeral_sessions)
+        _recycle_session_module!(manager, session.session_mod)
     end
     return nothing
 end
@@ -65,6 +137,7 @@ function finish_retained_ephemeral!(manager::SessionManager, session::ModuleSess
     lock(manager.lock) do
         delete!(manager.retained_ephemeral, session)
         filter!(existing -> existing !== session, manager.ephemeral_sessions)
+        _recycle_session_module!(manager, session.session_mod)
     end
 end
 
@@ -159,7 +232,7 @@ acquisition, preventing the TOCTOU race that exists when they are separate.
 function create_ephemeral_session_if_within_limit!(manager::SessionManager, max_sessions::Int)
     lock(manager.lock) do
         _total_session_count_unlocked(manager) >= max_sessions && return nothing
-        session = ModuleSession(new_session_module(:REPLySession))
+        session = ModuleSession(_acquire_session_module(manager))
         push!(manager.ephemeral_sessions, session)
         return session
     end
