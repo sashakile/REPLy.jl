@@ -183,7 +183,7 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
         return server
     end
 
-    listener = listen(host, Int(port))
+    listener = _listen_tcp_logged(host, Int(port))
     assigned_port = Int(getsockname(listener)[2])
     _warn_if_non_loopback(host, assigned_port)
     server = TCPServerHandle(
@@ -206,6 +206,21 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
 end
 
 const DEFAULT_CLOSE_GRACE_SECONDS = 5.0
+
+# Bind a TCP listener with an informative error log on failure. A bind
+# failure (e.g. port already in use) surfaces as Base.IOError; log it with
+# the offending host/port before rethrowing so operators see why startup
+# failed (transport spec: port-conflict-is-logged).
+function _listen_tcp_logged(host, port::Int)
+    try
+        return listen(host, port)
+    catch ex
+        if ex isa Base.IOError
+            @error "Failed to bind TCP listener" host=host port=port exception=(ex, catch_backtrace())
+        end
+        rethrow()
+    end
+end
 
 function interrupt_active_evals!(state::ServerState)
     for life in begin_shutdown!(state)
@@ -326,7 +341,7 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
         else
             h = hasproperty(spec, :host) ? spec.host : ip"127.0.0.1"
             p = hasproperty(spec, :port) ? spec.port : 0
-            listener = listen(h, Int(p))
+            listener = _listen_tcp_logged(h, Int(p))
             assigned_port = Int(getsockname(listener)[2])
             _warn_if_non_loopback(h, assigned_port)
             handle = TCPServerHandle(listener, assigned_port, Task(() -> nothing), Task[], IO[], ReentrantLock(), handler, stack, closing, state)

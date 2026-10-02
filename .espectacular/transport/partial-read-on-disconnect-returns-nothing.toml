@@ -1,6 +1,9 @@
 id = "partial-read-on-disconnect-returns-nothing"
-description = ""
+description = "receive returns nothing on partial reads and disconnects (REQ-RPL-040b)"
 archetype = "PF"
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.8.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/unit/message_test.jl\")'" } ]

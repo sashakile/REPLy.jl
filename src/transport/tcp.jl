@@ -50,7 +50,18 @@ function handle_client!(socket::IO, handler::Function;
     state::Union{Nothing, ServerState}=nothing,
 )
     transport = JSONTransport(socket, ReentrantLock())
+    return handle_client!(transport, handler; socket=socket, max_message_bytes=max_message_bytes, rate_limit_per_min=rate_limit_per_min, state=state)
+end
 
+# REQ-RPL-002/REQ-RPL-040: the connection loop is transport-agnostic — any
+# AbstractTransport implementing the four interface methods (send!, receive,
+# close, isopen) drives this loop unchanged.
+function handle_client!(transport::AbstractTransport, handler::Function;
+    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
+    rate_limit_per_min::Int=0,
+    state::Union{Nothing, ServerState}=nothing,
+    socket::Union{Nothing, IO}=nothing,
+)
     # Per-connection rate-limit state: sliding 60-second window.
     # When rate_limit_per_min == 0, enforcement is disabled.
     rl_window_start = time()
@@ -91,7 +102,7 @@ function handle_client!(socket::IO, handler::Function;
             consecutive_malformed = 0
             isnothing(msg) && return nothing
 
-            admitted = isnothing(state) || begin_request!(state, socket)
+            admitted = isnothing(state) || (socket isa IO ? begin_request!(state, socket) : true)
             admitted || return nothing
 
             try
@@ -163,7 +174,9 @@ function handle_client!(socket::IO, handler::Function;
                     end
                 end
             finally
-                !isnothing(state) && end_request!(state, socket)
+                if !isnothing(state)
+                    socket isa IO && end_request!(state, socket)
+                end
             end
 
             # Never run close recursively in the request task: it would wait
@@ -175,7 +188,11 @@ function handle_client!(socket::IO, handler::Function;
             end
         end
     finally
-        isopen(socket) && close(socket)
+        if socket isa IO
+            isopen(socket) && close(socket)
+        else
+            isopen(transport) && close(transport)
+        end
     end
 
     return nothing

@@ -1,32 +1,48 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN a client or middleware exchanges messages with the server, THE transport layer SHALL abstract delivery behind four methods (send!, receive, close, isopen), SHALL frame each message as newline-delimited JSON, and SHALL expose TCP and owner-only Unix socket listeners whose resource limits apply globally."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
-|----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+|----|------|------|------------|
+| FOUR_METHOD_INTERFACE | invariant | middleware, sessions, and core operations depend only on send!, receive, close, and isopen — no reference to a concrete transport type | [[spec]] |
+| RECEIVE_POSTCONDITION | invariant | receive returns a parsed message object or nothing; partial reads and disconnects never propagate as parse exceptions | [[spec]] |
+| NEWLINE_FRAMING | invariant | every sent message is a single JSON object terminated by exactly one newline byte, serialized under a lock | [[spec]] |
+| SOCKET_OWNER_ONLY | invariant | a Unix socket file exists only with mode 0o600, restricted from its first instant by the 0o077 umask wrap, and the caller's umask is restored after listen | [[spec]] |
+| STALE_SOCKET_CLEARED | invariant | a pre-existing file at the socket path is removed before listen creates the new socket | [[spec]] |
+| GLOBAL_RESOURCE_LIMITS | invariant | max_sessions, max_concurrent_evals, and rate_limit_per_min apply across all listeners of a server instance, not per listener | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `unbound`
+- `listening`
+- `closed`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| bind_listener | unbound | listening | [[spec.SOCKET_OWNER_ONLY]] |
+| clear_stale_path | unbound | unbound | [[spec.STALE_SOCKET_CLEARED]] |
+| serve_messages | listening | listening | [[spec.NEWLINE_FRAMING]] |
+| close_listener | listening | closed | [[spec.FOUR_METHOD_INTERFACE]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
-|----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+|----|------|--------------|-----------|------------|
+| custom_transport_drives_pipeline | unit | [[spec.FOUR_METHOD_INTERFACE]] | `test/unit/transport_spec_test.jl` | a transport implementing only the four methods produces value and done responses for evals on a named session through the unmodified connection loop |
+| receive_never_leaks_partial_reads | unit | [[spec.RECEIVE_POSTCONDITION]] | `test/unit/message_test.jl` | truncated line and empty stream both return nothing; non-object JSON is skipped and parsing continues |
+| framing_is_one_line_per_message | unit | [[spec.NEWLINE_FRAMING]] | `test/unit/message_test.jl` | send! output ends with exactly one newline and round-trips through JSON parsing |
+| socket_mode_is_owner_only_from_creation | unit | [[spec.SOCKET_OWNER_ONLY]] | `test/unit/transport_spec_test.jl`, `test/e2e/unix_socket_test.jl` | stat mode is 0o600 immediately after listen_unix and the caller's umask value is restored |
+| stale_path_cleared_before_listen | unit | [[spec.STALE_SOCKET_CLEARED]] | `test/e2e/unix_socket_test.jl` | a file written at the socket path is gone once the server is listening |
+| limits_span_listeners | unit | [[spec.GLOBAL_RESOURCE_LIMITS]] | `test/e2e/multi_listener_test.jl` | sessions created on TCP count against the same max_sessions budget reached from the Unix socket listener |
+| bind_failure_logged | unit | [[spec.FOUR_METHOD_INTERFACE]] | `test/unit/transport_spec_test.jl` | serving on an occupied port throws Base.IOError after logging an Error-level message naming the port |
 
 # Transport Layer
 

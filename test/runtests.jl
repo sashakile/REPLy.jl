@@ -18,6 +18,7 @@ include("helpers/server.jl")
     @testset "unit" begin
         include("unit/basic_test.jl")
         include("unit/message_test.jl")
+        include("unit/transport_spec_test.jl")
         include("unit/session_test.jl")
         include("unit/session_registry_test.jl")
         include("unit/eval_middleware_test.jl")
