@@ -101,10 +101,21 @@ function assert_malformed_json_boundary(port::Integer)
     sock = connect(ip"127.0.0.1", port)
 
     try
-        write(sock, "{\"op\":\"eval\",\"id\":}\n")
+        # REQ-RPL-020 (adopted error-handling spec): malformed messages are
+        # counted silently, never answered, and the connection closes only at
+        # the 10th consecutive one. A single malformed line must produce no
+        # protocol response and keep the connection open.
+        for _ in 1:10
+            write(sock, "{\"op\":\"eval\",\"id\":}\n")
+        end
         flush(sock)
-        response = read(sock, String)
-        isempty(response) || error("expected malformed JSON to close connection without a protocol response")
+
+        reader = @async read(sock, String)
+        status = timedwait(() -> istaskdone(reader), 10.0)
+        status === :ok ||
+            error("timed out waiting for disconnect after 10 consecutive malformed messages")
+        isempty(fetch(reader)) ||
+            error("expected no protocol response bytes for malformed JSON")
     finally
         isopen(sock) && close(sock)
     end
