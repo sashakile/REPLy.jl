@@ -1,36 +1,55 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN the server is started, THE middleware system SHALL compose a descriptor-declared stack into a single reused handler that routes every request through the ordered middleware pipeline, and SHALL fail startup with one error naming every descriptor violation."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
 |----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+| PIPELINE_PROTOCOL | invariant | every middleware implements handle_message and returns a Dict (single terminal response), a Vector{Dict} (multiple terminal responses), or nothing (pass to next); intermediate responses are emitted through the request sink before the terminal response, preserving intra-request order, carrying the current request id, and following the closed-channel discard semantics of send_response | [[spec]] |
+| THIRD_PARTY_REGISTRATION | invariant | a third-party middleware registers brand-new operations without modifying core code | [[spec]] |
+| DESCRIPTOR_DECLARED | invariant | every middleware declares provides, requires, and expects symbol sets plus per-op metadata through its descriptor method | [[spec]] |
+| STARTUP_VALIDATION_COLLECTIVE | invariant | duplicate provides, unsatisfied requires, and violated expects are all detected at startup; every violation is reported together in a single error naming the involved middleware types and symbols, and the handler cannot be built while any violation exists | [[spec]] |
+| STACK_IMMUTABLE | invariant | the middleware stack is fixed for the lifetime of the server: post-startup mutation of the source vector neither re-validates, re-materializes, nor alters dispatch | [[spec]] |
+| ONE_DONE_PER_REQUEST | invariant | a middleware returning an empty Vector{Dict} yields exactly one done response for the request id, accompanied by a warning | [[spec]] |
+| DEFAULT_STACK_ORDER | invariant | the default stack is the fixed ordered sequence AuditMiddleware, ShutdownMiddleware, SessionMiddleware, SessionOpsMiddleware, DescribeMiddleware, PingMiddleware, InterruptMiddleware, StdinMiddleware, EvalMiddleware, ReloadFileMiddleware, LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware, UnknownOpMiddleware | [[spec]] |
+| CONNECTION_HANDLER_REUSE | invariant | the handler composed from the stack is built once and reused for every message on every connection | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `unvalidated`
+- `validated`
+- `serving`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| validate_stack | unvalidated | validated | [[spec.STARTUP_VALIDATION_COLLECTIVE]] |
+| begin_serving | validated | serving | [[spec.STACK_IMMUTABLE]] |
+| handle_request | serving | serving | [[spec.PIPELINE_PROTOCOL]] |
+| register_third_party | serving | serving | [[spec.THIRD_PARTY_REGISTRATION]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
 |----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+| middleware_return_contract | unit | [[spec.PIPELINE_PROTOCOL]] | `test/unit/middleware_test.jl`, `test/unit/middleware_spec_test.jl` | a middleware passes unknown ops to next, intercepts its own op without delegating, and eval emits buffered out/err chunks before the terminal value and done responses |
+| custom_op_registered | unit | [[spec.THIRD_PARTY_REGISTRATION]] | `test/unit/middleware_spec_test.jl` | a third-party middleware handles a brand-new op through the standard handler while eval and unknown-op routing stay unchanged |
+| descriptor_declares_claims | unit | [[spec.DESCRIPTOR_DECLARED]] | `test/unit/middleware_descriptor_test.jl` | EvalMiddleware's descriptor provides eval and requires session; built-in descriptors match their handled ops |
+| validation_errors_name_types | unit | [[spec.STARTUP_VALIDATION_COLLECTIVE]] | `test/unit/middleware_spec_test.jl` | duplicate provides names both conflicting middleware types, missing requires names the middleware type and the missing symbol, violated expects name the op, and all violations aggregate into one ArgumentError from build_handler |
+| stack_snapshot_immutable | unit | [[spec.STACK_IMMUTABLE]] | `test/unit/middleware_spec_test.jl` | pushing a duplicate-provides middleware or emptying the source vector after build_handler leaves the handler's behavior unchanged |
+| empty_vector_becomes_done | unit | [[spec.ONE_DONE_PER_REQUEST]] | `test/unit/middleware_spec_test.jl` | a middleware returning an empty vector produces a single done response echoing the request id and a Warn-level log record naming the empty response |
+| default_stack_in_order | unit | [[spec.DEFAULT_STACK_ORDER]] | `test/unit/middleware_spec_test.jl` | default_middleware_stack returns exactly the fifteen built-in middleware in the specified order |
+| handler_reused_per_message | unit | [[spec.CONNECTION_HANDLER_REUSE]] | `test/unit/middleware_spec_test.jl` | three messages across two connections through the real connection loop all visit the same middleware instance |
 
 # Middleware System
 
-_Version: 1.1 — 2026-04-17_
+_Version: 1.2 — 2026-10-02_
 
 ## Purpose
 
@@ -92,13 +111,13 @@ Unsatisfied `expects` constraints SHALL cause a startup error by default (config
 - **THEN** all are reported in a single error message, not fail-fast on the first
 
 ### Requirement: Default Middleware Stack Order
-The default middleware stack SHALL be: DescribeMiddleware, SessionMiddleware, EvalMiddleware, InterruptMiddleware, LoadFileMiddleware, CompletionMiddleware, LookupMiddleware, StdinMiddleware, UnknownOpMiddleware. (REQ-RPL-055)
+The default middleware stack SHALL be: AuditMiddleware, ShutdownMiddleware, SessionMiddleware, SessionOpsMiddleware, DescribeMiddleware, PingMiddleware, InterruptMiddleware, StdinMiddleware, EvalMiddleware, ReloadFileMiddleware, LoadFileMiddleware, CompleteMiddleware, LookupMiddleware, LsBindingsMiddleware, UnknownOpMiddleware. (REQ-RPL-055)
 
-`SessionMiddleware` handles `clone`, `close`, and `ls-sessions` operations in addition to session resolution for all requests.
+`SessionOpsMiddleware` handles `clone`, `close`, and `ls-sessions` operations in addition to session resolution by `SessionMiddleware` for all requests.
 
-#### Scenario: Default stack has nine built-in middleware
+#### Scenario: Default stack matches the built-in order
 - **WHEN** `serve()` is called with no `middleware` argument
-- **THEN** `default_middleware_stack()` returns the nine built-in middleware in the specified order
+- **THEN** `default_middleware_stack()` returns the fifteen built-in middleware in the specified order
 
 ### Requirement: Middleware Stack Immutability
 The middleware stack SHALL be immutable after server startup. Middleware cannot be added, removed, or reordered at runtime. (ARCH-007)

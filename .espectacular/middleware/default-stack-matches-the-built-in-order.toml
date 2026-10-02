@@ -1,5 +1,5 @@
-id = "handler-composed-once-per-connection"
-description = "three messages across two connections through the real connection loop all visit the same composed middleware instance"
+id = "default-stack-matches-the-built-in-order"
+description = "default_middleware_stack returns the fifteen built-in middleware in the specified order"
 archetype = "PF"
 status = "active"
 superseded_by = ""

@@ -59,13 +59,14 @@ function validate_stack(stack::Vector{<:AbstractMiddleware}; expects_enforcement
 
         # Check requires against what's been provided so far
         for req in sort!(collect(desc.requires))
-            req in accumulated || push!(errors, "Middleware at index $i requires '$req' but no earlier middleware provides it")
+            req in accumulated || push!(errors, "Middleware $(typeof(stack[i])) at index $i requires '$req' but no earlier middleware provides it")
         end
 
         # Check for duplicate provides
         for op in sort!(collect(desc.provides))
             if haskey(seen_provides, op)
-                push!(errors, "Duplicate handler for '$op': middleware at indices $(seen_provides[op]) and $i")
+                first_idx = seen_provides[op]
+                push!(errors, "Duplicate handler for '$op': $(typeof(stack[first_idx])) at index $first_idx and $(typeof(stack[i])) at index $i")
             else
                 seen_provides[op] = i
             end
@@ -83,7 +84,7 @@ function validate_stack(stack::Vector{<:AbstractMiddleware}; expects_enforcement
             if expected in later_provides
                 continue
             end
-            msg = "Middleware at index $i expects '$expected' but no later middleware provides it"
+            msg = "Middleware $(typeof(stack[i])) at index $i expects '$expected' but no later middleware provides it"
             if expects_enforcement == :error
                 push!(errors, msg)
             else
@@ -188,6 +189,10 @@ function finalize_responses(ctx::RequestContext, result, request_id::AbstractStr
         push!(terminal, result)
     elseif result isa Vector{Dict{String, Any}}
         append!(terminal, result)
+        # Empty response vector guard (ARCH-001): emit the done response below
+        # and warn — one-done-per-request must hold and the integrator should
+        # know their middleware produced nothing.
+        isempty(result) && @warn "middleware returned an empty response vector; emitting a bare done response" request_id = request_id maxlog = 100
     elseif !isnothing(result)
         throw(ArgumentError("unsupported middleware return value: $(typeof(result))"))
     end

@@ -1,6 +1,9 @@
 id = "stack-is-fixed-after-startup"
-description = ""
+description = "mutating the source vector (push a duplicate-provides mw, then empty it) after build_handler never alters handler behavior"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/unit/middleware_spec_test.jl\")'" } ]
