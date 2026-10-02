@@ -1,6 +1,9 @@
 id = "ephemeral-via-sentinel-value"
-description = ""
+description = "julia_eval with the ephemeral sentinel session omits the Reply session field so bindings do not persist"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [{ command = "julia --project=. --startup-file=no -e 'using REPLy, Test, JSON3; include(\"test/unit/mcp_server_test.jl\")'" }]

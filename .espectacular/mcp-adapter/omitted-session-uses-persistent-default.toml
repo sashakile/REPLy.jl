@@ -1,6 +1,9 @@
 id = "omitted-session-uses-persistent-default"
-description = ""
+description = "julia_eval without a session argument routes to the persistent default session so bindings survive across calls"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [{ command = "julia --project=. --startup-file=no -e 'using REPLy, Test, JSON3; include(\"test/unit/mcp_server_test.jl\")'" }]

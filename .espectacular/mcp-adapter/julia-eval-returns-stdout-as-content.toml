@@ -1,6 +1,9 @@
 id = "julia-eval-returns-stdout-as-content"
-description = ""
+description = "julia_eval of println-based code surfaces stdout as a text content block ahead of the terminal value"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [{ command = "julia --project=. --startup-file=no -e 'using REPLy, Test, JSON3; include(\"test/unit/mcp_server_test.jl\")'" }]

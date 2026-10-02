@@ -1,6 +1,9 @@
 id = "end-to-end-mcp-eval"
-description = ""
+description = "an MCP tools/call of julia_eval with code 1+1 forwards a Reply eval op and returns CallToolResult content text 2"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [{ command = "julia --project=. --startup-file=no -e 'using REPLy, Test, JSON3; include(\"test/unit/mcp_server_test.jl\")'" }]
