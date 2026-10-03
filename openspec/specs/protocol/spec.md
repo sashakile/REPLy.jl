@@ -1,32 +1,46 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN a client exchanges messages with the Reply server over the wire, THE server SHALL parse flat JSON envelopes, correlate every response to its request id, terminate each request stream with exactly one done, emit messages in causal order, and frame them as newline-delimited JSON."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
 |----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+| FLAT_ENVELOPE | invariant | every wire message is a flat JSON object carrying `op`, `id`, and optionally `session`; JSON-RPC 2.0 envelopes are never emitted or required | [[spec]] |
+| ID_CORRELATION | invariant | every response message echoes the request's `id` verbatim, and each request stream ends with exactly one `status` containing `done` with no further messages for that `id` after it | [[spec]] |
+| CAUSAL_ORDER | invariant | within one request id, stdout/stderr chunks precede the `value` message, which precedes the terminating `done` message | [[spec]] |
+| NLJSON_FRAMING | invariant | the default wire encoding is newline-delimited UTF-8 JSON selected at connection time; each frame is one JSON object terminated by exactly one `\n` | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `connected`
+- `request_parsed`
+- `streaming`
+- `done`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| parse_request | connected | request_parsed | [[spec.FLAT_ENVELOPE]] |
+| emit_stream | request_parsed | streaming | [[spec.CAUSAL_ORDER]] |
+| terminate | streaming | done | [[spec.ID_CORRELATION]] |
+| new_request | done | connected | [[spec.NLJSON_FRAMING]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
 |----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+| envelope_requests_route | unit | [[spec.FLAT_ENVELOPE]] | `test/unit/protocol_spec_test.jl` | a fully-formed eval request parses and routes to the eval handler; a sessionless request is accepted and handled by the relevant operation |
+| id_length_enforced | unit | [[spec.FLAT_ENVELOPE]] | `test/unit/protocol_spec_test.jl` | an id over `max_id_length` is rejected with `id exceeds maximum length of <max_id_length>` while an id at the limit processes normally |
+| responses_correlate_and_terminate | unit | [[spec.ID_CORRELATION]] | `test/unit/protocol_spec_test.jl` | every streamed response echoes the request id; success emits exactly one done; a parse error emits exactly one done+error with no further messages for that id |
+| stream_ordering_holds | unit | [[spec.CAUSAL_ORDER]] | `test/unit/protocol_spec_test.jl` | three separate out chunks arrive before done; out precedes value precedes done |
+| framing_is_nljson | unit | [[spec.NLJSON_FRAMING]] | `test/unit/protocol_spec_test.jl` | each message is terminated by exactly one `\n`; a bare tcp connection negotiates nothing and speaks newline-delimited JSON by default |
+| status_flags_and_fields | unit | [[spec.ID_CORRELATION]] | `test/unit/protocol_spec_test.jl` | error responses carry both `done` and `error`; unknown request fields are ignored; wire keys are kebab-case (`new-session`); unknown status flags do not disturb known-flag processing; stderr chunks (`err` without status) are distinguishable from error responses (`err` with status) |
 
 # Protocol Specification
 
@@ -54,7 +68,7 @@ The `id` field of every request SHALL be between 1 and `max_id_length` (default 
 
 #### Scenario: Oversized ID rejected
 - **WHEN** a request arrives with `id` of 257 characters
-- **THEN** the server returns `{"status":["done","error"],"err":"id exceeds maximum length"}`
+- **THEN** the server returns `{"status":["done","error"],"err":"id exceeds maximum length of <max_id_length>"}`
 
 #### Scenario: Valid ID at limit accepted
 - **WHEN** a request arrives with `id` of exactly 256 characters

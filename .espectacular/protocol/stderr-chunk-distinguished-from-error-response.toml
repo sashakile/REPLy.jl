@@ -1,6 +1,9 @@
 id = "stderr-chunk-distinguished-from-error-response"
-description = ""
+description = "err without status is a stderr chunk; err with status is an error response"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/unit/protocol_spec_test.jl\")'" } ]

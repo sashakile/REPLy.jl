@@ -1,6 +1,9 @@
 id = "valid-request-message"
-description = ""
+description = "a fully-formed eval request with op/id/session/code parses and routes to the eval handler"
 archetype = "PF"
 status = "active"
 superseded_by = ""
 authored_with = "0.1.0"
+
+[tests]
+shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/unit/protocol_spec_test.jl\")'" } ]
