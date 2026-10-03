@@ -268,18 +268,28 @@ end
     @testset "module pool prevents memory growth" begin
         manager = REPLy.SessionManager(; module_pool_capacity=4)
 
-        first = REPLy.create_ephemeral_session!(manager)
-        mod1 = first.session_mod
+        pooled = REPLy.create_ephemeral_session!(manager)
+        mod1 = pooled.session_mod
         Core.eval(mod1, :(pool_probe = 42))
-        REPLy.destroy_session!(manager, first)
-        # The module was cleared and returned to the pool.
-        @test length(manager.module_pool) == 1
-        @test !isdefined(mod1, :pool_probe)
+        REPLy.destroy_session!(manager, pooled)
 
-        second = REPLy.create_ephemeral_session!(manager)
-        @test second.session_mod === mod1
-        # A cleared module still raises UndefVarError for old bindings.
-        @test_throws UndefVarError mod1.pool_probe
+        if isdefined(Base, :delete_binding)  # Julia 1.11+: cleared and pooled
+            # The module was cleared and returned to the pool.
+            @test length(manager.module_pool) == 1
+            @test !isdefined(mod1, :pool_probe)
+
+            next = REPLy.create_ephemeral_session!(manager)
+            @test next.session_mod === mod1
+            # A cleared module still raises UndefVarError for old bindings.
+            @test_throws UndefVarError mod1.pool_probe
+        else
+            # Pre-1.11 (no Base.delete_binding): the module cannot be cleared
+            # without leaking bindings, so it is dropped instead of pooled
+            # (REQ-RPL-035d fallback) and the next session gets a fresh module.
+            @test isempty(manager.module_pool)
+            next = REPLy.create_ephemeral_session!(manager)
+            @test next.session_mod !== mod1
+        end
 
         # Pool stays bounded at max_concurrent_evals-sized capacity.
         for _ in 1:10
