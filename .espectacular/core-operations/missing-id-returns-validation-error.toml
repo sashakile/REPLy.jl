@@ -1,5 +1,5 @@
-id = "completion-results-returned"
-description = "complete returns completions with text and type (REQ-RPL-015)"
+id = "missing-id-returns-validation-error"
+description = "missing id returns the empty-id validation error"
 archetype = "PF"
 status = "active"
 superseded_by = ""

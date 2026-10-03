@@ -2,6 +2,11 @@ const DEFAULT_MAX_REPR_BYTES = 1_048_576  # 1 MB (spec: max_value_repr_bytes)
 
 const OUTPUT_TRUNCATION_MARKER = "…[truncated]"
 
+# REQ-RPL-047i: value-repr truncation suffix (client-visible, format-stable).
+# Unlike stdout chunk truncation, the `value` field names the byte limit and
+# flips `truncated:true` on the terminal frame.
+value_truncation_suffix(max_bytes::Int) = "\n…[truncated to $(max_bytes) bytes]"
+
 # Tracks unexpected exceptions caught by safe_render (bare-catch safety net).
 # Incremented each time safe_render catches an exception; exposed for test
 # introspection and observability.
@@ -15,14 +20,21 @@ Useful for test assertions and observability probes.
 """
 safe_render_error_count() = _safe_render_error_counter[]
 
-function truncate_output(s::AbstractString, max_bytes::Int)
+# Shared boundary cut: keep at most `max_bytes` code units without splitting
+# a character, backing up to the previous boundary when needed.
+function _truncate_keep(s::AbstractString, max_bytes::Int)
     max_bytes > 0 || throw(ArgumentError("max_bytes must be positive, got $max_bytes"))
     ncodeunits(s) <= max_bytes && return s
     j = thisind(s, max_bytes)
     # If the character at j extends past max_bytes, back up to the previous boundary.
     next_boundary = nextind(s, j) - 1
     j = next_boundary > max_bytes ? prevind(s, j) : j
-    return s[1:j] * OUTPUT_TRUNCATION_MARKER
+    return s[1:j]
+end
+
+function truncate_output(s::AbstractString, max_bytes::Int)
+    ncodeunits(s) <= max_bytes && return s
+    return _truncate_keep(s, max_bytes) * OUTPUT_TRUNCATION_MARKER
 end
 
 function safe_type_name(value)
@@ -58,14 +70,18 @@ failure so callers can flag the two cases separately on the wire:
 
 Unlike `safe_repr`, this does not fold a failure into a `"<repr failed: …>"`
 string that is indistinguishable from a legitimately-returned string.
+
+Returns `(kind, payload, truncated)` where `truncated` is true only when an
+`:ok` payload was cut at `max_bytes` with the REQ-RPL-047i suffix.
 """
 function try_repr(value; max_bytes::Int=DEFAULT_MAX_REPR_BYTES)
     rendered = try
         repr(value)
     catch
-        return (:error, safe_type_name(value))
+        return (:error, safe_type_name(value), false)
     end
-    return (:ok, truncate_output(rendered, max_bytes))
+    ncodeunits(rendered) <= max_bytes && return (:ok, rendered, false)
+    return (:ok, _truncate_keep(rendered, max_bytes) * value_truncation_suffix(max_bytes), true)
 end
 
 function exception_message(ex)

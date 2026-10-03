@@ -70,7 +70,8 @@
 end
 
 @testset "stdin_channel is bounded (not infinite capacity)" begin
-    @test REPLy.MAX_STDIN_BUFFER_SIZE == 256
+    # REQ-RPL-017b: capacity matches the max_stdin_buffer spec default (16)
+    @test REPLy.MAX_STDIN_BUFFER_SIZE == 16
     session = REPLy.NamedSession("id1", "bounded-test", Module())
     # Fill the channel to capacity to verify it's bounded
     for i in 1:REPLy.MAX_STDIN_BUFFER_SIZE

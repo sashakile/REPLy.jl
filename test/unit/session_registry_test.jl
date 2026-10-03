@@ -93,11 +93,12 @@
     end
 
     @testset "clone_named_session! deep-copies mutable values" begin
+    # Note: clone_named_session! returns (dest, skipped_names) per REQ-RPL-036.
         manager = REPLy.SessionManager()
         source = REPLy.create_named_session!(manager, "src")
         Core.eval(REPLy.session_module(source), :(arr = [1, 2, 3]))
 
-        clone = REPLy.clone_named_session!(manager, "src", "dst")
+        clone, _skipped = REPLy.clone_named_session!(manager, "src", "dst")
         @test clone !== nothing
 
         # Mutate the array in the clone
@@ -126,7 +127,7 @@
         # exercises the skip guard.
         Core.eval(REPLy.session_module(source), :(import Base; m = Base))
 
-        clone = REPLy.clone_named_session!(manager, "mod-src", "mod-dst")
+        clone, _skipped = REPLy.clone_named_session!(manager, "mod-src", "mod-dst")
         @test clone !== nothing
         # The Module binding is skipped, so it will be undefined in the clone.
         @test !isdefined(REPLy.session_module(clone), :m)
@@ -473,7 +474,7 @@ end
     @testset "clone_named_session! assigns a new UUID to the clone" begin
         manager = REPLy.SessionManager()
         source = REPLy.create_named_session!(manager, "clone-uuid-src")
-        clone = REPLy.clone_named_session!(manager, "clone-uuid-src", "clone-uuid-dst")
+        clone, _skipped = REPLy.clone_named_session!(manager, "clone-uuid-src", "clone-uuid-dst")
         @test !isnothing(clone)
         @test REPLy.session_id(clone) != REPLy.session_id(source)
         @test length(REPLy.session_id(clone)) == 36
@@ -485,7 +486,7 @@ end
         uuid = REPLy.session_id(source)
         Core.eval(REPLy.session_module(source), :(cloned_marker = :marker))
 
-        clone = REPLy.clone_named_session!(manager, uuid, "clone-dst-from-uuid")
+        clone, _skipped = REPLy.clone_named_session!(manager, uuid, "clone-dst-from-uuid")
         @test !isnothing(clone)
         @test Core.eval(REPLy.session_module(clone), :cloned_marker) === :marker
     end
@@ -504,11 +505,16 @@ end
             bound_fail = _FailCopy6fh()
         end)
 
-        # Clone should throw because deepcopy of bound_fail fails
-        @test_throws Exception REPLy.clone_named_session!(manager, "6fh-src", "6fh-dst")
-
-        # Partial session must NOT be discoverable in the registry
-        @test isnothing(REPLy.lookup_named_session(manager, "6fh-dst"))
+        # REQ-RPL-036 (v1.2): non-copyable bindings are skipped and reported,
+        # not fatal — the clone still publishes and the remaining bindings copy.
+        # (Supersedes the 6fh clone-throws regression: dest is registered, no
+        # partial state, and the failing binding is reported as skipped.)
+        clone, skipped = REPLy.clone_named_session!(manager, "6fh-src", "6fh-dst")
+        @test !isnothing(clone)
+        @test :bound_fail in skipped
+        @test !isdefined(REPLy.session_module(clone), :bound_fail)
+        @test isnothing(REPLy.lookup_named_session(manager, "nonexistent-6fh"))
+        @test !isnothing(REPLy.lookup_named_session(manager, "6fh-dst"))
     end
 end
 

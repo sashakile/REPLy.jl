@@ -64,7 +64,15 @@ function stdin_responses(ctx::RequestContext, request::AbstractDict)
     state === SessionQuarantined && return [session_quarantined_response(request_id)]
     state === SessionClosed && return [error_response(request_id, "session is closed: $(session.name)")]
 
-    put!(session.stdin_channel, String(input))
+    # REQ-RPL-017b: the buffer is bounded at `max_stdin_buffer` (default 16);
+    # when full, the oldest buffered entry is dropped to admit the new input —
+    # put! must never block here, or an idle session's stdin op would deadlock.
+    input_str = String(input)
+    chan = session.stdin_channel
+    lock(chan) do
+        Base.n_avail(chan) >= MAX_STDIN_BUFFER_SIZE && take!(chan)
+        put!(chan, input_str)
+    end
     field = state === SessionRunning ? "delivered" : "buffered"
 
     return [

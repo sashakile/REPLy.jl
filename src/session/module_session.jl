@@ -106,7 +106,9 @@ end
 const MAX_SESSION_HISTORY_SIZE = 10_000
 
 """Maximum number of buffered stdin strings per session before back-pressure applies."""
-const MAX_STDIN_BUFFER_SIZE = 256
+# Bounded stdin buffer (REQ-RPL-017b, resource-limits `max_stdin_buffer`):
+# capacity matches the spec default; a full buffer drops its oldest entry.
+const MAX_STDIN_BUFFER_SIZE = 16
 
 """
     StdinFeeder

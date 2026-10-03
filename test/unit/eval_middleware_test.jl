@@ -167,8 +167,9 @@
         )
 
         value_msg = only(filter(m -> haskey(m, "value"), responses))
-        @test endswith(value_msg["value"], REPLy.OUTPUT_TRUNCATION_MARKER)
-        @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits(REPLy.OUTPUT_TRUNCATION_MARKER)
+        # REQ-RPL-047i: value truncation names the byte limit, not the out-chunk marker.
+        @test endswith(value_msg["value"], "\n…[truncated to 20 bytes]")
+        @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits("\n…[truncated to 20 bytes]")
     end
 
     @testset "small repr output is not truncated" begin

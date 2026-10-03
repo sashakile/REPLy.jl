@@ -1,5 +1,5 @@
-id = "completion-results-returned"
-description = "complete returns completions with text and type (REQ-RPL-015)"
+id = "heavy-clone-rejected-without-malt-jl"
+description = "heavy clone types rejected with the Malt.jl error (REQ-RPL-033 v1.2)"
 archetype = "PF"
 status = "active"
 superseded_by = ""

@@ -468,12 +468,14 @@ bindings from the session identified by `source_id_or_name` (UUID or alias).
 The clone gets its own UUID and anonymous module so mutations in the clone do
 not affect the original.
 
-Returns the new `NamedSession`, or `nothing` if `source_id_or_name` is not found.
+Returns `(dest, skipped)` where `dest` is the new `NamedSession` (or `nothing`
+when `source_id_or_name` is not found) and `skipped` lists the source binding
+names whose `deepcopy` failed — callers surface them as a warning out chunk.
 
 Throws `ArgumentError` if `dest_name` alias already exists — callers must check
 or close the existing session first.
 """
-function clone_named_session!(manager::SessionManager, source_id_or_name::AbstractString, dest_name::AbstractString; max_sessions::Int=typemax(Int))
+function clone_named_session!(manager::SessionManager, source_id_or_name::Union{Nothing,AbstractString}, dest_name::AbstractString; max_sessions::Int=typemax(Int))
     # Phase 1: resolve source and pre-flight checks under lock.
     # The dest session is built privately — not registered yet.
     source, dest = lock(manager.lock) do
@@ -498,13 +500,34 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
     end
 
 
-    (isnothing(source) || isnothing(dest)) && return nothing
+    (isnothing(source) || isnothing(dest)) && return (nothing, Symbol[])
+
+    # Wait for an in-flight eval to complete before copying bindings — the clone
+    # must acquire the eval mutex (core-operations REQ-RPL-036) so it observes
+    # the parent's bindings at eval-completion state instead of mid-mutation.
+    life = lock(source.lock) do
+        source.running_lifecycle
+    end
+    if !isnothing(life)
+        task = lock(life.lock) do
+            life.task
+        end
+        if !isnothing(task) && !istaskdone(task)
+            try
+                wait(task)
+            catch
+                # The eval task records its own failure as an EvalOutcome;
+                # a wait failure must not abort the clone.
+            end
+        end
+    end
 
     # Phase 2: copy bindings into the (not-yet-registered) dest module.
     # Runs outside the lock so slow copies do not block other session operations.
     # If this throws, dest is never published — no partial entry in the registry.
     source_mod = session_module(source)
     dest_mod = session_module(dest)
+    skipped = Symbol[]
 
     # Use Base.invokelatest so names()/getfield() see bindings created by
     # Core.eval in child tasks (latest world age). Without this, the copy loop
@@ -519,7 +542,18 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
             if isdefined(source_mod, sym)
                 val = getfield(source_mod, sym)
                 val isa Module && continue
-                copied = ismutable(val) ? deepcopy(val) : val
+                copied = if ismutable(val)
+                    # Non-copyable bindings are skipped and reported (REQ-RPL-036),
+                    # not fatal: an open handle in the parent must not kill the clone.
+                    try
+                        deepcopy(val)
+                    catch
+                        push!(skipped, sym)
+                        continue
+                    end
+                else
+                    val
+                end
                 # Julia >= 1.11 (#56933) rejects bare `sym = val` global assignment via
                 # Core.eval into a foreign module, silently producing an empty binding.
                 # Use a `const` binding, which is accepted. Cloned bindings are therefore
@@ -544,5 +578,29 @@ function clone_named_session!(manager::SessionManager, source_id_or_name::Abstra
         end
     end
 
-    return dest
+    return (dest, skipped)
+end
+
+# Parentless clone: no source bindings to copy — create a fresh empty session.
+function clone_named_session!(manager::SessionManager, ::Nothing, dest_name::AbstractString; max_sessions::Int=typemax(Int))
+    dest = lock(manager.lock) do
+        _total_session_count_unlocked(manager) >= max_sessions &&
+            throw(SessionLimitReachedError())
+        haskey(manager.name_to_uuid, String(dest_name)) &&
+            throw(ArgumentError("session already exists: $(dest_name)"))
+        NamedSession(string(uuid4()), String(dest_name), new_session_module(:REPLyNamedSession))
+    end
+    # Publish atomically — re-check for collision in case a concurrent clone raced us.
+    lock(manager.lock) do
+        dest_name_str = session_name(dest)
+        if haskey(manager.name_to_uuid, dest_name_str)
+            throw(ArgumentError("session already exists: $(dest_name_str)"))
+        end
+        uuid = session_id(dest)
+        manager.named_sessions[uuid] = dest
+        if !isempty(dest_name_str)
+            manager.name_to_uuid[dest_name_str] = uuid
+        end
+    end
+    return (dest, Symbol[])
 end

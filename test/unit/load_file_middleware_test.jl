@@ -148,8 +148,9 @@
 
             assert_conformance(msgs, "lf9")
             value_msg = only(filter(m -> haskey(m, "value"), msgs))
-            @test endswith(value_msg["value"], REPLy.OUTPUT_TRUNCATION_MARKER)
-            @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits(REPLy.OUTPUT_TRUNCATION_MARKER)
+            # REQ-RPL-047i: value truncation names the byte limit, not the out-chunk marker.
+            @test endswith(value_msg["value"], "\n…[truncated to 20 bytes]")
+            @test ncodeunits(value_msg["value"]) <= 20 + ncodeunits("\n…[truncated to 20 bytes]")
         finally
             rm(file; force=true)
         end

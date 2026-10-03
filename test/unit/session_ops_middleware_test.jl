@@ -807,15 +807,14 @@ end
         @test REPLy.lookup_named_session(manager, "fallback-dst") !== nothing
     end
 
-    @testset "clone returns error for missing source (neither 'session' nor 'source' present)" begin
+    @testset "clone without source creates an empty session (core-operations REQ-RPL-036)" begin
         manager = REPLy.SessionManager()
         handler = REPLy.build_handler(; manager=manager)
 
         msgs = handler(Dict("op" => "clone", "id" => "spec-clone-no-src", "name" => "no-src-dst"))
 
         assert_conformance(msgs, "spec-clone-no-src")
-        terminal = filter(m -> haskey(m, "status"), msgs)
-        @test "error" in terminal[end]["status"]
+        @test REPLy.lookup_named_session(manager, "no-src-dst") !== nothing
     end
 
     @testset "clone with 'session' field validates source name" begin

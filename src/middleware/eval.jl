@@ -38,11 +38,11 @@ descriptor(::EvalMiddleware) = MiddlewareDescriptor(
 # {value: <repr>, ns}; on repr failure emits {value: null, repr-error: <type>, ns}
 # so clients can distinguish a non-representable result from a returned string.
 function value_response(request_id::AbstractString, value, module_::Module; max_repr_bytes::Int=DEFAULT_MAX_REPR_BYTES)
-    kind, payload = try_repr(value; max_bytes=max_repr_bytes)
+    kind, payload, truncated = try_repr(value; max_bytes=max_repr_bytes)
     if kind === :ok
-        return response_message(request_id, "value" => payload, "ns" => string(nameof(module_)))
+        return (response_message(request_id, "value" => payload, "ns" => string(nameof(module_))), truncated)
     else
-        return response_message(request_id, "value" => nothing, "repr-error" => payload, "ns" => string(nameof(module_)))
+        return (response_message(request_id, "value" => nothing, "repr-error" => payload, "ns" => string(nameof(module_))), false)
     end
 end
 
@@ -322,10 +322,15 @@ function serialize(outcome::Completed, request_id::AbstractString, module_::Modu
     eval_id=nothing, ephemeral::Bool=false)
 
     msgs = buffered_output_messages(request_id, outcome.stdout, outcome.stderr)
+    value_truncated = false
     if !silent
-        push!(msgs, value_response(request_id, outcome.value, module_; max_repr_bytes=max_repr_bytes))
+        value_msg, value_truncated = value_response(request_id, outcome.value, module_;
+                                                    max_repr_bytes=max_repr_bytes)
+        push!(msgs, value_msg)
     end
     terminal = done_response(request_id)
+    # REQ-RPL-047i: the terminal frame flags a truncated `value` payload.
+    value_truncated && (terminal["truncated"] = true)
     if !isnothing(eval_id)
         terminal["eval-id"] = eval_id
     end
@@ -656,7 +661,6 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
             admission
         else
             eval_module = session_module(session)
-            eval_module_ref[] = eval_module
             module_path = req.module_path
             if module_path isa AbstractString
                 resolved = resolve_module(module_path)
@@ -665,6 +669,9 @@ function eval_responses(ctx::RequestContext, req::EvalRequest; max_repr_bytes::I
                 end
                 eval_module = resolved
             end
+            # The `ns` field names the module the eval actually ran in —
+            # module-routed evals report the routed module, not the session's.
+            eval_module_ref[] = eval_module
 
             if session isa NamedSession
                 this_eval_id[] = life.eval_id
@@ -824,5 +831,8 @@ function handle_message(mw::EvalMiddleware, msg, next, ctx::RequestContext)
         return [error_response(String(get(msg, "id", "")), ex.msg;
                     status_flags=String["error", "invalid-request"])]
     end
-    return eval_responses(ctx, req; max_repr_bytes=mw.max_repr_bytes)
+    # The configured max_value_repr_bytes limit (REQ-RPL-047i) wins over the
+    # middleware's construction default when a server state carries limits.
+    max_repr = effective_limit(ctx.server_state, :max_value_repr_bytes, mw.max_repr_bytes)
+    return eval_responses(ctx, req; max_repr_bytes=max_repr)
 end

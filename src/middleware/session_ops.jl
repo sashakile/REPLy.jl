@@ -234,14 +234,28 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
 
     name = get(msg, "name", nothing)
 
-    src_err = validate_session_name(source_str)
-    if !isnothing(src_err)
-        return [error_response(request_id, "$(op) \"source\"/\"session\": $(src_err)")]
+    # A parentless clone (no "session"/"source" field) creates a fresh empty
+    # session — copying state from a parent is optional (core-operations
+    # REQ-RPL-036), so source validation applies only when a source is given.
+    # The deprecated clone-session op keeps its source-required contract.
+    if isnothing(source_str) && op != "clone"
+        return [error_response(request_id, "$(op) \"source\"/\"session\": session name must be a string")]
     end
-    name_err = validate_session_name(name)
+    if !isnothing(source_str)
+        src_err = validate_session_name(source_str)
+        if !isnothing(src_err)
+            return [error_response(request_id, "$(op) \"source\"/\"session\": $(src_err)")]
+        end
+    end
+    if isnothing(name) && op != "clone"
+        return [error_response(request_id, "$(op) \"name\": session name must be a string")]
+    end
+    name_err = isnothing(name) ? nothing : validate_session_name(name)
     if !isnothing(name_err)
         return [error_response(request_id, "$(op) \"name\": $(name_err)")]
     end
+    # An omitted name creates an unnamed session (same as new-session's alias "").
+    dest_name = isnothing(name) ? "" : String(name)
 
     # Type field: only "light" (or absent) is supported; "heavy" requires
     # Malt.jl, which is not loaded in v1.0 (REQ-RPL-033).
@@ -255,25 +269,27 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
         # "light" or absent is accepted — no action needed.
     end
 
-    source = lookup_named_session(ctx.manager, source_str)
-    if !isnothing(source) && session_state(source) === SessionQuarantined
-        return [session_quarantined_response(request_id)]
+    if !isnothing(source_str)
+        source = lookup_named_session(ctx.manager, source_str)
+        if !isnothing(source) && session_state(source) === SessionQuarantined
+            return [session_quarantined_response(request_id)]
+        end
     end
 
     # Check if destination already exists before attempting clone. Source
     # quarantine intentionally wins over this compatibility pre-check.
-    if !isnothing(lookup_named_session(ctx.manager, name))
+    if !isempty(dest_name) && !isnothing(lookup_named_session(ctx.manager, dest_name))
         return [error_response(
             request_id,
-            "Session already exists: $(name)";
+            "Session already exists: $(dest_name)";
             status_flags=String["error", "session-already-exists"],
         )]
     end
 
     ms = effective_limit(ctx.server_state, :max_sessions, typemax(Int))
-    local cloned
+    local cloned, skipped
     try
-        cloned = clone_named_session!(ctx.manager, source_str, name; max_sessions=ms)
+        cloned, skipped = clone_named_session!(ctx.manager, source_str, dest_name; max_sessions=ms)
     catch e
         e isa SessionQuarantinedError && return [session_quarantined_response(request_id)]
         e isa SessionLimitReachedError && return [session_limit_response(request_id)]
@@ -295,5 +311,13 @@ function handle_clone_session(ctx::RequestContext, msg, request_id::AbstractStri
     pairs = op == "clone" ?
         ("new-session" => cloned_id, "session" => cloned_id, "name" => alias) :
         ("session" => cloned_id, "name" => alias)
-    return [response_message(request_id, pairs...), done_response(request_id)]
+    msgs = Dict{String, Any}[response_message(request_id, pairs...)]
+    # REQ-RPL-036: bindings whose deepcopy failed were skipped — surface the
+    # warning as an out chunk in the clone response, before the terminal frame.
+    if !isempty(skipped)
+        pushfirst!(msgs, response_message(request_id,
+            "out" => "clone: skipped non-copyable binding(s): $(join(skipped, ", "))"))
+    end
+    push!(msgs, done_response(request_id))
+    return msgs
 end
