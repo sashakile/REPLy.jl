@@ -281,9 +281,10 @@ function serve_mcp(;
     manager::SessionManager=SessionManager(),
     middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(),
     limits::ResourceLimits=ResourceLimits(),
-    max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
+    max_message_bytes::Union{Nothing, Int}=nothing,
     use_socket::Bool=false,
 )
+    max_message_bytes = resolve_max_message_bytes(limits, max_message_bytes)
     state = ServerState(limits, max_message_bytes)
 
     userver = nothing

@@ -56,7 +56,7 @@ using REPLy
 
 REPLy.serve_mcp(
     limits=ResourceLimits(max_connections=5),
-    max_message_bytes=2_000_000
+    max_message_bytes=2_000_000  # explicit override of ResourceLimits.max_message_size
 )
 ```
 

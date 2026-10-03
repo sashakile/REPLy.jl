@@ -231,7 +231,8 @@ function build_handler(; manager::SessionManager=SessionManager(), middleware::V
     stack = Tuple(materialized)
     connection_ctx = HandlerContext(manager)
     return function(msg::AbstractDict, stream::Union{Channel{Dict{String, Any}}, Nothing}=nothing)
-        validation_error = validate_request(msg)
+        validation_error = validate_request(msg;
+            max_id_length = effective_limit(state, :max_id_length, 256))
         !isnothing(validation_error) && return [validation_error]
 
         request_id = String(get(msg, "id", ""))

@@ -5,7 +5,8 @@ Shared mutable state that lives at the server level (above any individual connec
 Holds the configured `ResourceLimits` and runtime counters that span all client sessions.
 
 - `limits::ResourceLimits` — resource limits configured at `serve()` time.
-- `max_message_bytes::Int` — maximum inbound message size (bytes).
+- `max_message_bytes::Int` — maximum inbound message size (bytes), resolved from
+  `ResourceLimits.max_message_size` unless explicitly overridden at `serve()` time.
 - `gate::EvalGate` — concurrent-eval slot manager (counter + directed FIFO handoff queue).
 - `audit_log::AuditLog` — server-owned in-memory audit log (REQ-RPL-047e / FAIL-007);
   shared with any `AuditMiddleware` in the stack and written by connection-layer

@@ -111,14 +111,14 @@ The canonical capability definitions live in OpenSpec.
 - **Heavy Sessions**: Isolation via Malt.jl (planned for post-v1.0).
 - **Disconnect Policy**: Explicit connection closure after multiple consecutive malformed messages (currently disconnects on the first error).
 - **Editor/Tooling Extensions**: Higher-level client libraries beyond the wire protocol and MCP adapter.
-- **Resource-limit compatibility fields**: `max_memory_mb`,
-  `min_rate_limit_per_min`, `max_message_size`, and `max_stdin_buffer` are present
-  for specification compatibility but are not used as runtime enforcement controls.
-  (Verify these field names against the current `ResourceLimits` struct in
-  `src/resource-limits.jl`; the canonical names in the spec may differ from the
-  struct field names.)
-  Message size is enforced separately by `serve(...; max_message_bytes=...)`, and
-  stdin currently uses a fixed bounded channel.
+- **Resource-limit compatibility fields**: `max_memory_mb` and
+  `min_rate_limit_per_min` are present for specification compatibility but are
+  not used as runtime enforcement controls. (Verify these field names against
+  the current `ResourceLimits` struct in `src/resource-limits.jl`; the canonical
+  names in the spec may differ from the struct field names.)
+  `max_message_size` (REQ-RPL-047e) and `max_id_length` (REQ-RPL-001b) are
+  authoritative at runtime; `max_stdin_buffer` is pending configuration
+  threading (the stdin channel currently uses a fixed bounded capacity).
 
 ## Commands
 

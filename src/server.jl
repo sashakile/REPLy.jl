@@ -113,8 +113,10 @@ is created at that path. Otherwise, a TCP server is started on the given `host` 
 - `manager`: The `SessionManager` used to track state across sessions.
 - `middleware`: A vector of middleware handlers to process incoming requests.
 - `limits`: A `ResourceLimits` struct with server-wide resource constraints (default: `ResourceLimits()`).
-- `max_message_bytes`: Maximum allowed inbound message size in bytes. Requests exceeding this
-  limit are rejected with a structured error response and the connection is closed (default: `DEFAULT_MAX_MESSAGE_BYTES`, 1 MiB).
+- `max_message_bytes`: Optional override for the maximum inbound message size in bytes. When
+  omitted, `limits.max_message_size` is authoritative (REQ-RPL-047e). When given, it takes
+  precedence over the configured `ResourceLimits` field. Requests exceeding the effective
+  limit are rejected and the connection is closed with an audit entry.
 
 # Returns
 A server handle (`TCPServerHandle` or `UnixServerHandle`) which can be closed with `close(server)`.
@@ -152,8 +154,22 @@ function stop_session_sweeper!(state::ServerState)
     return nothing
 end
 
-function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
-    max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
+"""
+    resolve_max_message_bytes(limits, override) -> Int
+
+Resolve the effective inbound message-size limit (REQ-RPL-047e). The
+`ResourceLimits.max_message_size` field is authoritative by default; an
+explicit `max_message_bytes` override (e.g. the `serve` keyword argument) takes
+precedence when given. Throws `ArgumentError` for non-positive limits.
+"""
+function resolve_max_message_bytes(limits::ResourceLimits, override::Union{Nothing, Int})
+    limit = override === nothing ? limits.max_message_size : override
+    limit > 0 || throw(ArgumentError("max_message_bytes must be positive, got $limit"))
+    return limit
+end
+
+function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Union{Nothing, Int}=nothing, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
+    max_message_bytes = resolve_max_message_bytes(limits, max_message_bytes)
     closing = Ref(false)
     audit_log = AuditLog()
     state = ServerState(limits, max_message_bytes, audit_log)
@@ -346,8 +362,8 @@ Each `spec` is a named tuple with either:
 
 Returns a `MultiListenerServer` which can be closed with `close(server)`.
 """
-function serve_multi(specs...; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
-    max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
+function serve_multi(specs...; manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Union{Nothing, Int}=nothing, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
+    max_message_bytes = resolve_max_message_bytes(limits, max_message_bytes)
     isempty(specs) && throw(ArgumentError("serve_multi requires at least one listener spec"))
 
     closing = Ref(false)

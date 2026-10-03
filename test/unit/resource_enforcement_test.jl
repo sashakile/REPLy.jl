@@ -283,6 +283,118 @@ end
         end
     end
 
+    @testset "ResourceLimits.max_message_size is authoritative without the serve override (REQ-RPL-047e)" begin
+        # REQ-RPL-047e: the ResourceLimits field — not the legacy serve override
+        # default — is the source of truth when no explicit override is given.
+        limits = REPLy.ResourceLimits(max_message_size=1000)
+        server = REPLy.serve(; port=0, limits=limits)
+        port   = REPLy.server_port(server)
+
+        try
+            # Exactly at the limit: accepted (read_bounded_line permits
+            # max_bytes bytes before the newline).
+            client = connect(port)
+            try
+                base = "{\"op\":\"eval\",\"id\":\"exact\",\"code\":\"1 #"
+                tail = "\"}"
+                line = base * repeat("x", 1000 - length(base) - length(tail)) * tail
+                @test length(line) == 1000
+                write(client, line, "\n"); flush(client)
+                msgs = collect_until_done(client)
+                @test any(get(msg, "value", nothing) == "1" for msg in msgs)
+            finally
+                isopen(client) && close(client)
+            end
+
+            # One byte over the limit: connection closes with an audit entry
+            # and no response.
+            client = connect(port)
+            try
+                base = "{\"op\":\"eval\",\"id\":\"big1\",\"code\":\"1 #"
+                tail = "\"}"
+                line = base * repeat("x", 1001 - length(base) - length(tail)) * tail
+                @test length(line) == 1001
+                write(client, line, "\n"); flush(client)
+                line_ch = Channel{Union{Nothing, String}}(1)
+                reader = @async begin
+                    try
+                        put!(line_ch, readline(client))
+                    catch
+                        put!(line_ch, nothing)
+                    end
+                end
+                @test timedwait(() -> istaskdone(reader), 5.0) === :ok
+                @test take!(line_ch) == ""   # EOF — no error response sent
+                entries = REPLy.audit_entries(server.state.audit_log)
+                failures = filter(e -> e.success === false, entries)
+                @test !isempty(failures)
+                @test occursin("maximum size", something(failures[end].error, ""))
+            finally
+                isopen(client) && close(client)
+            end
+        finally
+            close(server)
+        end
+    end
+
+    @testset "serve(max_message_bytes=...) overrides ResourceLimits.max_message_size" begin
+        # Explicit override precedence is tested behavior: the keyword argument wins over the
+        # configured ResourceLimits field.
+        limits = REPLy.ResourceLimits(max_message_size=10_000_000)
+        server = REPLy.serve(; port=0, limits=limits, max_message_bytes=100)
+        port   = REPLy.server_port(server)
+
+        try
+            client = connect(port)
+            try
+                send_request(client, Dict("op" => "eval", "id" => "big2",
+                    "code" => repeat("x", 200)))
+                line_ch = Channel{Union{Nothing, String}}(1)
+                reader = @async begin
+                    try
+                        put!(line_ch, readline(client))
+                    catch
+                        put!(line_ch, nothing)
+                    end
+                end
+                @test timedwait(() -> istaskdone(reader), 5.0) === :ok
+                @test take!(line_ch) == ""   # EOF — the 100-byte kwarg limit won
+                entries = REPLy.audit_entries(server.state.audit_log)
+                failures = filter(e -> e.success === false, entries)
+                @test !isempty(failures)
+            finally
+                isopen(client) && close(client)
+            end
+        finally
+            close(server)
+        end
+    end
+
+    @testset "ResourceLimits.max_id_length reaches validate_request" begin
+        limits = REPLy.ResourceLimits(max_id_length=8)
+        server = REPLy.serve(; port=0, limits=limits)
+        port   = REPLy.server_port(server)
+
+        try
+            client = connect(port)
+            try
+                # Exactly at the limit: accepted.
+                send_request(client, Dict("op" => "ping", "id" => "12345678"))
+                msgs = collect_until_done(client)
+                @test last(msgs)["id"] == "12345678"
+
+                # One character over: rejected with the configured limit named.
+                send_request(client, Dict("op" => "ping", "id" => "123456789"))
+                over = collect_until_done(client)
+                @test over[1]["err"] == "id exceeds maximum length of 8"
+            finally
+                isopen(client) && close(client)
+            end
+        finally
+            close(server)
+        end
+    end
+
     @testset "rate limit via serve() limits requests per connection" begin
         limits = REPLy.ResourceLimits(rate_limit_per_min=1)
         server = REPLy.serve(; port=0, limits=limits)

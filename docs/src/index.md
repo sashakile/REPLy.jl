@@ -111,19 +111,29 @@ Unix sockets are created with `chmod 600` (owner read/write only), so only your 
 
 ## Resource Limits Reference
 
-REPLy enforces several configurable safety limits that protect against runaway clients or evaluations. Message size and output truncation are set on `serve`; the remaining limits live on a [`ResourceLimits`](api.md) value passed as `serve(...; limits=ResourceLimits(...))`.
+REPLy enforces several configurable safety limits that protect against runaway clients or evaluations. Message size is configured via [`ResourceLimits`](api.md) (`max_message_size`) with an optional `serve(...; max_message_bytes=...)` override; output truncation and the remaining limits live on the same `ResourceLimits` value passed as `serve(...; limits=ResourceLimits(...))`.
 
 ### Inbound message size
 
-Messages larger than `DEFAULT_MAX_MESSAGE_BYTES` (1 MiB) are rejected with a structured error and the connection is closed. To change the limit:
+Messages larger than the effective limit are rejected and the connection is closed. The default comes from `ResourceLimits` (`max_message_size`, 10 MiB per REQ-RPL-047e). An explicit `serve` keyword argument overrides the configured field (tested precedence):
 
 ```julia
 using REPLy
 
-server = REPLy.serve(port=5555, max_message_bytes=512_000)  # 512 KiB
+# Default: ResourceLimits().max_message_size = 10 MiB
+server = REPLy.serve(port=5555)
+
+# Override via ResourceLimits
+server = REPLy.serve(port=5555,
+    limits=ResourceLimits(max_message_size=512_000))  # 512 KiB
+
+# Explicit keyword argument wins over the configured ResourceLimits field
+server = REPLy.serve(port=5555,
+    limits=ResourceLimits(max_message_size=10_485_760),
+    max_message_bytes=512_000)
 ```
 
-Oversized messages produce a `MessageTooLargeError` internally; clients receive a plain error response.
+Oversized messages produce a `MessageTooLargeError` internally; no response is sent — the connection closes with an audit entry.
 
 ### Output truncation
 

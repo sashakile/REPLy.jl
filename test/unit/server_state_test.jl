@@ -48,7 +48,9 @@ using Logging
         try
             # Both fields should be consistent references in the same struct
             @test server.state === server.state
-            @test server.state.max_message_bytes == REPLy.DEFAULT_MAX_MESSAGE_BYTES
+            # REQ-RPL-047e: ResourceLimits.max_message_size is authoritative
+            # when no explicit serve(max_message_bytes=...) override is given.
+            @test server.state.max_message_bytes == server.state.limits.max_message_size
         finally
             close(server)
         end
