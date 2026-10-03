@@ -26,17 +26,24 @@
         end
     end
 
-    @testset "stale socket path is removed before listen" begin
-        path = tempname()
-        write(path, "stale")
-        @test isfile(path)
+    @testset "stale socket is unlinked and replaced at listen" begin
+        # Fabricate a demonstrably stale socket file: a bound-and-listening
+        # socket is renamed away, then its listener is closed. The rename leaves
+        # the socket inode at `stale`; the close unlinks the original path, so
+        # nothing listens behind `stale` and its fd is gone.
+        stale = tempname()
+        holder = tempname()
+        lsn = listen(holder)
+        mv(holder, stale)
+        close(lsn)
+        @test ispath(stale) && issocket(stale)
 
-        with_unix_server(path=path) do handle
-            @test handle.path == path
-            @test ispath(handle.path)
-            @test !isfile(handle.path)
+        with_unix_server(path=stale) do handle
+            @test handle.path == stale
+            @test ispath(stale)
+            @test issocket(stale)
 
-            sock = connect(handle.path)
+            sock = connect(stale)
             try
                 send_request(sock, Dict(
                     "op" => "eval",
@@ -51,6 +58,50 @@
                 close(sock)
             end
         end
+    end
+
+    @testset "live socket is never hijacked" begin
+        live = tempname()
+        lsn = listen(live)
+        @test issocket(live)
+
+        err = try
+            REPLy.listen_unix(live)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Base.IOError
+        @test occursin(live, sprint(showerror, err))
+
+        # The existing listener is untouched and still accepts connections.
+        @test ispath(live) && issocket(live)
+        sock = connect(live)
+        close(sock)
+
+        close(lsn)
+    end
+
+    @testset "ordinary file at socket path is refused" begin
+        path = tempname()
+        write(path, "precious contents")
+        contents = read(path)
+        @test isfile(path)
+
+        err = try
+            REPLy.listen_unix(path)
+            nothing
+        catch e
+            e
+        end
+        @test err isa Base.IOError
+        @test occursin(path, sprint(showerror, err))
+
+        # The file is byte-identical — never deleted or replaced.
+        @test isfile(path)
+        @test read(path) == contents
+
+        rm(path; force=true)
     end
 
     @testset "socket path is removed on server close" begin

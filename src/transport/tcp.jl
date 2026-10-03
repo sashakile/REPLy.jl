@@ -307,8 +307,48 @@ function accept_loop!(listener, handle)
     return nothing
 end
 
+# REQ-RPL-041 (nv69): classify a pre-existing entry at the socket path before
+# listen. A live socket is never unlinked or hijacked, a non-socket filesystem
+# entry is never deleted — both fail startup with an error naming the path.
+# Only a demonstrably stale socket (exists, is a socket inode, nothing
+# listening behind it) is cleared so the server can recover from a crashed
+# predecessor. `connect` is the liveness probe: it succeeds only when a
+# listener accepts, and its client connection is closed immediately.
+function _clear_stale_socket_path!(path::AbstractString)
+    ispath(path) || return nothing
+
+    issocket(path) || throw(Base.IOError(
+        "refusing to remove $(path): not a Unix socket — " *
+        "delete it manually or choose a different socket_path", -1))
+
+    live = try
+        sock = connect(path)
+        close(sock)
+        true
+    catch
+        false
+    end
+    live && throw(Base.IOError(
+        "Unix socket at $(path) is live — refusing to unlink or hijack it; " *
+        "choose a different socket_path", -1))
+
+    rm(path; force=true)
+    return nothing
+end
+
+"""
+    listen_unix(path::AbstractString) -> Base.Server
+
+Create an owner-only (0o600) Unix domain socket listener at `path`.
+
+A pre-existing entry at `path` is classified before binding (REQ-RPL-041): a
+demonstrably stale socket (socket inode with nothing listening behind it) is
+removed so the server recovers from a crashed predecessor; a live socket or a
+non-socket filesystem entry is never removed, and a `Base.IOError` naming the
+path is thrown instead.
+"""
 function listen_unix(path::AbstractString)
-    ispath(path) && rm(path; force=true)
+    _clear_stale_socket_path!(path)
 
     # Create the socket with a restrictive umask, then re-assert 0o600 explicitly.
     old_umask = ccall(:umask, Cuint, (Cuint,), 0o077)

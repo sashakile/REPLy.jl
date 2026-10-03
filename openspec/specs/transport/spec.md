@@ -12,7 +12,7 @@ statement: "WHEN a client or middleware exchanges messages with the server, THE 
 | RECEIVE_POSTCONDITION | invariant | receive returns a parsed message object or nothing; partial reads and disconnects never propagate as parse exceptions | [[spec]] |
 | NEWLINE_FRAMING | invariant | every sent message is a single JSON object terminated by exactly one newline byte, serialized under a lock | [[spec]] |
 | SOCKET_OWNER_ONLY | invariant | a Unix socket file exists only with mode 0o600, restricted from its first instant by the 0o077 umask wrap, and the caller's umask is restored after listen | [[spec]] |
-| STALE_SOCKET_CLEARED | invariant | a pre-existing file at the socket path is removed before listen creates the new socket | [[spec]] |
+| SOCKET_PATH_BINDABLE | invariant | a demonstrably stale Unix socket at the listen path is unlinked before listen creates the new socket; a live socket or a non-socket filesystem entry is never removed and startup fails with an error naming the path | [[spec]] |
 | GLOBAL_RESOURCE_LIMITS | invariant | max_sessions, max_concurrent_evals, and rate_limit_per_min apply across all listeners of a server instance, not per listener | [[spec]] |
 
 ## Model
@@ -28,7 +28,7 @@ statement: "WHEN a client or middleware exchanges messages with the server, THE 
 | id | from | to | guard |
 |----|------|----|-------|
 | bind_listener | unbound | listening | [[spec.SOCKET_OWNER_ONLY]] |
-| clear_stale_path | unbound | unbound | [[spec.STALE_SOCKET_CLEARED]] |
+| clear_stale_path | unbound | unbound | [[spec.SOCKET_PATH_BINDABLE]] |
 | serve_messages | listening | listening | [[spec.NEWLINE_FRAMING]] |
 | close_listener | listening | closed | [[spec.FOUR_METHOD_INTERFACE]] |
 
@@ -40,13 +40,14 @@ statement: "WHEN a client or middleware exchanges messages with the server, THE 
 | receive_never_leaks_partial_reads | unit | [[spec.RECEIVE_POSTCONDITION]] | `test/unit/message_test.jl` | truncated line and empty stream both return nothing; non-object JSON is skipped and parsing continues |
 | framing_is_one_line_per_message | unit | [[spec.NEWLINE_FRAMING]] | `test/unit/message_test.jl` | send! output ends with exactly one newline and round-trips through JSON parsing |
 | socket_mode_is_owner_only_from_creation | unit | [[spec.SOCKET_OWNER_ONLY]] | `test/unit/transport_spec_test.jl`, `test/e2e/unix_socket_test.jl` | stat mode is 0o600 immediately after listen_unix and the caller's umask value is restored |
-| stale_path_cleared_before_listen | unit | [[spec.STALE_SOCKET_CLEARED]] | `test/e2e/unix_socket_test.jl` | a file written at the socket path is gone once the server is listening |
+| stale_path_cleared_before_listen | unit | [[spec.SOCKET_PATH_BINDABLE]] | `test/e2e/unix_socket_test.jl` | a dead socket file at the listen path is unlinked and replaced by the new server's socket, which then accepts evals |
+| occupied_path_refused | unit | [[spec.SOCKET_PATH_BINDABLE]] | `test/e2e/unix_socket_test.jl` | a live socket and a non-socket file at the listen path both fail startup with an error naming the path; the live listener still accepts and the file stays byte-identical |
 | limits_span_listeners | unit | [[spec.GLOBAL_RESOURCE_LIMITS]] | `test/e2e/multi_listener_test.jl` | sessions created on TCP count against the same max_sessions budget reached from the Unix socket listener |
 | bind_failure_logged | unit | [[spec.FOUR_METHOD_INTERFACE]] | `test/unit/transport_spec_test.jl` | serving on an occupied port throws Base.IOError after logging an Error-level message naming the port |
 
 # Transport Layer
 
-_Version: 1.1 — 2026-04-17_
+_Version: 1.2 — 2026-10-05_
 
 ## Purpose
 
@@ -84,7 +85,7 @@ The server SHALL support TCP connections on a configurable host and port (defaul
 - **THEN** the server logs an informative error
 
 ### Requirement: Unix Domain Socket Transport
-The server SHALL support Unix domain socket connections. The socket SHALL be created with `umask(0o077)` before `listen()` and `chmod`'d to `0o600` after creation, closing the permission race window. (REQ-RPL-041)
+The server SHALL support Unix domain socket connections. The socket SHALL be created with `umask(0o077)` before `listen()` and `chmod`'d to `0o600` after creation, closing the permission race window. A pre-existing entry at the socket path SHALL be classified before listen: only a demonstrably stale socket (a socket inode with nothing listening behind it) is removed; a live socket or a non-socket filesystem entry is never deleted, and startup fails with an error naming the occupied path. (REQ-RPL-041)
 
 #### Scenario: Socket file is owner-only
 - **WHEN** the server starts with Unix socket transport
@@ -95,8 +96,16 @@ The server SHALL support Unix domain socket connections. The socket SHALL be cre
 - **THEN** the socket is created with restrictive permissions from the start via umask wrapping
 
 #### Scenario: Stale socket removed at startup
-- **WHEN** a stale socket file exists at the configured path
-- **THEN** it is removed before creating the new socket
+- **WHEN** a stale Unix socket file (a socket inode with nothing listening behind it) exists at the configured path
+- **THEN** it is removed before creating the new socket, and the new server accepts connections on that path
+
+#### Scenario: Live socket is never hijacked
+- **WHEN** a live Unix socket is listening at the configured path and a second server starts at the same path
+- **THEN** the second startup fails with an error naming the path, the existing socket file is untouched, and the original listener still accepts connections
+
+#### Scenario: Ordinary file at socket path is refused
+- **WHEN** a non-socket filesystem entry exists at the configured path and the server starts
+- **THEN** startup fails with an error naming the path and the file is left byte-identical
 
 ### Requirement: Newline-Delimited JSON Transport
 The default JSON transport SHALL write each message as a single JSON object terminated by `\n`, using a lock for thread safety. (REQ-RPL-040)
