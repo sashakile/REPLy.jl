@@ -44,6 +44,37 @@ is_connection_closed(ex) = ex isa Base.IOError || ex isa InvalidStateException
 
 safe_request_id(msg) = get(msg, "id", "") isa AbstractString ? String(get(msg, "id", "")) : ""
 
+# REQ-RPL-047e (security): record an audit entry for a rejected oversized
+# message and close the connection. No response is sent: the message body is
+# untrusted, so no request id can be correlated.
+function _record_oversize_audit!(state::Union{Nothing, ServerState}, ex::MessageTooLargeError, socket)
+    state === nothing && return nothing
+    source_ip = try
+        socket isa Sockets.TCPSocket ? string(Sockets.getpeername(socket)[1]) : ""
+    catch
+        ""
+    end
+    record_audit!(state.audit_log, AuditLogEntry(
+        timestamp=now(UTC), client_id=UUID(UInt128(0)), session_id=nothing,
+        operation="", user="", source_ip=source_ip, success=false,
+        error="message exceeds maximum size of $(ex.limit) bytes"))
+    return nothing
+end
+
+# BIZ-008 (security): a disconnecting client must not leave evals for its
+# requests running indefinitely and producing output to a closed channel.
+# Interrupts the in-flight eval tasks whose lifecycle request_id matches the
+# connection's in-flight request. v1 approximation: identity is scoped by
+# request_id, not by connection — a cross-connection id collision widens the
+# cancel to both evals; per-connection audit identity is REPLy_jl-l9tg's scope.
+function _cancel_request_evals!(state::Union{Nothing, ServerState}, request_id::AbstractString)
+    state === nothing && return nothing
+    for life in active_eval_lifecycles(state)
+        life.request_id == request_id && request_eval_cancel!(life)
+    end
+    return nothing
+end
+
 function handle_client!(socket::IO, handler::Function;
     max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES,
     rate_limit_per_min::Int=0,
@@ -67,6 +98,9 @@ function handle_client!(transport::AbstractTransport, handler::Function;
     rl_window_start = time()
     rl_count        = 0
     consecutive_malformed = 0
+    # BIZ-008 (security): request id of the eval currently in flight on this
+    # connection, cancelled if the connection drops while the eval runs.
+    in_flight_request_id = Ref{Union{Nothing, String}}(nothing)
 
     try
         while isopen(transport)
@@ -80,10 +114,10 @@ function handle_client!(transport::AbstractTransport, handler::Function;
                 receive(transport; max_message_bytes=max_message_bytes)
             catch ex
                 if ex isa MessageTooLargeError
-                    try
-                        send!(transport, error_response("", "message exceeds maximum size of $(ex.limit) bytes"))
-                    catch
-                    end
+                    # REQ-RPL-047e (security): an oversized message closes the
+                    # connection with an audit entry and NO response — the body
+                    # is untrusted, so no request id can be correlated.
+                    _record_oversize_audit!(state, ex, socket)
                     return nothing
                 end
                 if ex isa MalformedJSONError
@@ -128,6 +162,29 @@ function handle_client!(transport::AbstractTransport, handler::Function;
                 # Create a streaming channel for this request so eval can emit
                 # interim "out" messages during long-running evals.
                 stream = Channel{Dict{String, Any}}(32)
+                in_flight_request_id[] = safe_request_id(msg)
+
+                # BIZ-008 (security): if the client disconnects while an eval
+                # that never emits output is in flight, no send failure would
+                # ever interrupt it — wait for transport EOF instead. eof()
+                # blocks until the client disconnects (the request loop is
+                # parked on the stream channel, so no concurrent socket reads).
+                disconnect_watcher = @async begin
+                    try
+                        if socket isa IO
+                            while !eof(socket)
+                                sleep(0.05)
+                            end
+                        else
+                            while isopen(transport)
+                                sleep(0.05)
+                            end
+                        end
+                    catch
+                    end
+                    rid = in_flight_request_id[]
+                    isnothing(rid) || _cancel_request_evals!(state, rid)
+                end
 
                 # Spawn a handler task that uses the stream channel.
                 handler_task = @async begin
@@ -147,7 +204,10 @@ function handle_client!(transport::AbstractTransport, handler::Function;
                     try
                         send!(transport, response)
                     catch ex
-                        is_connection_closed(ex) && return nothing
+                        if is_connection_closed(ex)
+                            _cancel_request_evals!(state, safe_request_id(msg))
+                            return nothing
+                        end
                         rethrow()
                     end
                 end
@@ -186,6 +246,7 @@ function handle_client!(transport::AbstractTransport, handler::Function;
                 @async _trigger_shutdown_callback()
                 return nothing
             end
+            in_flight_request_id[] = nothing
         end
     finally
         if socket isa IO

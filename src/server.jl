@@ -155,9 +155,11 @@ end
 function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Union{Nothing, AbstractString}=nothing, manager::SessionManager=SessionManager(), middleware::Vector{<:AbstractMiddleware}=default_middleware_stack(), limits::ResourceLimits=ResourceLimits(), max_message_bytes::Int=DEFAULT_MAX_MESSAGE_BYTES, _sweep_interval_s::Real=SESSION_SWEEP_INTERVAL_SECONDS)
     max_message_bytes > 0 || throw(ArgumentError("max_message_bytes must be positive, got $max_message_bytes"))
     closing = Ref(false)
-    state = ServerState(limits, max_message_bytes)
-    stack = materialize_middleware_stack(middleware)
+    audit_log = AuditLog()
+    state = ServerState(limits, max_message_bytes, audit_log)
+    stack = _with_shared_audit_log(materialize_middleware_stack(middleware), audit_log)
     handler = build_handler(; manager=manager, middleware=stack, state=state)
+    _warn_if_low_rate_limit(limits)
 
     if !isnothing(socket_path)
         if host != ip"127.0.0.1" || Int(port) != 5555
@@ -206,6 +208,28 @@ function serve(; host::IPAddr=ip"127.0.0.1", port::Integer=5555, socket_path::Un
 end
 
 const DEFAULT_CLOSE_GRACE_SECONDS = 5.0
+
+# MATH-007: a rate limit configured below the configured floor undermines the
+# server's denial-of-service posture. The floor is advisory (warn only); the
+# enforce-or-remove decision is tracked separately (REPLy_jl-xblv).
+function _warn_if_low_rate_limit(limits::ResourceLimits)
+    if limits.rate_limit_per_min < limits.min_rate_limit_per_min
+        @warn "rate_limit_per_min ($(limits.rate_limit_per_min)) is below " *
+              "min_rate_limit_per_min ($(limits.min_rate_limit_per_min)) — the " *
+              "configured rate limit is weaker than the recommended floor"
+    end
+    return nothing
+end
+
+# The server-owned AuditLog (REQ-RPL-047e / FAIL-007) is shared with any
+# AuditMiddleware in the stack so middleware-recorded operations and
+# connection-layer events (e.g. oversized messages) land in the same log.
+function _with_shared_audit_log(stack::Vector{AbstractMiddleware}, audit_log::AuditLog)
+    return AbstractMiddleware[
+        mw isa AuditMiddleware ?
+            AuditMiddleware(audit_log; client_id=mw.client_id, source_ip=mw.source_ip) : mw
+        for mw in stack]
+end
 
 # Bind a TCP listener with an informative error log on failure. A bind
 # failure (e.g. port already in use) surfaces as Base.IOError; log it with
@@ -327,9 +351,11 @@ function serve_multi(specs...; manager::SessionManager=SessionManager(), middlew
     isempty(specs) && throw(ArgumentError("serve_multi requires at least one listener spec"))
 
     closing = Ref(false)
-    state = ServerState(limits, max_message_bytes)
-    stack = materialize_middleware_stack(middleware)
+    audit_log = AuditLog()
+    state = ServerState(limits, max_message_bytes, audit_log)
+    stack = _with_shared_audit_log(materialize_middleware_stack(middleware), audit_log)
     handler = build_handler(; manager=manager, middleware=stack, state=state)
+    _warn_if_low_rate_limit(limits)
 
     listeners = AbstractServerHandle[]
     for spec in specs

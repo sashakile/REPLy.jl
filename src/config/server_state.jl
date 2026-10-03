@@ -7,6 +7,9 @@ Holds the configured `ResourceLimits` and runtime counters that span all client 
 - `limits::ResourceLimits` — resource limits configured at `serve()` time.
 - `max_message_bytes::Int` — maximum inbound message size (bytes).
 - `gate::EvalGate` — concurrent-eval slot manager (counter + directed FIFO handoff queue).
+- `audit_log::AuditLog` — server-owned in-memory audit log (REQ-RPL-047e / FAIL-007);
+  shared with any `AuditMiddleware` in the stack and written by connection-layer
+  events that bypass the middleware chain (e.g. oversized messages).
 """
 mutable struct SessionSweeper
     timer::Timer
@@ -24,15 +27,22 @@ mutable struct ServerState
     active_request_lock::ReentrantLock
     active_request_sockets::IdDict{IO, Int}
     active_request_count::Int
+    audit_log::AuditLog
 end
 
 """
     ServerState(limits, max_message_bytes) -> ServerState
+    ServerState(limits, max_message_bytes, audit_log) -> ServerState
 
-Construct a `ServerState` with all counters initialised to zero.
+Construct a `ServerState` with all counters initialised to zero. The two-arg
+form creates a fresh `AuditLog`; the three-arg form adopts the given log so
+`serve()` can share it with the middleware stack.
 """
 ServerState(limits::ResourceLimits, max_message_bytes::Int) =
-    ServerState(limits, max_message_bytes, EvalGate(limits.max_concurrent_evals), ReentrantLock(), IdDict{Task, EvalLifecycle}(), nothing, Ref(false), ReentrantLock(), IdDict{IO, Int}(), 0)
+    ServerState(limits, max_message_bytes, AuditLog())
+
+ServerState(limits::ResourceLimits, max_message_bytes::Int, audit_log::AuditLog) =
+    ServerState(limits, max_message_bytes, EvalGate(limits.max_concurrent_evals), ReentrantLock(), IdDict{Task, EvalLifecycle}(), nothing, Ref(false), ReentrantLock(), IdDict{IO, Int}(), 0, audit_log)
 
 function begin_request!(state::ServerState, socket::IO)
     lock(state.active_request_lock) do

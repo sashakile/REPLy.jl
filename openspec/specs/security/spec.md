@@ -1,32 +1,60 @@
 ---
 id: spec
 kind: intent
-statement: "WHEN the migrated spec is elaborated, THE author SHALL replace this scaffold statement with the real requirement."
+statement: "WHEN the Reply server is started locally, THE server SHALL enforce its local security posture — loopback default, owner-only unix socket access, resource-limit enforcement, audit logging, disconnect cleanup, and graceful shutdown — as specified by the requirements below."
 ---
 
 ## Constraints
 
 | id | kind | expr | traces_to |
 |----|------|------|-----------|
-| scaffold_constraint | invariant | `true` | [[spec]] |
+| LOOPBACK_DEFAULT | invariant | TCP binding defaults to 127.0.0.1; a non-loopback host emits a startup `@warn` naming the exposure and loopback binding emits none | [[spec]] |
+| OWNER_ONLY_SOCKET | invariant | a unix socket file is created with mode 0o600 so only the server owner UID can connect | [[spec]] |
+| RESOURCE_LIMITS_ENFORCED | invariant | each configured `ResourceLimits` field is enforced at its enforcement point: eval timeout, session count on clone, concurrent-eval gate with 2× FIFO queue, oversized-message close, per-connection rate limit, per-session history bound | [[spec]] |
+| RATE_LIMIT_FLOOR_WARNED | invariant | startup warns when `rate_limit_per_min` is configured below `min_rate_limit_per_min` (MATH-007) | [[spec]] |
+| AUDIT_ENTRY_SHAPE | invariant | each `AuditLog` entry carries the FAIL-007 field set (timestamp, client_id, session_id, operation, user, source_ip, success, error) and one entry is written per operation | [[spec]] |
+| AUDIT_LOG_BOUNDED | invariant | the in-memory audit log evicts its oldest 50,000 entries when it exceeds 100,000 | [[spec]] |
+| AUDIT_FILE_ROTATES | invariant | a configured audit log file is renamed to `.1` and restarted when its next entry would exceed the configured size (default 100 MB) | [[spec]] |
+| DISCONNECT_CANCELS_EVALS | invariant | when a client disconnects, in-flight evals for that connection's requests are interrupted instead of running to completion against a closed channel | [[spec]] |
+| STREAM_CAPTURE_ISOLATED | invariant | per-task stdout/stderr capture routes each concurrent eval's output only into its own response stream | [[spec]] |
+| CLOSED_CHANNEL_RESILIENT | invariant | `send_response` silently discards messages when the client send channel is closed and never propagates `InvalidStateException` | [[spec]] |
+| GRACEFUL_SHUTDOWN_ORDERED | invariant | shutdown stops admissions, interrupts in-flight evals, waits up to the grace period, closes and flushes connections, and removes the unix socket file | [[spec]] |
 
 ## Model
 
 ### States
 
-- `draft`
+- `cold`
+- `serving`
+- `draining`
+- `halted`
 
 ### Transitions
 
 | id | from | to | guard |
 |----|------|----|-------|
-| scaffold_transition | draft | draft | [[spec.scaffold_constraint]] |
+| bind_listener | cold | serving | [[spec.LOOPBACK_DEFAULT]] |
+| accept_request | serving | serving | [[spec.RESOURCE_LIMITS_ENFORCED]] |
+| drop_connection | serving | serving | [[spec.DISCONNECT_CANCELS_EVALS]] |
+| request_shutdown | serving | draining | [[spec.GRACEFUL_SHUTDOWN_ORDERED]] |
+| grace_elapsed | draining | halted | [[spec.GRACEFUL_SHUTDOWN_ORDERED]] |
 
 ## Properties
 
 | id | kind | derives_from | generator | predicate |
 |----|------|--------------|-----------|-----------|
-| scaffold_property | unit | [[spec.scaffold_constraint]] | `todo()` | `true` |
+| loopback_is_quiet | unit | [[spec.LOOPBACK_DEFAULT]] | `test/unit/security_spec_test.jl` | default TCP serve emits no non-loopback warning while host=0.0.0.0 emits one (identity: the warning set of loopback serve is the empty set minus unrelated warnings) |
+| socket_owner_only | unit | [[spec.OWNER_ONLY_SOCKET]] | `test/unit/security_spec_test.jl` | a served unix socket file's mode AND 0o777 equals 0o600 (identity: the permission set is exactly owner-read/write) |
+| limits_enforced | unit | [[spec.RESOURCE_LIMITS_ENFORCED]] | `test/unit/security_spec_test.jl` | timeout, clone session limit, concurrency queue rejection, oversize close, rate limit, and history bound each fire at their configured values (identity: each limit rejects exactly at its threshold, associativity: enforcement is independent per field) |
+| rate_floor_warned | unit | [[spec.RATE_LIMIT_FLOOR_WARNED]] | `test/unit/security_spec_test.jl` | serving with rate_limit_per_min=1 logs a warn naming rate_limit_per_min (identity: the warning names both configured and floor values) |
+| audit_entry_shape_holds | unit | [[spec.AUDIT_ENTRY_SHAPE]] | `test/unit/security_spec_test.jl` | an eval writes one audit entry whose FAIL-007 fields are populated (identity: the entry's field set matches the FAIL-007 list) |
+| audit_log_evicts_oldest | unit | [[spec.AUDIT_LOG_BOUNDED]] | `test/unit/security_spec_test.jl` | pushing 100,001 entries leaves exactly 50,001 with the oldest 50,000 dropped (identity: the retained suffix is contiguous) |
+| audit_file_rotates | unit | [[spec.AUDIT_FILE_ROTATES]] | `test/unit/security_spec_test.jl` | crossing the configured rotate limit renames the file to `.1` and starts a fresh file (identity: `.1` holds exactly the pre-rotation entries) |
+| disconnect_interrupts_eval | unit | [[spec.DISCONNECT_CANCELS_EVALS]] | `test/unit/security_spec_test.jl` | closing the client while an eval runs empties the active-eval registry and the server stays servicable (identity: the eval task set returns to empty) |
+| no_cross_session_output | unit | [[spec.STREAM_CAPTURE_ISOLATED]] | `test/unit/security_spec_test.jl` | two concurrent println evals deliver their marker only on their own connection (identity: each output set equals its own marker) |
+| discard_after_disconnect | unit | [[spec.CLOSED_CHANNEL_RESILIENT]] | `test/unit/security_spec_test.jl` | disconnecting mid-output leaves the server servicable on a fresh connection (identity: a post-disconnect eval still reaches done) |
+| shutdown_within_grace | unit | [[spec.GRACEFUL_SHUTDOWN_ORDERED]] | `test/unit/security_spec_test.jl` | close with a terminating workload finishes inside the grace period and flushes pending sends (identity: elapsed is bounded by grace_seconds) |
+| shutdown_expires_grace | unit | [[spec.GRACEFUL_SHUTDOWN_ORDERED]] | `test/unit/security_spec_test.jl` | a blocked response does not extend shutdown past the grace period (identity: elapsed stays inside the grace window even when work never completes) |
 
 # Security Model
 

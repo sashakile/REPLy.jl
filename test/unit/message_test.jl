@@ -102,12 +102,18 @@ using JSON3
             try
                 big_payload = Dict("id" => "1", "op" => "eval", "code" => repeat("x", 200))
                 send_request(client, big_payload)
-                msgs = collect_until_done(client)
-
-                @test length(msgs) == 1
-                @test "done" in msgs[1]["status"]
-                @test "error" in msgs[1]["status"]
-                @test msgs[1]["err"] == "message exceeds maximum size of 50 bytes"
+                # REQ-RPL-047e: oversized message closes the connection with no
+                # response (stateless handle_client! call has no audit log).
+                line_ch = Channel{Union{Nothing, String}}(1)
+                reader = @async begin
+                    try
+                        put!(line_ch, readline(client))
+                    catch
+                        put!(line_ch, nothing)
+                    end
+                end
+                @test timedwait(() -> istaskdone(reader), 5.0) === :ok
+                @test take!(line_ch) == ""
             finally
                 isopen(client) && close(client)
                 wait(server_task)

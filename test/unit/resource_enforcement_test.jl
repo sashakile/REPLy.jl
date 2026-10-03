@@ -250,21 +250,31 @@ end
         end
     end
 
-    @testset "oversized message via serve() returns error response" begin
+    @testset "oversized message via serve() closes connection (REQ-RPL-047e)" begin
         server = REPLy.serve(; port=0, max_message_bytes=100)
         port   = REPLy.server_port(server)
 
         try
             client = connect(port)
             try
-                # Send a message that exceeds the 100-byte limit
-                big_msg = Dict("op" => "eval", "id" => "big1", "code" => repeat("x", 200))
-                send_request(client, big_msg)
-
-                msgs = collect_until_done(client)
-                @test length(msgs) == 1
-                @test "error" in msgs[1]["status"]
-                @test occursin("maximum size", msgs[1]["err"])
+                # Send a message that exceeds the 100-byte limit: the
+                # connection closes with an audit entry and no response.
+                send_request(client, Dict("op" => "eval", "id" => "big1",
+                    "code" => repeat("x", 200)))
+                line_ch = Channel{Union{Nothing, String}}(1)
+                reader = @async begin
+                    try
+                        put!(line_ch, readline(client))
+                    catch
+                        put!(line_ch, nothing)
+                    end
+                end
+                @test timedwait(() -> istaskdone(reader), 5.0) === :ok
+                @test take!(line_ch) == ""   # EOF — no error response sent
+                entries = REPLy.audit_entries(server.state.audit_log)
+                failures = filter(e -> e.success === false, entries)
+                @test !isempty(failures)
+                @test occursin("maximum size", something(failures[end].error, ""))
             finally
                 isopen(client) && close(client)
             end
