@@ -1,6 +1,8 @@
-# Describe middleware — handles `op == "describe"` requests and returns a dynamic
-# snapshot of server capabilities built from middleware descriptors: ops catalog,
-# versions, and encoding support.
+# Purpose: Describe available operations and attached execution guarantees.
+# Responsibilities:
+# - Build operation, version and encoding metadata for ordinary describe requests.
+# - Report cooperative deadlines and unsupported attached memory enforcement.
+# Rationale: REPLy_jl-q8dz.2 makes discovery honest without changing execution ownership.
 
 """
     DescribeMiddleware(ops_catalog)
@@ -26,7 +28,8 @@ descriptor(::DescribeMiddleware) = MiddlewareDescriptor(
             "doc"      => "Return server capabilities: ops, versions, and encodings.",
             "requires" => String[],
             "optional" => String[],
-            "returns"  => ["ops", "versions", "encodings-available", "encoding-current"],
+            "returns"  => ["ops", "versions", "encodings-available", "encoding-current",
+                "execution-mode", "timeout-enforcement", "memory-enforcement", "effective-memory-limit-mb"],
         ),
     ),
 )
@@ -43,6 +46,10 @@ function handle_message(mw::DescribeMiddleware, msg, next, ctx::RequestContext)
         ),
         "encodings-available" => ["json"],
         "encoding-current" => "json",
+        "execution-mode" => "attached",
+        "timeout-enforcement" => "cooperative",
+        "memory-enforcement" => "unsupported",
+        "effective-memory-limit-mb" => 0,
         "status" => ["done"],
     )]
 end

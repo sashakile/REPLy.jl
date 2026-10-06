@@ -1,3 +1,9 @@
+# Purpose: Expose REPLy server, client and MCP APIs for Julia tool builders.
+# Responsibilities:
+# - Assemble protocol, session, transport and adapter modules.
+# - Export checked endpoint discovery alongside compatible client constructors.
+# Rationale: REPLy_jl-q8dz.2 adds opt-in discovery without changing server defaults.
+
 module REPLy
 
 using Dates
@@ -35,7 +41,7 @@ export collect_reply_stream, mcp_eval_request, mcp_initialize_result, mcp_tools,
     mcp_ensure_default_session!, mcp_new_session_result, mcp_list_sessions_result,
     mcp_close_session_result, mcp_call_tool, MCP_DEFAULT_SESSION_NAME
 
-export Client, disconnect
+export Client, disconnect, connect_endpoint
 
 include("errors.jl")
 include("protocol/message.jl")

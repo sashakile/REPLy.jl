@@ -1,0 +1,9 @@
+id = "late-bootstrap-from-a-julia-prompt"
+description = "Checked endpoint regression"
+archetype = "PF"
+status = "active"
+superseded_by = ""
+authored_with = "0.9.2"
+
+[[tests.shell]]
+command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/integration/connect_endpoint_test.jl\")'"

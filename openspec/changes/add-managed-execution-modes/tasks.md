@@ -3,8 +3,8 @@
 - [x] 1.2 Adopt/archive the completed fix-eval-timeout lifecycle change before applying this security delta; reconcile add-first-class-client, refactor-mcp-adapter and update-cli-spec application order. Create/claim Beads implementation slices referencing these task numbers; keep refactoring separate.
 
 ## 2. Connect to a prepared application — red then green
-- [ ] 2.1 Write failing TCP/Unix integration tests for the shared connect_endpoint DNS/connect/describe budget, silent/malformed peer failure, valid legacy discovery, startup and late bootstrap, explicit host namespace opt-in, disconnect without host termination and unknown capabilities from a legacy endpoint.
-- [ ] 2.2 Reuse the first-class Client framing and implement opt-in connect_endpoint, connection/bootstrap documentation and capability reporting; preserve ordinary anonymous-module defaults and existing wire behavior. Run named regression tests and just test.
+- [x] 2.1 Write failing TCP/Unix integration tests for the shared connect_endpoint DNS/connect/describe budget, silent/malformed peer failure, valid legacy discovery, startup and late bootstrap, explicit host namespace opt-in, disconnect without host termination and unknown capabilities from a legacy endpoint.
+- [x] 2.2 Reuse the first-class Client framing and implement opt-in connect_endpoint, connection/bootstrap documentation and capability reporting; preserve ordinary anonymous-module defaults and existing wire behavior. Run named regression tests and just test.
 
 ## 3. Launch an owned persistent runtime — red then green
 - [ ] 3.1 Write isolated failing tests for project/environment selection, startup timeout from launch entry, dedicated supervisor PID, caller-saturation responsiveness, owner EOF/forced supervisor death (including parent-death setup race), unsupported owner-death backend rejection, readiness, persistent bindings, multiple sessions, IPC corruption/EOF, idempotent close and cleanup without killing another runtime.

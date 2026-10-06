@@ -18,6 +18,7 @@ makedocs(
             "How-to: Install the `replyc` CLI" => "howto-cli-install.md",
             "How-to: Use the `replyc` CLI" => "howto-replyc.md",
             "How-to: Custom Middleware" => "howto-custom-middleware.md",
+            "How-to: Connect to an Application" => "howto-connect.md",
             "Tutorial: Custom Client" => "tutorial-custom-client.md",
         ],
         "Reference" => [

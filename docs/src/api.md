@@ -46,7 +46,7 @@ signatures, defaults, and return values.
 - **Resource limits & audit**: `ResourceLimits`, `AuditLog`, `AuditLogEntry`,
   `effective_limit`, `audit_entries`, `record_audit!`, `AuditMiddleware`
 - **CLI**: `replyc`
-- **Client**: `Client`, `disconnect`
+- **Client**: `Client`, `connect_endpoint`, `disconnect`
 - **MCP adapter**: `serve_mcp`, `mcp_initialize_result`, `mcp_tools`, `mcp_call_tool`,
   `mcp_eval_request`, `mcp_ensure_default_session!`, `mcp_new_session_result`,
   `mcp_list_sessions_result`, `mcp_close_session_result`, `collect_reply_stream`,

@@ -1,3 +1,9 @@
+# Purpose: Run REPLy quality, unit, integration and end-to-end regressions.
+# Responsibilities:
+# - Load shared test helpers and register each behavioral test file.
+# - Include checked endpoint discovery in the integration suite.
+# Rationale: REPLy_jl-q8dz.2 must be exercised by the normal full-suite entry point.
+
 using Test
 using Logging
 using REPLy
@@ -64,6 +70,7 @@ include("helpers/server.jl")
     @testset "integration" begin
         # Keep outer-layer tests visible while inner tickets land incrementally.
         if isdefined(REPLy, :build_handler)
+            include("integration/connect_endpoint_test.jl")
             include("integration/pipeline_test.jl")
             include("integration/session_lifecycle_test.jl")
             include("integration/session_ops_test.jl")
