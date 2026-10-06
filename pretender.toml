@@ -1,5 +1,5 @@
 [pretender]
-mode = "tiered"
+mode = "gate"
 languages = ["julia"]
 exclude = ["deps/**", "docs/build/**", ".wai/**", "*.toml"]
 
