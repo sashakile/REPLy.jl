@@ -1,9 +1,0 @@
-id = "close-acquires-eval-mutex-before-destroying"
-description = "a queued eval reports session-not-found after close destroys the session"
-archetype = "PF"
-status = "active"
-superseded_by = ""
-authored_with = "0.8.0"
-
-[tests]
-shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/session_management_spec_test.jl\")'" } ]

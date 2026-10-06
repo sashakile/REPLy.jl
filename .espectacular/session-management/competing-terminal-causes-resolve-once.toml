@@ -1,9 +1,0 @@
-id = "competing-terminal-causes-resolve-once"
-description = "interrupt and close racing a running eval both resolve cleanly and a later interrupt is a no-op"
-archetype = "PF"
-status = "active"
-superseded_by = ""
-authored_with = "0.8.0"
-
-[tests]
-shell = [ { command = "julia --project=. --startup-file=no -e 'using REPLy, Test; include(\"test/unit/session_management_spec_test.jl\")'" } ]

@@ -1,6 +1,6 @@
 # Connect and launch execution ownership
 
-This unapproved design defines connect/launch ownership for Julia tool builders familiar with REPLy sessions and NDJSON operations. Connect retains application ownership; launch isolates the control loop in a dedicated supervisor and treats worker retirement as runtime-wide state loss.
+This approved design defines connect/launch ownership for Julia tool builders familiar with REPLy sessions and NDJSON operations. Connect retains application ownership; launch isolates the control loop in a dedicated supervisor and treats worker retirement as runtime-wide state loss.
 
 ## Context and test shape
 
@@ -105,7 +105,7 @@ The shared worker sacrifices unaffected session state on timeout; expose this be
 
 ## Approval and migration
 
-This proposal selects both modes with their distinct guarantees; it remains unapproved. After approval update nv28/q8dz and xbb9/xbb9.1 acceptance to these guarantees, then implement the vertical slices in tasks.md. Rollback can remove the opt-in launch/MCP-managed entry points without changing connect defaults; it cannot restore discarded worker state. No deployment is part of this change.
+This proposal selects both modes with their distinct guarantees; the maintainer approved it and authorized implementation on 2026-10-06. Update nv28/q8dz and xbb9/xbb9.1 acceptance to these guarantees, then implement the vertical slices in tasks.md. Rollback can remove the opt-in launch/MCP-managed entry points without changing connect defaults; it cannot restore discarded worker state. No deployment is part of this change.
 
 ## Source references
 

@@ -50,9 +50,7 @@ _Version: 1.1 — 2026-04-17_
 ## Purpose
 
 Specify the error response format, error categories, safe exception serialization, and the disconnection policy for repeated malformed messages. The one-done-per-request invariant is defined canonically in the protocol spec (see `protocol/spec.md`, REQ-RPL-004).
-
 ## Requirements
-
 ### Requirement: Error Response Format
 All error responses SHALL include: `id`, `status` containing `"done"` and `"error"`, `err` (human-readable summary), and optionally `ex` (structured exception with `type` and `message`), `stacktrace` (array of frame records), and `cause` (nested error or null). (REQ-RPL-063)
 
@@ -72,39 +70,43 @@ All error responses SHALL include: `id`, `status` containing `"done"` and `"erro
 - **THEN** `ex.message` is populated via `sprint(showerror, ex)` rather than raising a `FieldError`
 
 ### Requirement: Error Status Flags
-The server SHALL use distinct status flags for each error category so clients can programmatically distinguish failure modes. Canonical flags include `session-not-found`, `session-already-exists`, `timeout`, `rate-limited`, `session-limit-reached`, `concurrency-limit-reached`, `path-not-allowed`, and `unknown-op`. (REQ-RPL-063)
+The server SHALL use distinct status flags for each error category so clients can programmatically distinguish failure modes. Canonical flags include `session-not-found`, `session-already-exists`, `session-quarantined`, `timeout`, `rate-limited`, `session-limit-reached`, `concurrency-limit-reached`, `path-not-allowed`, and `unknown-op`. (REQ-RPL-063)
 
 #### Scenario: Session not found
 - **WHEN** a request references a non-existent session
-- **THEN** response has `"status":["done","error","session-not-found"]`
+- **THEN** response has `{"status":["done","error","session-not-found"]}`
 
 #### Scenario: Session already exists
 - **WHEN** attempting to create or clone a session with a name alias that is already in use
-- **THEN** response has `"status":["done","error","session-already-exists"]`
+- **THEN** response has `{"status":["done","error","session-already-exists"]}`
+
+#### Scenario: Session quarantined
+- **WHEN** a disallowed operation targets a named session permanently quarantined by a zombie eval
+- **THEN** response has `{"status":["done","error","session-quarantined"],"err":"Session quarantined after eval timeout"}`
 
 #### Scenario: Path not allowed
 - **WHEN** attempting to load a file from a path blocked by the server's allowlist
-- **THEN** response has `"status":["done","error","path-not-allowed"]`
+- **THEN** response has `{"status":["done","error","path-not-allowed"]}`
 
 #### Scenario: Eval timeout
 - **WHEN** eval exceeds the time limit
-- **THEN** response has `"status":["done","error","timeout"]` and `"err":"Eval timed out after N ms"`
+- **THEN** response has `{"status":["done","error","timeout"]}` and `"err":"Eval timed out after N ms"`
 
 #### Scenario: Rate limit exceeded
 - **WHEN** a client exceeds `rate_limit_per_min`
-- **THEN** response has `"status":["done","error","rate-limited"]` and `"err":"Rate limit exceeded"`
+- **THEN** response has `{"status":["done","error","rate-limited"]}` and `"err":"Rate limit exceeded"`
 
 #### Scenario: Session limit exceeded
 - **WHEN** a request would create a session beyond `max_sessions`
-- **THEN** response has `"status":["done","error","session-limit-reached"]`
+- **THEN** response has `{"status":["done","error","session-limit-reached"]}`
 
 #### Scenario: Concurrency limit exceeded
-- **WHEN** a request exceeds the bounded eval queue for `max_concurrent_evals`
-- **THEN** response has `"status":["done","error","concurrency-limit-reached"]`
+- **WHEN** a request exceeds the bounded eval queue or zombie-held permits make an acquisition unable to progress
+- **THEN** response has `{"status":["done","error","concurrency-limit-reached"]}`
 
 #### Scenario: Unknown operation
 - **WHEN** no middleware handles the op
-- **THEN** response has `"status":["done","error","unknown-op"]`
+- **THEN** response has `{"status":["done","error","unknown-op"]}`
 
 ### Requirement: Interrupted Termination
 Eval interruption is a distinct, non-error termination mode. The `status` array contains `"done"` and `"interrupted"` but NOT `"error"`. Clients SHALL use the absence of `"error"` in `status` to distinguish interrupts from errors. (REQ-RPL-014)

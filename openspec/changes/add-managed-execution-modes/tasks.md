@@ -1,6 +1,6 @@
 ## 1. Approval and synchronization
-- [ ] 1.1 Obtain approval for both ownership modes, runtime-wide loss, mode-aware deadline/memory guarantees and the proposed public APIs; record the decision in nv28 and synchronize q8dz/xbb9/xbb9.1 before implementation.
-- [ ] 1.2 Adopt/archive the completed fix-eval-timeout lifecycle change before applying this security delta; reconcile add-first-class-client, refactor-mcp-adapter and update-cli-spec application order. Create/claim Beads implementation slices referencing these task numbers; keep refactoring separate.
+- [x] 1.1 Obtain approval for both ownership modes, runtime-wide loss, mode-aware deadline/memory guarantees and the proposed public APIs; record the decision in nv28 and synchronize q8dz/xbb9/xbb9.1 before implementation.
+- [x] 1.2 Adopt/archive the completed fix-eval-timeout lifecycle change before applying this security delta; reconcile add-first-class-client, refactor-mcp-adapter and update-cli-spec application order. Create/claim Beads implementation slices referencing these task numbers; keep refactoring separate.
 
 ## 2. Connect to a prepared application — red then green
 - [ ] 2.1 Write failing TCP/Unix integration tests for the shared connect_endpoint DNS/connect/describe budget, silent/malformed peer failure, valid legacy discovery, startup and late bootstrap, explicit host namespace opt-in, disconnect without host termination and unknown capabilities from a legacy endpoint.

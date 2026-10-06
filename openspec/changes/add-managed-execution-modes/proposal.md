@@ -23,10 +23,14 @@ Julia tool builders need both access to a live application's state and a Julia e
 
 - Delta specs: execution-management (new), security, resource-limits, mcp-adapter. Existing light/heavy session selection remains unchanged: launch owns a runtime, not a new per-session clone type.
 - Implementation areas: src/client.jl, src/server.jl, src/middleware/describe.jl, src/middleware/eval.jl, src/mcp/server.jl, src/mcp/results.jl, src/replyc.jl, src/config/resource_limits.jl; new runtime/supervisor code and integration/E2E tests.
-- Tracks REPLy_jl-0em8; proposes the outcome for decision REPLy_jl-nv28 and implementation REPLy_jl-q8dz under milestone REPLy_jl-xbb9. Approval is pending; these tickets remain open.
+- Tracks REPLy_jl-0em8; proposes the outcome for decision REPLy_jl-nv28 and implementation REPLy_jl-q8dz under milestone REPLy_jl-xbb9. Maintainer approved the design and authorized implementation on 2026-10-06; implementation and release tickets remain open.
 - Reuse add-first-class-client for TCP/Unix client framing. Coordinate with refactor-mcp-adapter and update-cli-spec; those changes must not duplicate ownership APIs or revert new guarantees.
 - Completed fix-eval-timeout governs post-timeout accounting, not scheduler-independent response. Before applying this change, archive/adopt its deployed lifecycle delta, then apply this security delta as the subsequent contract. Do not implement this proposal concurrently with an overlapping security/spec archive.
 
 ## Approval Scope
 
-Approve both modes, one worker per managed runtime, unchanged defaults, runtime-wide loss on worker termination, explicit relaunch/no replay, the proposed APIs and latency tests, dedicated supervisor topology, cancellation/disconnect escalation, bounded transport policies, Linux-first managed owner-death support and the capability-based memory contract. This is a design proposal, not authorization to implement, publish or deploy.
+Approve both modes, one worker per managed runtime, unchanged defaults, runtime-wide loss on worker termination, explicit relaunch/no replay, the proposed APIs and latency tests, dedicated supervisor topology, cancellation/disconnect escalation, bounded transport policies, Linux-first managed owner-death support and the capability-based memory contract. The maintainer approved this scope and authorized implementation on 2026-10-06. Publishing and deployment are outside this approval.
+
+## Approval Record
+
+Approved by maintainer in this session (2026-10-06): both connect and launch modes, dedicated supervisor/one shared worker, Linux-first OS-backed owner-death cleanup, runtime-wide loss, 100 ms cancellation/disconnect escalation, explicit relaunch/no replay, bounded asynchronous transport, public APIs and capability-based memory guarantees. Implementation authorized; publishing/deployment/push are outside this approval.

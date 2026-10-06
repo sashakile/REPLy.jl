@@ -63,9 +63,7 @@ _Version: 1.1 — 2026-04-17_
 ## Purpose
 
 Specify the local security posture, resource limit enforcement, audit logging, resilience requirements, and graceful shutdown behavior for the Reply server. Unix socket permission mechanics are defined in `transport/spec.md` (REQ-RPL-041); this spec defines the security-level requirement that only the socket owner can connect. Remote security (TLS, auth middleware) is deferred post-v1.0.
-
 ## Requirements
-
 ### Requirement: TCP Localhost-Only Default with Non-Loopback Warning
 The TCP server SHALL default to binding on `127.0.0.1` (loopback). When `serve()` or `serve_multi()` is called with a non-loopback host, the server SHALL emit a `@warn`-level log message at startup stating that no authentication is required and any reachable client can execute arbitrary Julia code. The warning SHALL recommend using a Unix domain socket or restricting access at the network level. (REQ-RPL-049)
 
@@ -91,9 +89,21 @@ The server SHALL enforce all configured `ResourceLimits` fields (see `resource-l
 - **WHEN** an eval exceeds `max_eval_time_ms`
 - **THEN** on reference hardware the server delivers timeout cancellation and emits `{"status":["done","error","timeout"]}` within 100 ms p99 of the timeout threshold being crossed (REQ-RPL-047a)
 
+#### Scenario: Non-interruptible eval retains accounting after timeout
+- **WHEN** an eval exceeds `max_eval_time_ms` due to a non-interruptible operation (tight `ccall`, BLAS, native)
+- **THEN** the still-live task is atomically classified as a zombie before the client receives `{"status":["done","error","timeout"]}`
+- **AND** it retains exactly one EvalGate permit, active-task registration, and session/resource charge until actual termination
+
+#### Scenario: Timeout races with completion
+- **WHEN** the timeout threshold and eval completion occur concurrently
+- **THEN** exactly one transition wins and the client receives exactly one terminal response
+- **AND** completion cleanup releases the permit, registration, and resource charges exactly once
+
 #### Scenario: Eval timeout and manual interrupt collision
 - **WHEN** a timeout fires and a manual `interrupt` op arrives simultaneously for the same eval
-- **THEN** the first termination cause wins; the second is a no-op. The response reflects the cause that took effect (either `"timeout"` or `"interrupted"`).
+- **THEN** manual interrupt is only an idempotent cancellation request, and observed task termination produces `{"status":["done","interrupted"]}` only if termination is observed before the deadline transition
+- **AND** if the deadline transition observes the task live, it classifies the task as a zombie and emits `{"status":["done","error","timeout"]}` even if cancellation was requested
+- **AND** the eval emits exactly one terminal response
 
 #### Scenario: Session limit enforced on clone
 - **WHEN** `max_sessions` active sessions exist and `clone` is called
@@ -102,6 +112,12 @@ The server SHALL enforce all configured `ResourceLimits` fields (see `resource-l
 #### Scenario: Concurrent eval limit enforced with queue
 - **WHEN** `max_concurrent_evals` evals are in flight and a new eval arrives
 - **THEN** it queues FIFO up to 2× limit; beyond the queue it is rejected with `{"status":["done","error","concurrency-limit-reached"],"err":"Too many concurrent evals"}` (REQ-RPL-047d)
+
+#### Scenario: Zombie-saturated capacity rejects queued and new evals
+- **WHEN** live zombies retain all EvalGate permits
+- **THEN** new evals and queued acquisitions that can no longer progress are rejected with `{"status":["done","error","concurrency-limit-reached"],"err":"Too many concurrent evals"}` within 100 ms p99 on reference hardware
+- **AND** rejection does not acquire or wait on EvalGate, `eval_lock`, or task completion
+- **AND** no queued acquisition remains stranded waiting for zombie termination
 
 #### Scenario: Oversized message closes connection
 - **WHEN** a message exceeds `max_message_size`
@@ -186,3 +202,10 @@ The server SHALL implement graceful shutdown (REQ-RPL-048) with the following or
 #### Scenario: Shutdown proceeds after grace period expires
 - **WHEN** evals do not terminate within the grace period
 - **THEN** the server closes all connections anyway and exits
+
+### Requirement: Hard Reclamation Boundary
+The server SHALL treat process termination as the only hard reclamation boundary for a non-cooperative in-process eval. A light-session timeout SHALL bound the client response but SHALL NOT claim that execution or resources have been reclaimed.
+
+#### Scenario: Native zombie survives cooperative cancellation
+- **WHEN** a native eval ignores timeout and interrupt cancellation
+- **THEN** the server retains its accounting until the task actually terminates or the server process terminates

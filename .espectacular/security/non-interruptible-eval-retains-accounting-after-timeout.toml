@@ -1,9 +1,9 @@
-id = "eval-timeout-and-manual-interrupt-collision"
+id = "non-interruptible-eval-retains-accounting-after-timeout"
 description = ""
-archetype = "PF"
+archetype = ""
 status = "active"
 superseded_by = ""
-authored_with = "0.1.0"
+authored_with = "0.3.0"
 
 [[tests.shell]]
 command = "julia --project=. --startup-file=no -e 'using REPLy, Test, Logging, JSON3, Sockets, Dates, UUIDs; include(\"test/helpers/compat.jl\"); include(\"test/helpers/conformance.jl\"); include(\"test/helpers/tcp_client.jl\"); include(\"test/helpers/server.jl\"); include(\"test/unit/concurrent_eval_test.jl\")'"
